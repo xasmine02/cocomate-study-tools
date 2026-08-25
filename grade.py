@@ -13,7 +13,7 @@
 의존성: Python 3.8+ / openpyxl (표준 라이브러리 외 유일한 의존성)
 """
 
-__version__ = "1.0.0"
+__version__ = "1.2.0"
 
 import argparse
 import html as html_mod
@@ -823,12 +823,17 @@ class SheetResult:
 
 
 def make_cell_entries(judge, wrong, limit=3):
-    """오답 셀들의 (좌표, 기대값, 학생값, 기대수식) 구조화 목록."""
+    """오답 셀들의 (좌표, 기대값, 학생값, 기대/학생 수식) 구조화 목록."""
     out = []
     for (r, c, coord) in wrong[:limit]:
         ok, exp, got, ef = judge.judge(r, c)
+        try:
+            sf = judge.student(r, c)[1]
+        except Exception:
+            sf = None
         out.append({"coord": coord, "expected": fmt_value(exp),
-                    "got": fmt_value(got), "formula": ef})
+                    "got": fmt_value(got), "formula": ef,
+                    "got_formula": sf})
     return out
 
 
@@ -1872,6 +1877,160 @@ def explain_number_format(nf):
 
 
 # ---------------------------------------------------------------------------
+# 수식 차이 진단기 (학생 수식 vs 정답 수식)
+# ---------------------------------------------------------------------------
+
+
+def _walk_funcs(node, depth=0, out=None):
+    """트리에서 (함수명, 깊이, 노드) 목록 (DFS 선행 순서)."""
+    if out is None:
+        out = []
+    if node[0] == "func":
+        out.append((node[1], depth, node))
+        for a in node[2]:
+            _walk_funcs(a, depth + 1, out)
+    elif node[0] == "expr":
+        for p in node[1]:
+            _walk_funcs(p, depth, out)
+    return out
+
+
+def _strip_strings(f):
+    return re.sub(r'"[^"]*"', '""', str(f))
+
+
+def _cmp_ops(f):
+    """비교 연산자 목록 (문자열 리터럴 제외)."""
+    return re.findall(r"<=|>=|<>|<|>", _strip_strings(f))
+
+
+def _top_func_name(tree):
+    if tree[0] == "func":
+        return tree[1]
+    if tree[0] == "expr":
+        for p in tree[1]:
+            if p[0] == "func":
+                return p[1]
+    return None
+
+
+def _is_ref_node(n):
+    return n[0] == "ref"
+
+
+def _josa_wa(word):
+    return f"{word}와(과)"
+
+
+def diagnose_formula_diff(student_f, expected_f):
+    """학생 수식과 정답 수식을 비교해 무엇이 다른지 한국어 진단 목록 생성.
+
+    확실히 짚을 수 있는 차이만 나열하고, 없으면 '접근이 다릅니다' 안내.
+    """
+    fallback = ["정답 수식과 접근이 다릅니다. 아래 풀이를 따라 처음부터 "
+                "다시 작성해 보세요."]
+    try:
+        sf, ef = str(student_f or ""), str(expected_f or "")
+        if not sf.startswith("=") or not ef.startswith("="):
+            return []
+
+        def _abs_ref_notes():
+            out = []
+            e_anchored = set(re.findall(
+                r"\$[A-Z]{1,3}\$\d+:\$[A-Z]{1,3}\$\d+", ef.upper()))
+            for anch in sorted(e_anchored):
+                plain = anch.replace("$", "")
+                if re.search(re.escape(plain),
+                             sf.upper().replace("$", "")) \
+                        and anch not in sf.upper().replace(" ", ""):
+                    out.append(f"{anch}처럼 범위를 $로 고정해야 채우기 "
+                               "핸들로 복사할 때 범위가 어긋나지 않습니다.")
+                    break
+            return out
+
+        if norm_formula(sf) == norm_formula(ef):
+            # 정규화하면 같음 = $ 등 표기 차이만 -> 절대참조 진단만
+            if re.sub(r"\s+", "", sf.upper()) != \
+                    re.sub(r"\s+", "", ef.upper()):
+                return _abs_ref_notes()
+            return []
+        notes = []
+        st, et = _parse_formula(sf), _parse_formula(ef)
+        sfuncs = _walk_funcs(st)
+        efuncs = _walk_funcs(et)
+        snames = [n for n, _d, _x in sfuncs]
+        enames = [n for n, _d, _x in efuncs]
+        sset, eset = set(snames), set(enames)
+        s_top, e_top = _top_func_name(st), _top_func_name(et)
+        # 1) 중첩 순서 반전 (예: =OR(IF(...)) vs =IF(OR(...)))
+        if s_top and e_top and s_top != e_top \
+                and s_top in eset and e_top in sset:
+            notes.append(
+                f"{_josa_wa(s_top)} {e_top}의 중첩 순서가 반대입니다 — "
+                f"정답은 {e_top}(...) 안에 {s_top}(...)이 들어가는 구조입니다.")
+        else:
+            missing = sorted(eset - sset)
+            extra = sorted(sset - eset)
+            if missing:
+                notes.append("정답에 있는 " + ", ".join(missing)
+                             + " 함수가 내 수식에 없습니다.")
+            if extra:
+                notes.append("정답에 없는 " + ", ".join(extra)
+                             + " 함수를 사용했습니다.")
+        # 2) 비교 연산자 방향
+        from collections import Counter
+        sops, eops = Counter(_cmp_ops(sf)), Counter(_cmp_ops(ef))
+        for a, b in ((">=", "<="), ("<=", ">="), (">", "<"), ("<", ">")):
+            if sops[a] and eops[b] and not eops[a] and not sops[b]:
+                notes.append(f"'{a}' 를 썼지만 '{b}' 여야 합니다 "
+                             "(비교 방향이 반대).")
+                break
+        # 3) 절대참조 ($ 고정)
+        notes.extend(_abs_ref_notes())
+        # 4) 같은 함수의 인수 비교 (첫 등장 페어)
+        seen = set()
+        for name in enames:
+            if name in seen or name not in sset:
+                continue
+            seen.add(name)
+            sn = next(x for n, _d, x in sfuncs if n == name)
+            en = next(x for n, _d, x in efuncs if n == name)
+            sargs, eargs = sn[2], en[2]
+            if len(sargs) != len(eargs):
+                notes.append(f"{name}의 인수 개수가 다릅니다 "
+                             f"(내 수식 {len(sargs)}개 / 정답 {len(eargs)}개).")
+                continue
+            for i, (sa, ea) in enumerate(zip(sargs, eargs), 1):
+                rs, re_ = _render(sa, {}), _render(ea, {})
+                if norm_formula("=" + rs) == norm_formula("=" + re_):
+                    continue
+                if sa[0] == "num" and ea[0] == "num":
+                    notes.append(f"{name}의 {i}번째 인수가 {re_}이어야 "
+                                 f"하는데 {rs}을(를) 썼습니다.")
+                elif ea[0] == "str" and sa[0] in ("name", "ref") and \
+                        ea[1].strip('"') == rs:
+                    notes.append(f"문자는 따옴표로 감싸야 합니다: {ea[1]}")
+                elif _is_ref_node(sa) and _is_ref_node(ea):
+                    if rs.replace("$", "") != re_.replace("$", ""):
+                        notes.append(f"{name}의 {i}번째 참조가 {re_}이어야 "
+                                     f"하는데 {rs}을(를) 썼습니다.")
+        # 5) & 연결 유무
+        if "&" in _strip_strings(ef) and "&" not in _strip_strings(sf):
+            notes.append("& 연결이 빠졌습니다 — 계산 결과 뒤에 &\"문자\" "
+                         "형태로 이어 붙여야 합니다.")
+        elif "&" in _strip_strings(sf) and "&" not in _strip_strings(ef):
+            notes.append("정답에는 & 연결이 없습니다.")
+        # 중복 제거 + 상한
+        uniq = []
+        for n in notes:
+            if n not in uniq:
+                uniq.append(n)
+        return uniq[:6] if uniq else fallback
+    except Exception:
+        return fallback
+
+
+# ---------------------------------------------------------------------------
 # 취약점 유형 분류와 처방
 # ---------------------------------------------------------------------------
 
@@ -2030,7 +2189,7 @@ def classify_formula_category(formula):
 
 
 def enrich_wrong_cards(results):
-    """카드에 유형 분류와 수식 해설을 채운다."""
+    """카드에 유형 분류·수식 해설·수식 차이 진단을 채운다."""
     for r in results:
         nname = norm_sheet_name(r.name)
         for card in r.wrong:
@@ -2038,11 +2197,19 @@ def enrich_wrong_cards(results):
                 card["category"] = classify_formula_category(card.get("formula"))
             else:
                 card["category"] = SHEET_CATEGORY.get(nname, "기타")
+            card["expected_formula"] = card.get("formula")
+            card["student_formula"] = next(
+                (c.get("got_formula") for c in (card.get("cells") or [])
+                 if c.get("got_formula")), None)
+            card["diff_notes"] = []
             if card.get("formula"):
                 steps, point = explain_formula(card["formula"])
                 card["explain"] = steps
                 if point:
                     card["point"] = point
+                if card["student_formula"]:
+                    card["diff_notes"] = diagnose_formula_diff(
+                        card["student_formula"], card["formula"])
 
 
 def build_diagnosis(results):
@@ -2331,6 +2498,11 @@ def _wrong_card_html(card):
                         "</div>")
     if card.get("note"):
         body.append(f'<p class="wc-note">{esc(card["note"])}</p>')
+    if card.get("diff_notes"):
+        diffs = "".join(f'<div class="diff-item">{esc(d)}</div>'
+                        for d in card["diff_notes"])
+        body.append('<div class="diffbox"><div class="diff-title">무엇이 '
+                    "다른가</div>" + diffs + "</div>")
     solve = []
     if card.get("formula"):
         solve.append(f'<code class="formula">{esc(card["formula"])}</code>')
@@ -2469,6 +2641,11 @@ svg { font-family:'Malgun Gothic','맑은 고딕',sans-serif; display:block; }
   font-size:0.8rem; }
 .wc-note { font-size:0.85rem; color:#1B3A26; background:#F4FAF5;
   border-radius:8px; padding:8px 12px; margin-bottom:8px; }
+.diffbox { background:#FBF6EE; border:1px solid #E5D5B8; border-radius:8px;
+  padding:10px 14px; margin-bottom:8px; }
+.diff-title { font-weight:700; font-size:0.84rem; color:#8A5A00;
+  margin-bottom:6px; }
+.diff-item { font-size:0.86rem; margin-bottom:4px; padding-left:4px; }
 .solve { background:#F7FBF8; border:1px solid #E1EDE5; border-radius:8px;
   padding:10px 14px; margin-bottom:8px; }
 .solve-title { font-weight:700; font-size:0.84rem; color:#0B5D31;
@@ -2569,6 +2746,9 @@ def write_json(path, results, score100, global_notes, paths):
                 "note": card.get("note"), "hint": card.get("hint"),
                 "explain": card.get("explain") or [],
                 "point": card.get("point"),
+                "student_formula": card.get("student_formula"),
+                "expected_formula": card.get("expected_formula"),
+                "diff_notes": card.get("diff_notes") or [],
             }
             for r in results for card in r.wrong
         ],

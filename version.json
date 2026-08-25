@@ -1,6 +1,6 @@
 {
-  "version": "1.0.0",
-  "notes": "최초 공개 릴리스",
+  "version": "1.2.0",
+  "notes": "세트 인식·문제지 연결 개선, 오답노트 모드 추가",
   "files": {
     "채점/grade.py": "grade.py",
     "채점/코코채점.pyw": "코코채점.pyw",
