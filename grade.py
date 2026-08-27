@@ -13,7 +13,7 @@
 의존성: Python 3.8+ / openpyxl (표준 라이브러리 외 유일한 의존성)
 """
 
-__version__ = "1.4.0"
+__version__ = "1.5.0"
 
 import argparse
 import html as html_mod
@@ -132,6 +132,9 @@ def norm_formula(f):
             p = p.replace("정답!", "!")  # '계산작업 정답'! -> 계산작업!
             p = re.sub(r"\[\d+\]", "", p)  # 외부 참조 [1]시트명! 제거
             p = p.replace("RANK.EQ(", "RANK(")
+            # 불리언 인수 동치: FALSE=0, TRUE=1 (VLOOKUP 4번째 인수 등)
+            p = re.sub(r"\bFALSE\b", "0", p)
+            p = re.sub(r"\bTRUE\b", "1", p)
             out.append(p)
     return "".join(out)
 
@@ -488,6 +491,103 @@ def color_name_ko(rgb_hex):
         return f"#{rgb_hex}"
 
 
+# 동일 글꼴의 한/영 이름 별칭 (영문 UI Excel 저장 대응)
+FONT_ALIASES = {
+    "malgun gothic": "맑은 고딕", "gulim": "굴림", "gulimche": "굴림체",
+    "dotum": "돋움", "dotumche": "돋움체", "batang": "바탕",
+    "batangche": "바탕체", "gungsuh": "궁서", "gungsuhche": "궁서체",
+    "nanumgothic": "나눔고딕", "nanum gothic": "나눔고딕",
+}
+
+
+def _norm_font_name(name):
+    if not name:
+        return name
+    return FONT_ALIASES.get(str(name).strip().lower(), str(name).strip())
+
+
+# 표시 형식에서 자체 의미를 갖는 코드 문자 — 이 문자는 따옴표 유무가 의미를
+# 바꾸므로 리터럴("c")을 유지하고, 그 외 문자는 따옴표를 벗겨도 표시 동일.
+_NF_SIGNIFICANT = set('0123456789#?.,%eEgG@ymdhsSbBnN*_/:[]"\\;aA')
+
+
+def _norm_number_format(nf):
+    """표시 형식 코드 정규화 — 표시가 동일한 저장 변형을 통일.
+
+    - [$-412] 같은 로캘 접두 제거 ([$₩-412]는 통화기호만 남김)
+    - 후행 ';@' 텍스트 섹션 제거
+    - 기본형 음수 섹션(';-<양수형>') 제거
+    - 리터럴 문자("₩" ↔ ₩, \\- ↔ "-")의 따옴표/이스케이프 통일
+      (단 0, y 등 코드 문자는 따옴표 유지 — 의미가 다름)
+    """
+    s = (nf or "General").strip()
+    if s in ("", "General"):
+        return "General"
+    # 로캘/통화 토큰: [$기호-로캘] -> 기호
+    s = re.sub(r"\[\$([^\]-]*)-[0-9A-Za-z\-]+\]", r"\1", s)
+
+    def _norm_section(sec):
+        out = []
+        i = 0
+        while i < len(sec):
+            ch = sec[i]
+            if ch == "\\" and i + 1 < len(sec):
+                lit = sec[i + 1]
+                out.append(f'"{lit}"' if lit in _NF_SIGNIFICANT else lit)
+                i += 2
+                continue
+            if ch == '"':
+                j = sec.find('"', i + 1)
+                if j == -1:
+                    out.append(ch)
+                    i += 1
+                    continue
+                for lit in sec[i + 1:j]:
+                    out.append(f'"{lit}"' if lit in _NF_SIGNIFICANT else lit)
+                i = j + 1
+                continue
+            out.append(ch)
+            i += 1
+        return "".join(out)
+
+    # 섹션 분해 (따옴표 안 ';' 보호)
+    sections = []
+    cur = ""
+    in_q = False
+    for ch in s:
+        if ch == '"':
+            in_q = not in_q
+        if ch == ";" and not in_q:
+            sections.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    sections.append(cur)
+    sections = [_norm_section(x) for x in sections]
+    # 후행 '@'(기본 텍스트) 섹션 제거
+    while len(sections) > 1 and sections[-1].strip() in ("@", ""):
+        sections.pop()
+    # 기본형 음수 섹션 제거: 2번째 섹션 == '-'+1번째 섹션
+    if len(sections) == 2 and sections[1] == "-" + sections[0]:
+        sections.pop()
+    return ";".join(sections)
+
+
+def _norm_h_align(h, value):
+    """가로 맞춤: 명시된 기본값(왼쪽=텍스트 등)과 미지정을 동치 처리."""
+    if h in (None, "general"):
+        return None
+    default = None
+    if isinstance(value, bool):
+        default = "center"
+    elif isinstance(value, str) and value != "" \
+            and not value.startswith("="):
+        default = "left"
+    elif isinstance(value, (int, float, datetime, date)):
+        default = "right"
+    return None if h == default else h
+
+
 def fmt_signature(cell, kind):
     """셀의 특정 서식 종류(kind) 시그니처. 색은 테마 해석 후 RGB 비교."""
     try:
@@ -497,14 +597,16 @@ def fmt_signature(cell, kind):
         except Exception:
             pass
         if kind == "number_format":
-            nf = (cell.number_format or "General").strip()
-            return nf
+            return _norm_number_format(cell.number_format)
         if kind == "font":
             f = cell.font
             u = f.underline
             u = None if u in (None, "none") else u
-            return (f.name, float(f.size or 11), bool(f.bold), bool(f.italic),
-                    u, bool(f.strike), _color_key(f.color, wb))
+            col = _color_key(f.color, wb)
+            if col == ("rgb", "000000"):
+                col = None  # 자동(기본 검정)과 명시 검정은 화면 동일
+            return (_norm_font_name(f.name), float(f.size or 11),
+                    bool(f.bold), bool(f.italic), u, bool(f.strike), col)
         if kind == "fill":
             fl = cell.fill
             pat = fl.patternType if fl else None
@@ -513,8 +615,10 @@ def fmt_signature(cell, kind):
             return (pat, _color_key(fl.fgColor, wb))
         if kind == "alignment":
             al = cell.alignment
-            return (al.horizontal, al.vertical, bool(al.wrap_text),
-                    int(al.text_rotation or 0))
+            v = al.vertical
+            v = None if v in (None, "bottom") else v  # 세로 기본=아래쪽
+            return (_norm_h_align(al.horizontal, cell.value), v,
+                    bool(al.wrap_text), int(al.text_rotation or 0))
         if kind == "border":
             b = cell.border
             return tuple(bool(s is not None and s.style) for s in
@@ -989,8 +1093,10 @@ def format_diff_items(book_p, book_a, psheet, asheet):
     # 병합
     merges_p = {str(x).upper() for x in shp.merged_cells.ranges}
     merges_a = {str(x).upper() for x in sha.merged_cells.ranges}
-    if merges_p != merges_a:
-        items["merge"] = sorted(merges_a - merges_p) or sorted(merges_a ^ merges_p)
+    if merges_a - merges_p:
+        items["merge"] = sorted(merges_a - merges_p)      # 병합 지시
+    if merges_p - merges_a:
+        items["merge_del"] = sorted(merges_p - merges_a)  # 병합 해제 지시
     # 행 높이 / 열 너비 (±0.5)
     rows = set(shp.row_dimensions) | set(sha.row_dimensions)
     rh = []
@@ -1036,7 +1142,10 @@ def _size_matches(a, b):
 
 
 def defined_names_for_sheet(book, sheet_name):
-    """이 시트를 참조 대상에 포함하는 정의된 이름 {이름: 정규화참조}."""
+    """이 시트를 참조 대상에 포함하는 정의된 이름 {이름: 정규화참조}.
+
+    통합 문서 스코프와 시트 스코프(ws.defined_names) 모두 조회.
+    """
     out = {}
     key = norm_sheet_name(sheet_name)
     try:
@@ -1044,6 +1153,14 @@ def defined_names_for_sheet(book, sheet_name):
             val = norm_ref(dn.value)
             if val and key.upper() in norm_sheet_name(val.split("!")[0]).upper():
                 out[str(name)] = val
+    except Exception:
+        pass
+    try:  # 시트 스코프 이름 (학생이 시트 범위로 정의해도 인정)
+        ws = book.raw[sheet_name]
+        for name, dn in getattr(ws, "defined_names", {}).items():
+            val = norm_ref(dn.value)
+            if val:
+                out.setdefault(str(name), val)
     except Exception:
         pass
     return out
@@ -1230,6 +1347,38 @@ def cluster_cells(cells, target):
 # ---------------------------------------------------------------------------
 
 
+def _dlbls_active(dl):
+    """dLbls 요소가 실제로 레이블을 표시하는지 (delete=1, 전부 show=0 대응)."""
+    if dl is None:
+        return False
+    d = dl.find("c:delete", NS)
+    if d is not None and d.get("val") in ("1", "true"):
+        return False
+    shows = [ch for ch in dl if ch.tag.split("}")[1].startswith("show")]
+    if shows and all(ch.get("val") in ("0", "false") for ch in shows):
+        return False
+    return True
+
+
+def _cell_value_from_ref(book, ref):
+    """'시트명!$F$1' 참조의 셀 값 문자열 (캐시값 우선). 실패 시 None."""
+    try:
+        s = str(ref).strip().replace("$", "")
+        if "!" not in s:
+            return None
+        sheet, coord = s.rsplit("!", 1)
+        sheet = sheet.strip("'")
+        real = book.norm_map.get(norm_sheet_name(sheet))
+        if real is None:
+            return None
+        v = book.cached[real][coord].value
+        if v is None:
+            v = book.raw[real][coord].value
+        return str(v).strip() if v is not None else None
+    except Exception:
+        return None
+
+
 def chart_features(book, sheet_name):
     """시트에 연결된 첫 차트의 특성 dict. 차트가 없으면 None."""
     parts = book.chart_parts_for_sheet(sheet_name)
@@ -1257,9 +1406,9 @@ def chart_features(book, sheet_name):
                 if e is not None:
                     ref = e.text
                     break
-            has_dlbls = ser.find("c:dLbls", NS) is not None
+            has_dlbls = _dlbls_active(ser.find("c:dLbls", NS))
             series.append((norm_range_only(ref), has_dlbls))
-    # 제목
+    # 제목: 직접 입력(a:t), 셀 연동(strRef -> strCache 캐시/참조 셀 값 순)
     title = None
     t = root.find("c:chart/c:title", NS)
     autodel = root.find("c:chart/c:autoTitleDeleted", NS)
@@ -1267,8 +1416,14 @@ def chart_features(book, sheet_name):
         texts = [e.text or "" for e in t.findall(".//a:t", NS)]
         txt = "".join(texts).strip()
         if not txt:
+            cache = [e.text or ""
+                     for e in t.findall(".//c:strCache//c:v", NS)]
+            txt = "".join(cache).strip()
+        if not txt:
             f = t.find(".//c:strRef/c:f", NS)
-            txt = norm_range_only(f.text) if f is not None else ""
+            if f is not None and f.text:
+                txt = _cell_value_from_ref(book, f.text) \
+                    or norm_range_only(f.text)
         title = ("있음", txt)
     legend = root.find("c:chart/c:legend/c:legendPos", NS)
     legend_pos = legend.get("val") if legend is not None else (
@@ -1308,6 +1463,13 @@ class SheetResult:
         self.wrong = []     # 오답노트 카드(구조화) 목록
 
 
+def _fmt_expected(exp, ef):
+    """기대값 표시 — 캐시 없는 수식 채점이면 '(비어 있음)' 대신 명시."""
+    if exp is None and ef:
+        return "(수식 기준 채점)"
+    return fmt_value(exp)
+
+
 def make_cell_entries(judge, wrong, limit=3):
     """오답 셀들의 (좌표, 기대값, 학생값, 기대/학생 수식) 구조화 목록."""
     out = []
@@ -1317,7 +1479,7 @@ def make_cell_entries(judge, wrong, limit=3):
             sf = judge.student(r, c)[1]
         except Exception:
             sf = None
-        out.append({"coord": coord, "expected": fmt_value(exp),
+        out.append({"coord": coord, "expected": _fmt_expected(exp, ef),
                     "got": fmt_value(got), "formula": ef,
                     "got_formula": sf})
     return out
@@ -1337,7 +1499,8 @@ def add_card(res, label, lost, kind, cells=None, formula=None,
 def add_wrong_cells(res, judge, wrong, limit=30):
     for (r, c, coord) in wrong[:limit]:
         ok, exp, got, ef = judge.judge(r, c)
-        line = f"{coord}: 기대값 {fmt_value(exp)} / 학생값 {fmt_value(got)}"
+        line = (f"{coord}: 기대값 {_fmt_expected(exp, ef)} / "
+                f"학생값 {fmt_value(got)}")
         if ef:
             line += f" / 기대 수식 {ef}"
         res.details.append(line)
@@ -1516,6 +1679,13 @@ def grade_basic2(res, ctx):
             continue
         units.append({"pos": (min_r, min_c), "kind": "merge",
                       "range": rng, "coord": rng})
+    for rng in fd.get("merge_del", []):  # 병합 해제 지시
+        try:
+            min_c, min_r, _mc, _mr = range_boundaries(rng)
+        except Exception:
+            continue
+        units.append({"pos": (min_r, min_c), "kind": "merge_del",
+                      "range": rng, "coord": rng})
     for (r, c, coord) in ctx["vdiffs"]:
         units.append({"pos": (r, c), "kind": "value", "coord": coord,
                       "rc": (r, c)})
@@ -1579,6 +1749,10 @@ def grade_basic2(res, ctx):
             if k == "merge":
                 if u["range"].upper() not in s_merges:
                     fails.append(u)
+            elif k == "merge_del":
+                # 병합 해제 지시: 학생 파일에 병합이 남아 있으면 실패
+                if u["range"].upper() in s_merges:
+                    fails.append(u)
             elif k == "value":
                 r, c = u["rc"]
                 if not judge.judge(r, c)[0]:
@@ -1616,6 +1790,15 @@ def grade_basic2(res, ctx):
                                           + ", ".join(rngs[:3]) + ")",
                               "got": "병합 없음"})
                 hints.extend(hints_for_kind("merge", None))
+            elif k == "merge_del":
+                rngs = [x["range"] for x in fails
+                        if x["kind"] == "merge_del"]
+                props.append({"name": "병합 해제",
+                              "expected": "병합 해제 ("
+                                          + ", ".join(rngs[:3]) + ")",
+                              "got": "병합이 남아 있음"})
+                hints.append("병합된 범위를 선택하고 홈 탭 → '병합하고 "
+                             "가운데 맞춤'을 다시 눌러 해제합니다.")
             elif k == "value":
                 if sum(1 for p in props if p["name"].startswith("셀 값")) < 2:
                     r, c = u["rc"]
@@ -1747,16 +1930,26 @@ def _block_grid(sh, r1, r2, c1, c2):
 
 
 def _cond_rows(grid):
-    """조건 범위 -> (행별 (필드,조건) 짝 집합의 Counter, 머리글)."""
+    """조건 범위 -> (행별 (필드,조건) 짝 집합의 Counter, 머리글).
+
+    수식 조건(=로 시작)의 머리글 라벨은 필드명만 아니면 임의 텍스트/빈칸
+    모두 허용되는 규칙이므로 라벨을 비교에서 제외('#수식#' 고정 필드).
+    """
     from collections import Counter
     header = [_norm_field(v) for v in grid[0]]
     rows = []
     for row in grid[1:]:
-        pairs = frozenset(
-            (header[i], _norm_cond(v)) for i, v in enumerate(row)
-            if v is not None and header[i])
+        pairs = set()
+        for i, v in enumerate(row):
+            if v is None:
+                continue
+            cond = _norm_cond(v)
+            if isinstance(v, str) and v.strip().startswith("="):
+                pairs.add(("#수식#", cond))     # 라벨 자유 — 비교 제외
+            elif header[i]:
+                pairs.add((header[i], cond))
         if pairs:
-            rows.append(pairs)
+            rows.append(frozenset(pairs))
     return Counter(rows), header
 
 
@@ -1911,7 +2104,11 @@ def grade_basic3(res, ctx):
             isinstance(v, str) and _norm_field(v) in header_pool
             for v in first)
         cond_syntax = any(_is_cond_syntax(v) for row in ga[1:] for v in row)
-        if headerish and len(ga) >= 2 and (cond_syntax or len(ga) == 2):
+        has_formula_cond = any(
+            isinstance(v, str) and v.strip().startswith("=")
+            for row in ga[1:] for v in row)
+        if len(ga) >= 2 and (has_formula_cond or (
+                headerish and (cond_syntax or len(ga) == 2))):
             btype = "cond"
         elif headerish and len(ga) >= 3:
             btype = "result"
@@ -2110,7 +2307,7 @@ def grade_macro(res, ctx):
         s_edges = sheet_edge_map(shs, _mr, _mc)
     fmt_bad = []
     for kind, payload in ctx["fdiffs"].items():
-        if kind in ("rowheight", "colwidth", "merge", "names",
+        if kind in ("rowheight", "colwidth", "merge", "merge_del", "names",
                     "border_edges"):
             continue
         if kind == "border":
@@ -2194,11 +2391,16 @@ def grade_macro(res, ctx):
 
 
 def grade_chart(res, ctx):
-    """차트작업: 차트 XML 5개 항목 x (배점/5)."""
+    """차트작업: 차트 XML 5개 항목 x (배점/5).
+
+    문제 파일 차트를 기준선으로 사용 — 문제·정답이 같은 특성은 지시가
+    아니므로 채점 제외(정답 작성자의 부수 설정 오탐 차단).
+    """
     book_a, book_s = ctx["book_a"], ctx["book_s"]
     asheet, ssheet = ctx["asheet"], ctx["ssheet"]
     fa = chart_features(book_a, asheet)
     fs = chart_features(book_s, ssheet) if ssheet else None
+    fp = chart_features(ctx["book_p"], ctx["psheet"])  # 기준선
     per = res.alloc / 5.0
     if fa is None:
         res.earned = res.alloc
@@ -2220,55 +2422,100 @@ def grade_chart(res, ctx):
                          "got": str(got_txt), "formula": None}],
                  hint=hint)
 
+    def _title_key(f):
+        t = f["title"][1] if f and f["title"] else None
+        return t.replace(" ", "") if isinstance(t, str) else None
+
+    def _series_key(f):
+        return (len(f["series"]), sorted(x[0] or "" for x in f["series"]))
+
+    def _dlbls_key(f):
+        return sorted((x[0] or "") for x in f["series"] if x[1])
+
+    def same_as_problem(key_fn):
+        """문제·정답이 같은 특성 = 지시 아님 -> 채점 제외."""
+        return fp is not None and key_fn(fp) == key_fn(fa)
+
     # 1. 존재 + 종류
-    if fa["types"] == fs["types"]:
+    if same_as_problem(lambda f: f["types"]) or fa["types"] == fs["types"]:
         passed += 1
     else:
         fail("차트 종류", fa["types"], fs["types"],
              "차트 영역 우클릭 → 차트 종류 변경. 콤보(혼합)형이면 계열별 "
              "차트 종류와 보조 축 체크를 확인하세요.")
     # 2. 제목
-    ta = (fa["title"][1] if fa["title"] else None)
-    ts = (fs["title"][1] if fs["title"] else None)
-    if (ta is None) == (ts is None) and \
-            (ta is None or ta.replace(" ", "") == (ts or "").replace(" ", "")):
+    ta, ts = _title_key(fa), _title_key(fs)
+    if same_as_problem(_title_key) or \
+            ((ta is None) == (ts is None) and (ta is None or ta == ts)):
         passed += 1
     else:
-        fail("차트 제목", ta if ta is not None else "(제목 없음)",
-             ts if ts is not None else "(제목 없음)",
+        fail("차트 제목",
+             (fa["title"][1] if fa["title"] else "(제목 없음)"),
+             (fs["title"][1] if fs["title"] else "(제목 없음)"),
              "차트 선택 → 차트 요소(+) → 차트 제목 체크 후 텍스트를 "
              "입력합니다(제거 지시면 체크 해제).")
     # 3. 계열 수 + 참조
-    refs_a = sorted(x[0] or "" for x in fa["series"])
-    refs_s = sorted(x[0] or "" for x in fs["series"])
-    if len(fa["series"]) == len(fs["series"]) and refs_a == refs_s:
+    if same_as_problem(_series_key) or _series_key(fa) == _series_key(fs):
         passed += 1
     else:
+        refs_a = sorted(x[0] or "" for x in fa["series"])
+        refs_s = sorted(x[0] or "" for x in fs["series"])
         fail("데이터 계열", f"{len(fa['series'])}개 {refs_a}",
              f"{len(fs['series'])}개 {refs_s}",
              "차트 우클릭 → 데이터 선택에서 계열을 문제 지시대로 추가/제거 "
              "하고 각 계열의 값 범위를 확인합니다.")
     # 4. 데이터 레이블
-    dl_a = sorted((x[0] or "") for x in fa["series"] if x[1])
-    dl_s = sorted((x[0] or "") for x in fs["series"] if x[1])
-    if dl_a == dl_s:
+    dl_a, dl_s = _dlbls_key(fa), _dlbls_key(fs)
+    if same_as_problem(_dlbls_key) or dl_a == dl_s:
         passed += 1
     else:
         fail("데이터 레이블", f"계열 {dl_a or '없음'}", f"계열 {dl_s or '없음'}",
              "레이블을 붙일 계열만 한 번 클릭해 선택한 뒤 차트 요소(+) → "
              "데이터 레이블에서 위치를 지정합니다.")
-    # 5. 축 설정(max/min/majorUnit) 있으면 축, 없으면 범례 위치
-    ax_a = [x for x in fa["axes"] if any(v is not None for v in x)]
-    if ax_a:
-        ax_s = [x for x in fs["axes"] if any(v is not None for v in x)]
-        if sorted(map(str, ax_a)) == sorted(map(str, ax_s)):
+
+    # 5. 축 설정(문제↔정답이 다른 속성만, 주 단위 자동값 허용) / 범례 위치
+    def axis_item():
+        """(채점 대상?, 통과?, 기대, 학생) — 문제 기준선 속성 단위 비교."""
+        ax_a, ax_s = fa["axes"], fs["axes"]
+        ax_p = fp["axes"] if fp is not None else None
+        if ax_p is not None and len(ax_p) == len(ax_a):
+            graded_any = False
+            ok = True
+            exp, got = [], []
+            names = ("최대", "최소", "주 단위")
+            for i in range(len(ax_a)):
+                for j, nm in enumerate(names):
+                    aa, pa = ax_a[i][j], ax_p[i][j]
+                    sa = ax_s[i][j] if i < len(ax_s) else None
+                    if aa == pa:
+                        continue  # 정답 작성자 부수 설정/기존 값
+                    graded_any = True
+                    if sa == aa:
+                        continue
+                    if j == 2 and sa is None and pa is None:
+                        continue  # 주 단위: 자동값이 지시 결과와 동일 가능
+                    ok = False
+                    exp.append(f"{nm} {aa:g}" if aa is not None else f"{nm} 자동")
+                    got.append(f"{nm} {sa:g}" if sa is not None else f"{nm} 자동")
+            return graded_any, ok, ", ".join(exp), ", ".join(got)
+        a_set = [x for x in ax_a if any(v is not None for v in x)]
+        if not a_set:
+            return False, True, "", ""
+        s_set = [x for x in ax_s if any(v is not None for v in x)]
+        return True, sorted(map(str, a_set)) == sorted(map(str, s_set)), \
+            str(a_set), str(s_set)
+
+    ax_graded, ax_ok, ax_exp, ax_got = axis_item()
+    if ax_graded:
+        if ax_ok:
             passed += 1
         else:
-            fail("축 설정", ax_a, ax_s,
+            fail("축 설정", ax_exp, ax_got,
                  "세로 축 더블클릭 → 축 서식에서 최소/최대 경계와 단위 "
                  "(주 단위)를 지시 값으로 입력합니다.")
     else:
-        if fa["legend"] == fs["legend"]:
+        legend_graded = fp is None or fp["legend"] != fa["legend"]
+        if not legend_graded or fa["legend"] == fs["legend"]:
             passed += 1
         else:
             fail("범례 위치", fa["legend"], fs["legend"],
