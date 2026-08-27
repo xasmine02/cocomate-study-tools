@@ -13,7 +13,7 @@
 의존성: Python 3.8+ / openpyxl (표준 라이브러리 외 유일한 의존성)
 """
 
-__version__ = "1.3.0"
+__version__ = "1.4.0"
 
 import argparse
 import html as html_mod
@@ -2318,7 +2318,11 @@ NEEDS_FMT_DIFF = {"기본작업-2", "매크로작업"}
 # ---------------------------------------------------------------------------
 
 
-def run_grading(problem_path, answer_path, student_path, key):
+def run_grading(problem_path, answer_path, student_path, key, sheets=None):
+    """채점 실행. sheets가 주어지면 해당 시트만 부분 채점.
+
+    sheets: 시트명 목록(정규화 매칭). 없는 이름이면 RuntimeError.
+    """
     book_p = Book(problem_path, "문제")
     book_a = Book(answer_path, "정답")
     book_s = Book(student_path, "학생")
@@ -2349,6 +2353,20 @@ def run_grading(problem_path, answer_path, student_path, key):
 
     if not matched:
         raise RuntimeError("문제/정답 파일에서 매칭되는 시트를 찾지 못했습니다.")
+
+    # 부분 채점: 지정 시트만 남기기
+    if sheets:
+        wanted = [norm_sheet_name(s) for s in sheets if str(s).strip()]
+        available = [m[0] for m in matched]
+        unknown = [w for w in wanted if w not in available]
+        if unknown:
+            raise RuntimeError(
+                "--sheets에 지정한 시트를 찾을 수 없습니다: "
+                + ", ".join(unknown)
+                + "\n사용 가능한 시트: " + ", ".join(available))
+        matched = [m for m in matched if m[0] in wanted]
+        global_notes.append("부분 채점: " + ", ".join(m[1] for m in matched)
+                            + " 시트만 채점했습니다.")
 
     # diff 선계산 + 배점 할당
     ctxs = {}
@@ -2412,7 +2430,10 @@ def run_grading(problem_path, answer_path, student_path, key):
 
     total_alloc = sum(r.alloc for r in results)
     total_earned = sum(r.earned for r in results)
-    if total_alloc and abs(total_alloc - 100) > 0.01:
+    if sheets:
+        # 부분 채점: 환산 없이 영역 배점 합 기준 원점수
+        score100 = int(round(total_earned))
+    elif total_alloc and abs(total_alloc - 100) > 0.01:
         score100 = round(total_earned / total_alloc * 100)
         global_notes.append(f"채점 대상 배점 합계가 {total_alloc:.0f}점이라 "
                             "100점 만점으로 환산했습니다.")
@@ -3195,7 +3216,7 @@ def build_diagnosis(results):
 # ---------------------------------------------------------------------------
 
 
-def print_console(results, score100, global_notes, paths):
+def print_console(results, score100, global_notes, paths, partial=False):
     line = "─" * 56
     print()
     print(line)
@@ -3221,10 +3242,18 @@ def print_console(results, score100, global_notes, paths):
         print(" " + pad(r.name, 22) + pad(alloc, 8, "right")
               + pad(f"{r.earned:.0f}", 8, "right") + pad(verdict, 10, "right"))
     print(line)
-    verdict = "합격권" if score100 >= PASS_LINE else "미달"
-    print(" " + pad("총점", 22) + pad("100", 8, "right")
-          + pad(str(score100), 8, "right"))
-    print(f" 합격선 {PASS_LINE}점 기준: {verdict}")
+    max_alloc = sum(r.alloc for r in results)
+    if partial:
+        names = ", ".join(r.name for r in results)
+        print(" " + pad("부분 채점 합계", 22)
+              + pad(f"{max_alloc:.0f}", 8, "right")
+              + pad(str(score100), 8, "right"))
+        print(f" 부분 채점: {names} ({max_alloc:.0f}점 만점)")
+    else:
+        verdict = "합격권" if score100 >= PASS_LINE else "미달"
+        print(" " + pad("총점", 22) + pad("100", 8, "right")
+              + pad(str(score100), 8, "right"))
+        print(f" 합격선 {PASS_LINE}점 기준: {verdict}")
     print(line)
 
     detailed = [r for r in results if r.details or r.notes]
@@ -3249,32 +3278,38 @@ def esc(s):
     return html_mod.escape(str(s))
 
 
-def _svg_donut(score, pass_line=PASS_LINE):
-    """총점 도넛 게이지 (합격선 눈금 포함)."""
+def _svg_donut(score, pass_line=PASS_LINE, max_total=100, show_pass=True):
+    """총점 도넛 게이지. 부분 채점이면 영역 만점 기준, 합격선 눈금 생략."""
     r = 56
     c = 2 * math.pi * r
-    frac = max(0.0, min(1.0, score / 100.0))
-    color = "#107C41" if score >= pass_line else "#B45309"
-    ang = 2 * math.pi * (pass_line / 100.0) - math.pi / 2
-    x1 = 70 + (r - 10) * math.cos(ang)
-    y1 = 70 + (r - 10) * math.sin(ang)
-    x2 = 70 + (r + 10) * math.cos(ang)
-    y2 = 70 + (r + 10) * math.sin(ang)
+    max_total = max_total or 100
+    frac = max(0.0, min(1.0, score / float(max_total)))
+    if show_pass:
+        color = "#107C41" if score >= pass_line else "#B45309"
+    else:
+        color = "#107C41"
+    tick = ""
+    if show_pass:
+        ang = 2 * math.pi * (pass_line / 100.0) - math.pi / 2
+        x1 = 70 + (r - 10) * math.cos(ang)
+        y1 = 70 + (r - 10) * math.sin(ang)
+        x2 = 70 + (r + 10) * math.cos(ang)
+        y2 = 70 + (r + 10) * math.sin(ang)
+        tick = (f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" '
+                f'y2="{y2:.1f}" stroke="#B45309" stroke-width="2"/>')
     return (
         f'<svg width="150" height="150" viewBox="0 0 140 140" role="img" '
-        f'aria-label="총점 {score}점">'
+        f'aria-label="점수 {score}/{max_total}점">'
         f'<circle cx="70" cy="70" r="{r}" fill="none" stroke="#E8EFEA" '
         f'stroke-width="13"/>'
         f'<circle cx="70" cy="70" r="{r}" fill="none" stroke="{color}" '
         f'stroke-width="13" stroke-dasharray="{c * frac:.1f} {c:.1f}" '
-        f'transform="rotate(-90 70 70)"/>'
-        f'<line x1="{x1:.1f}" y1="{y1:.1f}" x2="{x2:.1f}" y2="{y2:.1f}" '
-        f'stroke="#B45309" stroke-width="2"/>'
+        f'transform="rotate(-90 70 70)"/>' + tick +
         f'<text x="70" y="68" text-anchor="middle" font-size="32" '
         f'font-weight="700" fill="{color}" '
         f'style="font-variant-numeric:tabular-nums">{score}</text>'
         f'<text x="70" y="90" text-anchor="middle" font-size="12" '
-        f'fill="#57705F">/ 100점</text></svg>')
+        f'fill="#57705F">/ {max_total:.0f}점</text></svg>')
 
 
 def _svg_sheet_bars(results):
@@ -3389,6 +3424,8 @@ def _history_points(history, set_name, current_score):
     """기록에서 같은 세트의 점수 추이 추출 + 이번 점수."""
     pts = []
     for rec in history or []:
+        if rec.get("mode") == "부분연습":  # 부분 연습 점수는 추이에서 제외
+            continue
         nm = str(rec.get("세트명", ""))
         if set_name and (nm == set_name or nm.startswith(set_name)):
             sc = rec.get("점수")
@@ -3474,18 +3511,24 @@ def _wrong_card_html(card):
 
 
 def write_html(path, results, score100, global_notes, paths,
-               set_name=None, history=None):
-    """학습 리포트 HTML 생성 (자체 완결, 인라인 SVG)."""
+               set_name=None, history=None, partial=False):
+    """학습 리포트 HTML 생성 (자체 완결, 인라인 SVG).
+
+    partial=True면 선택 시트만 채점한 부분 리포트: 영역 배점 만점 기준
+    도넛, 합격선/배지/성적 추이 생략.
+    """
     verdict = "합격권" if score100 >= PASS_LINE else "미달"
     vcls = "pass" if score100 >= PASS_LINE else "fail"
     set_name = set_name or derive_set_name(paths[0])
     now_txt = datetime.now().strftime("%Y-%m-%d %H:%M")
     all_cards = [c for r in results for c in r.wrong]
     cat_losses, top3, checklist = build_diagnosis(results)
+    max_total = sum(r.alloc for r in results) if partial else 100
+    graded_names = ", ".join(r.name for r in results)
 
-    # 성적 추이
+    # 성적 추이 (부분 채점은 표시하지 않음 — 시험 점수와 섞이지 않게)
     trend_html = ""
-    if history:
+    if history and not partial:
         pts = _history_points(history, set_name, score100)
         if len(pts) >= 2:
             trend_html = ('<div class="card"><h2>성적 추이</h2>'
@@ -3648,12 +3691,16 @@ footer { color:#57705F; font-size:0.78rem; text-align:center;
         f"<title>학습 리포트 - {esc(set_name)}</title>\n"
         f"<style>{css}</style></head><body><div class=\"wrap\">\n"
         '<div class="card"><div class="head-flex">'
-        f'<div>{_svg_donut(score100)}</div>'
+        f'<div>{_svg_donut(score100, max_total=max_total, show_pass=not partial)}</div>'
         '<div class="head-info">'
-        f"<h1>{esc(set_name)} 학습 리포트</h1>"
-        f'<div class="meta">채점 일시 {now_txt} · 합격선 {PASS_LINE}점</div>'
-        f'<span class="badge {vcls}">{verdict}</span>'
-        '<div class="files">'
+        + (f"<h1>{esc(set_name)} 부분 연습 리포트</h1>"
+           f'<div class="meta">부분 채점: {esc(graded_names)} '
+           f'({max_total:.0f}점 만점) · 채점 일시 {now_txt}</div>'
+           if partial else
+           f"<h1>{esc(set_name)} 학습 리포트</h1>"
+           f'<div class="meta">채점 일시 {now_txt} · 합격선 {PASS_LINE}점</div>'
+           f'<span class="badge {vcls}">{verdict}</span>')
+        + '<div class="files">'
         f"문제 {esc(os.path.basename(paths[0]))}<br>"
         f"정답 {esc(os.path.basename(paths[1]))}<br>"
         f"풀이 {esc(os.path.basename(paths[2]))}</div>"
@@ -3676,11 +3723,15 @@ def derive_set_name(problem_path):
     return base
 
 
-def write_json(path, results, score100, global_notes, paths):
+def write_json(path, results, score100, global_notes, paths, partial=False):
     data = {
         "total": score100,
         "pass_line": PASS_LINE,
-        "passed": score100 >= PASS_LINE,
+        "passed": None if partial else score100 >= PASS_LINE,
+        "mode": "partial" if partial else "full",
+        "graded_sheets": [r.name for r in results],
+        "max_total": round(sum(r.alloc for r in results), 1)
+        if partial else 100,
         "generated": datetime.now().isoformat(timespec="seconds"),
         "files": {
             "problem": os.path.abspath(paths[0]),
@@ -3745,6 +3796,10 @@ def main(argv=None):
     ap.add_argument("--history",
                     help="응시 기록 JSON(기록.json) 경로 - 있으면 HTML "
                          "리포트에 같은 세트의 성적 추이를 표시 (선택)")
+    ap.add_argument("--sheets",
+                    help="부분 채점: 지정 시트만 채점 (쉼표 구분, 예: "
+                         "--sheets 계산작업 또는 --sheets 기본작업-1,"
+                         "기본작업-2). 총점은 해당 시트 배점 합 기준 (선택)")
     args = ap.parse_args(argv)
 
     key = {}
@@ -3756,15 +3811,19 @@ def main(argv=None):
             print(f"경고: --key 파일을 읽을 수 없어 무시합니다: {e}")
     key = normalize_key(key)
 
+    sheets = None
+    if args.sheets:
+        sheets = [s.strip() for s in str(args.sheets).split(",") if s.strip()]
     try:
         results, score100, notes, _books = run_grading(
-            args.problem, args.answer, args.student, key)
+            args.problem, args.answer, args.student, key, sheets=sheets)
     except (FileNotFoundError, RuntimeError) as e:
         print(f"오류: {e}")
         return 2
 
+    partial = bool(sheets)
     paths = (args.problem, args.answer, args.student)
-    print_console(results, score100, notes, paths)
+    print_console(results, score100, notes, paths, partial=partial)
     # 기본 산출물 경로: 명시하지 않으면 풀이 파일 옆 '채점결과/' 폴더
     set_name = derive_set_name(args.problem)
     html_path, json_path = args.html, args.json_out
@@ -3792,10 +3851,11 @@ def main(argv=None):
             print(f"경고: --history 파일을 읽을 수 없어 무시합니다: {e}")
     if html_path:
         write_html(html_path, results, score100, notes, paths,
-                   set_name=set_name, history=history)
+                   set_name=set_name, history=history, partial=partial)
         print(f"HTML 리포트를 저장했습니다: {html_path}")
     if json_path:
-        write_json(json_path, results, score100, notes, paths)
+        write_json(json_path, results, score100, notes, paths,
+                   partial=partial)
         print(f"JSON 결과를 저장했습니다: {json_path}")
     return 0
 
