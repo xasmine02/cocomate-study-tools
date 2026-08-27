@@ -13,7 +13,7 @@
 의존성: Python 3.8+ / openpyxl (표준 라이브러리 외 유일한 의존성)
 """
 
-__version__ = "1.2.0"
+__version__ = "1.3.0"
 
 import argparse
 import html as html_mod
@@ -357,30 +357,145 @@ class Book:
 # ---------------------------------------------------------------------------
 
 
-def _color_key(color):
+# 색 비교: 테마/인덱스 색을 RGB로 환산한 뒤 비교 (저장 방식 차이 무시)
+
+_THEME_ORDER = ("lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3",
+                "accent4", "accent5", "accent6", "hlink", "folHlink")
+_DEFAULT_THEME = ("FFFFFF", "000000", "E7E6E6", "44546A", "4472C4", "ED7D31",
+                  "A5A5A5", "FFC000", "5B9BD5", "70AD47", "0563C1", "954F72")
+_theme_cache = {}
+
+
+def _theme_palette(wb):
+    """워크북 theme1.xml -> 테마 색 RGB 목록 (Excel theme 인덱스 순)."""
+    key = id(wb)
+    if key in _theme_cache:
+        return _theme_cache[key]
+    palette = list(_DEFAULT_THEME)
+    try:
+        xml = getattr(wb, "loaded_theme", None)
+        if xml:
+            if isinstance(xml, bytes):
+                xml = xml.decode("utf-8", "replace")
+            found = {}
+            for name in ("dk1", "lt1", "dk2", "lt2", "accent1", "accent2",
+                         "accent3", "accent4", "accent5", "accent6",
+                         "hlink", "folHlink"):
+                m = re.search(
+                    rf"<a:{name}>.*?(?:srgbClr\s+val=\"([0-9A-Fa-f]{{6}})\""
+                    rf"|sysClr[^>]*lastClr=\"([0-9A-Fa-f]{{6}})\")",
+                    xml, re.DOTALL)
+                if m:
+                    found[name] = (m.group(1) or m.group(2)).upper()
+            for i, nm in enumerate(_THEME_ORDER):
+                if nm in found:
+                    palette[i] = found[nm]
+    except Exception:
+        pass
+    _theme_cache[key] = palette
+    return palette
+
+
+def _apply_tint(rgb_hex, tint):
+    """테마 색 tint 적용 (표준 HLS 휘도 공식)."""
+    import colorsys
+    try:
+        r = int(rgb_hex[0:2], 16) / 255.0
+        g = int(rgb_hex[2:4], 16) / 255.0
+        b = int(rgb_hex[4:6], 16) / 255.0
+        h, l, s = colorsys.rgb_to_hls(r, g, b)
+        if tint < 0:
+            l = l * (1.0 + tint)
+        elif tint > 0:
+            l = l * (1.0 - tint) + tint
+        r2, g2, b2 = colorsys.hls_to_rgb(h, max(0.0, min(1.0, l)), s)
+        return "%02X%02X%02X" % (round(r2 * 255), round(g2 * 255),
+                                 round(b2 * 255))
+    except Exception:
+        return rgb_hex
+
+
+def _quant_hex(rgb_hex):
+    """반올림 오차 흡수를 위해 채널을 4단위로 양자화."""
+    try:
+        vals = [min(255, (int(rgb_hex[i:i + 2], 16) + 2) // 4 * 4)
+                for i in (0, 2, 4)]
+        return "%02X%02X%02X" % tuple(vals)
+    except Exception:
+        return rgb_hex
+
+
+def _color_key(color, wb=None):
+    """색을 저장 방식과 무관한 비교 키로. 가능하면 ("rgb", 양자화 RGB)."""
     if color is None:
         return None
     try:
         if color.type == "rgb":
-            rgb = color.rgb
-            if rgb in (None, "00000000"):
+            argb = color.rgb
+            if argb in (None, "00000000"):
                 return None
-            return ("rgb", str(rgb))
+            return ("rgb", _quant_hex(str(argb)[-6:].upper()))
         if color.type == "theme":
-            tint = round(color.tint or 0.0, 2)
-            return ("theme", color.theme, tint)
+            idx = color.theme
+            tint = float(color.tint or 0.0)
+            if wb is not None and isinstance(idx, int) and \
+                    0 <= idx < len(_THEME_ORDER):
+                base = _theme_palette(wb)[idx]
+                return ("rgb", _quant_hex(_apply_tint(base, tint)))
+            return ("theme", idx, round(tint, 2))
         if color.type == "indexed":
             if color.indexed in (64, 65):  # 자동/기본
                 return None
-            return ("idx", color.indexed)
+            try:
+                from openpyxl.styles.colors import COLOR_INDEX
+                argb = COLOR_INDEX[color.indexed]
+                return ("rgb", _quant_hex(str(argb)[-6:].upper()))
+            except Exception:
+                return ("idx", color.indexed)
     except Exception:
         pass
     return None
 
 
-def fmt_signature(cell, kind):
-    """셀의 특정 서식 종류(kind) 시그니처."""
+_COLOR_NAMES_KO = (
+    ("FFFFFF", "흰색"), ("000000", "검정"), ("FF0000", "빨강"),
+    ("FFFF00", "노랑"), ("FFC000", "황금색"), ("BF8F00", "황금색(어둡게)"),
+    ("ED7D31", "주황"), ("00B050", "초록"), ("70AD47", "연한 초록(강조6)"),
+    ("A9D08E", "연한 초록"), ("4472C4", "파랑(강조1)"), ("0070C0", "파랑"),
+    ("5B9BD5", "하늘색(강조5)"), ("A5A5A5", "회색(강조3)"),
+    ("D9D9D9", "연한 회색"), ("808080", "회색"), ("7030A0", "보라"),
+    ("FFE699", "연한 황금색"), ("DDEBF7", "연한 파랑"),
+    ("FCE4D6", "연한 주황"),
+)
+
+
+def color_name_ko(rgb_hex):
+    """RGB -> 가까운 한국어 색 이름 (+hex). 예: '황금색(#BF8F00 계열)'"""
     try:
+        r = int(rgb_hex[0:2], 16)
+        g = int(rgb_hex[2:4], 16)
+        b = int(rgb_hex[4:6], 16)
+        best = None
+        for hx, nm in _COLOR_NAMES_KO:
+            d = (abs(r - int(hx[0:2], 16)) + abs(g - int(hx[2:4], 16))
+                 + abs(b - int(hx[4:6], 16)))
+            if best is None or d < best[0]:
+                best = (d, nm)
+        if best and best[0] <= 90:
+            return f"{best[1]}(#{rgb_hex} 계열)"
+        return f"#{rgb_hex}"
+    except Exception:
+        return f"#{rgb_hex}"
+
+
+def fmt_signature(cell, kind):
+    """셀의 특정 서식 종류(kind) 시그니처. 색은 테마 해석 후 RGB 비교."""
+    try:
+        wb = None
+        try:
+            wb = cell.parent.parent
+        except Exception:
+            pass
         if kind == "number_format":
             nf = (cell.number_format or "General").strip()
             return nf
@@ -389,13 +504,13 @@ def fmt_signature(cell, kind):
             u = f.underline
             u = None if u in (None, "none") else u
             return (f.name, float(f.size or 11), bool(f.bold), bool(f.italic),
-                    u, bool(f.strike), _color_key(f.color))
+                    u, bool(f.strike), _color_key(f.color, wb))
         if kind == "fill":
             fl = cell.fill
             pat = fl.patternType if fl else None
             if pat in (None, "none"):
                 return None
-            return (pat, _color_key(fl.fgColor))
+            return (pat, _color_key(fl.fgColor, wb))
         if kind == "alignment":
             al = cell.alignment
             return (al.horizontal, al.vertical, bool(al.wrap_text),
@@ -404,17 +519,362 @@ def fmt_signature(cell, kind):
             b = cell.border
             return tuple(bool(s is not None and s.style) for s in
                          (b.left, b.right, b.top, b.bottom, b.diagonal))
-        if kind == "style":
-            try:
-                return str(cell.style)
-            except Exception:
-                return "Normal"
     except Exception:
         return "?"
     return None
 
 
-CELL_FMT_KINDS = ("number_format", "font", "fill", "alignment", "border", "style")
+# 셀 단위 비교 서식 종류. 오탐 방지를 위해 다음은 제외:
+#  - border: edge(격자 선) 단위 합성 비교로 대체 (인접 셀 공유 선 대응)
+#  - 셀 스타일 이름: 저장 방식 차이일 뿐, 효과는 표시형식/글꼴 등으로 판정됨
+CELL_FMT_KINDS = ("number_format", "font", "fill", "alignment")
+
+_BORDER_WEIGHT = {"hair": 1, "thin": 2, "dotted": 2, "dashed": 2,
+                  "dashDot": 2, "dashDotDot": 2, "mediumDashed": 3,
+                  "mediumDashDot": 3, "mediumDashDotDot": 3,
+                  "slantDashDot": 3, "medium": 3, "thick": 4, "double": 5}
+
+BORDER_STYLE_KO = {"thin": "실선", "medium": "굵은 실선", "double": "이중 실선",
+                   "dotted": "점선", "dashed": "파선", "hair": "가는 실선",
+                   "thick": "매우 굵은 실선", "mediumDashed": "굵은 파선",
+                   "dashDot": "일점쇄선", "dashDotDot": "이점쇄선"}
+
+
+def _combine_edge(s1, s2):
+    """인접한 두 셀이 선언한 같은 선: 어느 쪽이든 있으면 존재, 굵은 쪽 우선."""
+    if s1 and s2:
+        return s1 if _BORDER_WEIGHT.get(s1, 2) >= _BORDER_WEIGHT.get(s2, 2) \
+            else s2
+    return s1 or s2
+
+
+def sheet_edge_map(ws, max_r, max_c):
+    """격자 선(edge) 단위 테두리 맵. Excel이 공유 선을 어느 셀에 저장했든
+    같은 선으로 취급. 병합 범위 내부 선은 제외.
+
+    키: ("h", r, c) = r행 위쪽 가로선, ("v", r, c) = c열 왼쪽 세로선.
+    """
+    _members, anchors = merge_maps(ws)
+
+    def side(r, c, name):
+        if r < 1 or c < 1:
+            return None
+        try:
+            s = getattr(ws.cell(r, c).border, name)
+            return s.style if s is not None else None
+        except Exception:
+            return None
+
+    edges = {}
+    for r in range(1, max_r + 2):
+        for c in range(1, max_c + 1):
+            v = _combine_edge(side(r, c, "top"), side(r - 1, c, "bottom"))
+            if v:
+                edges[("h", r, c)] = v
+    for r in range(1, max_r + 1):
+        for c in range(1, max_c + 2):
+            v = _combine_edge(side(r, c, "left"), side(r, c - 1, "right"))
+            if v:
+                edges[("v", r, c)] = v
+    for (min_c, min_r, mx_c, mx_r) in anchors.values():
+        for r in range(min_r + 1, mx_r + 1):
+            for c in range(min_c, mx_c + 1):
+                edges.pop(("h", r, c), None)
+        for r in range(min_r, mx_r + 1):
+            for c in range(min_c + 1, mx_c + 1):
+                edges.pop(("v", r, c), None)
+    return edges
+
+
+def merge_maps(ws):
+    """병합 맵: (비앵커 멤버 -> 앵커 좌표), (앵커 -> bounds).
+
+    Excel은 서식 적용 순서(병합 전/후)에 따라 병합 하위 셀에 서식을
+    저장하기도, 앵커에만 저장하기도 합니다. 화면 표시는 항상 앵커
+    기준이므로 서식 비교도 앵커 기준으로 해야 오탐이 없습니다.
+    """
+    members = {}
+    anchors = {}
+    try:
+        for rng in ws.merged_cells.ranges:
+            min_c, min_r, max_c, max_r = rng.bounds
+            anchors[(min_r, min_c)] = (min_c, min_r, max_c, max_r)
+            for r in range(min_r, max_r + 1):
+                for c in range(min_c, max_c + 1):
+                    if (r, c) != (min_r, min_c):
+                        members[(r, c)] = (min_r, min_c)
+    except Exception:
+        pass
+    return members, anchors
+
+
+def fmt_signature_m(ws, r, c, kind, members, anchors):
+    """병합 인지 서식 시그니처.
+
+    비앵커 멤버는 앵커 셀의 서식으로 대체하고, 병합 앵커의 테두리는
+    범위 외곽 테두리를 합성해 비교합니다 (외곽 테두리가 하위 셀에
+    분산 저장되는 경우 대응).
+    """
+    if (r, c) in members:
+        r, c = members[(r, c)]
+    if kind == "border" and (r, c) in anchors:
+        min_c, min_r, max_c, max_r = anchors[(r, c)]
+
+        def _has(side, cells):
+            for rr, cc in cells:
+                try:
+                    s = getattr(ws.cell(rr, cc).border, side)
+                    if s is not None and s.style:
+                        return True
+                except Exception:
+                    pass
+            return False
+
+        return (
+            _has("left", [(rr, min_c) for rr in range(min_r, max_r + 1)]),
+            _has("right", [(rr, max_c) for rr in range(min_r, max_r + 1)]),
+            _has("top", [(min_r, cc) for cc in range(min_c, max_c + 1)]),
+            _has("bottom", [(max_r, cc) for cc in range(min_c, max_c + 1)]),
+            False,
+        )
+    return fmt_signature(ws.cell(r, c), kind)
+
+
+# ---------------------------------------------------------------------------
+# 서식 속성 한국어 표기 / 조작 경로 힌트 / 범위 표기
+# ---------------------------------------------------------------------------
+
+H_ALIGN_KO = {"center": "가운데", "centerContinuous": "선택 영역의 가운데로",
+              "distributed": "균등 분할", "fill": "채우기", "left": "왼쪽",
+              "right": "오른쪽", "justify": "양쪽 맞춤", "general": "일반",
+              None: "일반"}
+V_ALIGN_KO = {"center": "가운데", "top": "위쪽", "bottom": "아래쪽",
+              "justify": "양쪽", "distributed": "균등 분할", None: "기본"}
+UNDERLINE_KO = {"double": "이중 실선 밑줄", "single": "밑줄",
+                "doubleAccounting": "이중 실선 밑줄(회계형)",
+                "singleAccounting": "밑줄(회계형)"}
+
+
+def describe_font(sig):
+    """글꼴 시그니처 -> '굴림체 16pt 굵은 기울임꼴, 이중 실선 밑줄'"""
+    if not sig or sig == "?":
+        return "확인 불가"
+    name, size, bold, italic, u, strike, color = sig
+    head = f"{name or '기본 글꼴'} {size:g}pt"
+    parts = []
+    if bold and italic:
+        parts.append("굵은 기울임꼴")
+    elif bold:
+        parts.append("굵게")
+    elif italic:
+        parts.append("기울임꼴")
+    if u:
+        parts.append(UNDERLINE_KO.get(u, "밑줄"))
+    if strike:
+        parts.append("취소선")
+    if color:
+        if isinstance(color, tuple) and color[0] == "rgb":
+            parts.append(f"글꼴 색 {color_name_ko(color[1])}")
+        else:
+            parts.append("글꼴 색 지정")
+    return head + (" " + ", ".join(parts) if parts else "")
+
+
+def describe_border(sig):
+    if not sig or sig == "?":
+        return "확인 불가"
+    l, r, t, b = sig[:4]
+    if all((l, r, t, b)):
+        return "테두리(사방)"
+    if not any((l, r, t, b)):
+        return "테두리 없음"
+    sides = [nm for nm, v in (("왼쪽", l), ("오른쪽", r),
+                              ("위쪽", t), ("아래쪽", b)) if v]
+    return "테두리(" + "·".join(sides) + ")"
+
+
+def describe_fill(sig):
+    if sig is None:
+        return "채우기 없음"
+    if sig == "?":
+        return "확인 불가"
+    pat, color = sig
+    if isinstance(color, tuple) and color and color[0] == "rgb":
+        return f"채우기 {color_name_ko(str(color[1])[-6:])}"
+    if isinstance(color, tuple) and color and color[0] == "theme":
+        return "채우기 있음(테마 색)"
+    return "채우기 있음"
+
+
+def props_for_kind(kind, sig_a, sig_s):
+    """실제로 다른 속성만 (한국어 속성명, 정답, 내 답) 목록으로."""
+    out = []
+    if kind == "alignment":
+        sa = sig_a if isinstance(sig_a, tuple) else (None, None, False, 0)
+        ss = sig_s if isinstance(sig_s, tuple) else (None, None, False, 0)
+        if sa[0] != ss[0]:
+            out.append({"name": "가로 맞춤",
+                        "expected": H_ALIGN_KO.get(sa[0], sa[0]),
+                        "got": H_ALIGN_KO.get(ss[0], ss[0])})
+        if sa[1] != ss[1]:
+            out.append({"name": "세로 맞춤",
+                        "expected": V_ALIGN_KO.get(sa[1], sa[1]),
+                        "got": V_ALIGN_KO.get(ss[1], ss[1])})
+        if sa[2] != ss[2]:
+            out.append({"name": "텍스트 줄 바꿈",
+                        "expected": "적용" if sa[2] else "해제",
+                        "got": "적용" if ss[2] else "해제"})
+        if len(sa) > 3 and len(ss) > 3 and sa[3] != ss[3]:
+            out.append({"name": "텍스트 회전",
+                        "expected": f"{sa[3]}도", "got": f"{ss[3]}도"})
+    elif kind == "font":
+        out.append({"name": "글꼴", "expected": describe_font(sig_a),
+                    "got": describe_font(sig_s)})
+    elif kind == "fill":
+        out.append({"name": "채우기", "expected": describe_fill(sig_a),
+                    "got": describe_fill(sig_s)})
+    elif kind == "border":
+        out.append({"name": "테두리", "expected": describe_border(sig_a),
+                    "got": describe_border(sig_s)})
+    elif kind == "number_format":
+        exp = str(sig_a)
+        mean = explain_number_format(exp)
+        out.append({"name": "표시 형식",
+                    "expected": exp + (f" — {mean}" if mean else ""),
+                    "got": str(sig_s) if sig_s is not None else "확인 불가"})
+    elif kind == "style":
+        out.append({"name": "셀 스타일", "expected": str(sig_a),
+                    "got": str(sig_s)})
+    return out
+
+
+def hints_for_kind(kind, sig_a):
+    """실제 차이 난 속성에서 파생한 조작 경로 힌트."""
+    if kind == "alignment" and isinstance(sig_a, tuple):
+        h = sig_a[0]
+        if h == "distributed":
+            return ["Ctrl+1 → 맞춤 탭 → 가로 '균등 분할'"]
+        if h == "centerContinuous":
+            return ["Ctrl+1 → 맞춤 탭 → 가로 '선택 영역의 가운데로' "
+                    "(병합이 아닙니다)"]
+        if h == "fill":
+            return ["Ctrl+1 → 맞춤 탭 → 가로 '채우기'"]
+        if sig_a[2]:
+            return ["Ctrl+1 → 맞춤 탭 → '텍스트 줄 바꿈' 체크"]
+        return ["홈 탭 맞춤 그룹(가로/세로 가운데)"]
+    if kind == "font" and isinstance(sig_a, tuple):
+        if sig_a[4] in ("double", "doubleAccounting"):
+            return ["Ctrl+1 → 글꼴 탭 → 밑줄 '이중 실선' (회계용 아님 주의)",
+                    "홈 탭 글꼴 그룹에서 글꼴 이름·크기·굵게/기울임 지정"]
+        return ["홈 탭 글꼴 그룹에서 글꼴 이름·크기·굵게/기울임 지정"]
+    if kind == "merge":
+        return ["범위를 선택하고 홈 탭 → '병합하고 가운데 맞춤'"]
+    if kind == "number_format":
+        return [f"Ctrl+1 → 표시 형식 → 사용자 지정: {sig_a}"]
+    if kind == "border":
+        return ["홈 탭 → 테두리 → 모든 테두리/바깥쪽 테두리"]
+    if kind == "fill":
+        return ["홈 탭 → 채우기 색(페인트 통)"]
+    if kind == "style":
+        return ["홈 탭 → 셀 스타일에서 지정(쉼표/통화 등)"]
+    if kind == "value":
+        return ["문제 지시 값을 정확히 입력했는지 확인"]
+    return []
+
+
+def compress_coords(coords):
+    """['C5','C6',...,'C11','H6'] -> ['C5:C11', 'H6'] 범위 표기."""
+    from openpyxl.utils import get_column_letter
+    from openpyxl.utils.cell import coordinate_to_tuple
+    pts = set()
+    for co in coords:
+        try:
+            if ":" in str(co):
+                pts.add(str(co))  # 이미 범위 표기
+                continue
+            pts.add(coordinate_to_tuple(str(co)))
+        except Exception:
+            pts.add(str(co))
+    ranges = sorted(p for p in pts if isinstance(p, str))
+    cells = sorted(p for p in pts if isinstance(p, tuple))
+    out = []
+    used = set()
+    bycol = {}
+    for (r, c) in cells:
+        bycol.setdefault(c, []).append(r)
+    for c in sorted(bycol):
+        rows = sorted(bycol[c])
+        run = [rows[0]]
+        for r in rows[1:] + [None]:
+            if r is not None and r == run[-1] + 1:
+                run.append(r)
+                continue
+            if len(run) >= 2:
+                L = get_column_letter(c)
+                out.append(f"{L}{run[0]}:{L}{run[-1]}")
+                used.update((rr, c) for rr in run)
+            if r is not None:
+                run = [r]
+    remaining = [p for p in cells if p not in used]
+    byrow = {}
+    for (r, c) in remaining:
+        byrow.setdefault(r, []).append(c)
+    for r in sorted(byrow):
+        cols = sorted(byrow[r])
+        run = [cols[0]]
+        for c in cols[1:] + [None]:
+            if c is not None and c == run[-1] + 1:
+                run.append(c)
+                continue
+            if len(run) >= 2:
+                out.append(f"{get_column_letter(run[0])}{r}:"
+                           f"{get_column_letter(run[-1])}{r}")
+                used.update((r, cc) for cc in run)
+            elif (r, run[0]) not in used:
+                out.append(f"{get_column_letter(run[0])}{r}")
+                used.add((r, run[0]))
+            if c is not None:
+                run = [c]
+    return sorted(set(out + ranges))
+
+
+def _cluster_units(units, target):
+    """서식 diff 단위를 공간 인접(맨해튼 거리 <=2)으로 묶고 target개로 병합."""
+    if not units:
+        return []
+    clusters = [[u] for u in units]
+
+    def dist(c1, c2):
+        return min(abs(a["pos"][0] - b["pos"][0])
+                   + abs(a["pos"][1] - b["pos"][1])
+                   for a in c1 for b in c2)
+
+    merged = True
+    while merged:
+        merged = False
+        for i in range(len(clusters)):
+            for j in range(i + 1, len(clusters)):
+                if dist(clusters[i], clusters[j]) <= 2:
+                    clusters[i].extend(clusters[j])
+                    del clusters[j]
+                    merged = True
+                    break
+            if merged:
+                break
+    while len(clusters) > max(1, target):
+        best = None
+        for i in range(len(clusters)):
+            for j in range(i + 1, len(clusters)):
+                d = dist(clusters[i], clusters[j])
+                if best is None or d < best[0]:
+                    best = (d, i, j)
+        _d, i, j = best
+        clusters[i].extend(clusters[j])
+        del clusters[j]
+    for cl in clusters:
+        cl.sort(key=lambda u: (u["pos"][0], u["pos"][1]))
+    clusters.sort(key=lambda cl: (cl[0]["pos"][0], cl[0]["pos"][1]))
+    return clusters
 
 
 def norm_ref(ref):
@@ -498,12 +958,34 @@ def format_diff_items(book_p, book_a, psheet, asheet):
     shp, sha = book_p.raw[psheet], book_a.raw[asheet]
     mr, mc = scan_bounds(shp, sha)
     items = {}
+    p_members, p_anchors = merge_maps(shp)
+    a_members, a_anchors = merge_maps(sha)
     for r in range(1, mr + 1):
         for c in range(1, mc + 1):
-            cp, ca = shp.cell(r, c), sha.cell(r, c)
+            # 병합 하위(비앵커) 셀은 앵커가 대표하므로 개별 비교하지 않음
+            if (r, c) in a_members or (r, c) in p_members:
+                continue
             for kind in CELL_FMT_KINDS:
-                if fmt_signature(cp, kind) != fmt_signature(ca, kind):
-                    items.setdefault(kind, []).append(ca.coordinate)
+                sp = fmt_signature_m(shp, r, c, kind, p_members, p_anchors)
+                sa = fmt_signature_m(sha, r, c, kind, a_members, a_anchors)
+                if sp != sa:
+                    items.setdefault(kind, []).append(
+                        sha.cell(r, c).coordinate)
+    # 테두리: edge(격자 선) 단위 diff — 인접 셀에 분산 저장돼도 같은 선
+    from openpyxl.utils import get_column_letter
+    p_edges = sheet_edge_map(shp, mr, mc)
+    a_edges = sheet_edge_map(sha, mr, mc)
+    border_edges = {}
+    for key in set(p_edges) | set(a_edges):
+        av, pv = a_edges.get(key), p_edges.get(key)
+        if av != pv:
+            ek, r, c = key
+            rr, cc = min(r, mr), min(c, mc)
+            coord = f"{get_column_letter(cc)}{rr}"
+            border_edges.setdefault(coord, []).append((key, av))
+    if border_edges:
+        items["border"] = sorted(border_edges)
+        items["border_edges"] = border_edges
     # 병합
     merges_p = {str(x).upper() for x in shp.merged_cells.ranges}
     merges_a = {str(x).upper() for x in sha.merged_cells.ranges}
@@ -689,6 +1171,10 @@ def normalize_key(key):
                     _unwrap_cell_override(cv)
     for k, v in (key.get("groups") or {}).items():
         out["groups"][norm_sheet_name(k)] = v
+    out["format_checks"] = {}
+    for k, v in (key.get("format_checks") or {}).items():
+        if isinstance(v, list):
+            out["format_checks"][norm_sheet_name(k)] = v
     return out
 
 
@@ -838,12 +1324,12 @@ def make_cell_entries(judge, wrong, limit=3):
 
 
 def add_card(res, label, lost, kind, cells=None, formula=None,
-             note=None, hint=None, more=0):
+             note=None, hint=None, more=0, props=None):
     """오답노트 카드 1장 추가."""
     res.wrong.append({
         "sheet": res.name, "label": label, "lost": round(float(lost), 1),
         "kind": kind, "cells": cells or [], "formula": formula,
-        "note": note, "hint": hint, "more": more,
+        "note": note, "hint": hint, "more": more, "props": props or [],
         "category": None, "explain": [], "point": None,
     })
 
@@ -882,131 +1368,485 @@ def grade_basic1(res, ctx):
         res.earned = res.alloc
 
 
-def grade_basic2(res, ctx):
-    """기본작업-2: 값 diff + 서식 diff를 종류별 항목으로 나눠 항목당 배점."""
-    items = []  # (kind, payload)
-    if ctx["vdiffs"]:
-        items.append(("value", ctx["vdiffs"]))
-    for kind, payload in ctx["fdiffs"].items():
-        items.append((kind, payload))
-    if not items:
-        res.earned = res.alloc
-        res.notes.append("문제/정답 간 차이가 없어 자동 만점 처리")
-        return
-    per = res.alloc / len(items)
-    passed = 0
-    judge = ctx["judge"]
-    book_s, ssheet = ctx["book_s"], ctx["ssheet"]
-    book_a, asheet = ctx["book_a"], ctx["asheet"]
-    shs = book_s.raw[ssheet] if ssheet else None
-    sha = book_a.raw[asheet]
-    for kind, payload in items:
-        label = FMT_KIND_LABEL.get(kind, kind)
-        ok, why, bad = _check_fmt_item(kind, payload, judge, sha, shs,
-                                       book_a, book_s, asheet, ssheet)
-        if ok:
-            passed += 1
+def _edge_desc(key, coord):
+    """edge 키 -> 'H11 아래쪽' 같은 위치 설명."""
+    from openpyxl.utils.cell import coordinate_to_tuple
+    try:
+        ek, r, c = key
+        tr, tc = coordinate_to_tuple(coord)
+        if ek == "h":
+            return f"{coord} {'아래쪽' if r > tr else '위쪽'}"
+        return f"{coord} {'오른쪽' if c > tc else '왼쪽'}"
+    except Exception:
+        return str(coord)
+
+
+def _border_props(fail_units, s_edges):
+    """테두리 실패 유닛들 -> (정답 설명, 내 답 설명)."""
+    styles = set()
+    misses = []
+    for u in fail_units:
+        for key, style in u.get("edges") or []:
+            if style:
+                styles.add(style)
+            sv = s_edges.get(key) if s_edges is not None else None
+            if (sv or None) != (style or None):
+                if style and not sv:
+                    misses.append(f"{_edge_desc(key, u['coord'])} 선 없음")
+                elif style and sv:
+                    misses.append(f"{_edge_desc(key, u['coord'])} 선 종류 다름"
+                                  f"({BORDER_STYLE_KO.get(sv, sv)})")
+                else:
+                    misses.append(f"{_edge_desc(key, u['coord'])} 불필요한 선")
+    if len(styles) == 1:
+        exp = f"모든 지시 선({BORDER_STYLE_KO.get(next(iter(styles)), '실선')})"
+    elif styles:
+        exp = "테두리 적용(" + "·".join(
+            BORDER_STYLE_KO.get(s, s) for s in sorted(styles)) + ")"
+    else:
+        exp = "선 제거"
+    got = ", ".join(misses[:3]) + (f" 외 {len(misses) - 3}곳"
+                                   if len(misses) > 3 else "")
+    return exp, (got or "확인 불가")
+
+
+def _key_row_heights(ctx, sheet_name):
+    """--key format_checks에 명시된 행 높이 {행번호: pt}."""
+    out = {}
+    fcs = (ctx["key"].get("format_checks") or {}).get(
+        norm_sheet_name(sheet_name)) or []
+    for ent in fcs:
+        chk = (ent or {}).get("check") or {}
+        rh = chk.get("row_height", chk.get("row_heights"))
+        if rh is None:
+            continue
+        if isinstance(rh, dict):
+            for k, v in rh.items():
+                try:
+                    out[int(k)] = float(v)
+                except (TypeError, ValueError):
+                    pass
+            continue
+        rows = []
+        rng = str(ent.get("range") or "").strip()
+        m = re.match(r"^(\d+)(?:\s*[:~-]\s*(\d+))?\s*행?$", rng)
+        if m:
+            rows = range(int(m.group(1)), int(m.group(2) or m.group(1)) + 1)
         else:
-            res.details.append(f"[{label}] 불일치 ({why})")
-            _add_fmt_card(res, kind, label, per, bad, judge, sha, shs)
+            try:
+                from openpyxl.utils.cell import range_boundaries
+                _c1, r1, _c2, r2 = range_boundaries(rng)
+                rows = range(r1, r2 + 1)
+            except Exception:
+                pass
+        for r in rows:
+            try:
+                out[int(r)] = float(rh)
+            except (TypeError, ValueError):
+                pass
+    return out
+
+
+def _key_col_widths(ctx, sheet_name):
+    """--key format_checks에 명시된 열 너비 {열문자: 너비}."""
+    out = {}
+    fcs = (ctx["key"].get("format_checks") or {}).get(
+        norm_sheet_name(sheet_name)) or []
+    for ent in fcs:
+        chk = (ent or {}).get("check") or {}
+        cw = chk.get("col_width", chk.get("col_widths"))
+        if cw is None:
+            continue
+        if isinstance(cw, dict):
+            for k, v in cw.items():
+                try:
+                    out[str(k).strip().upper().rstrip("열")] = float(v)
+                except (TypeError, ValueError):
+                    pass
+            continue
+        cols = []
+        rng = str(ent.get("range") or "").strip().upper()
+        m = re.match(r"^([A-Z]{1,3})(?:\s*[:~-]\s*([A-Z]{1,3}))?\s*열?$", rng)
+        if m:
+            from openpyxl.utils import column_index_from_string, \
+                get_column_letter
+            c1 = column_index_from_string(m.group(1))
+            c2 = column_index_from_string(m.group(2) or m.group(1))
+            cols = [get_column_letter(i) for i in range(c1, c2 + 1)]
+        for cl in cols:
+            try:
+                out[cl] = float(cw)
+            except (TypeError, ValueError):
+                pass
+    return out
+
+
+def grade_basic2(res, ctx):
+    """기본작업-2: 서식 diff를 '지시 단위'(공간 인접 클러스터)로 채점.
+
+    - 채점 후보는 문제↔정답 diff 셀만 (지시 범위 밖 잔여 서식 감점 없음)
+    - 병합은 앵커 기준, 테두리는 edge 합성, 색은 테마 해석 후 RGB 비교
+    - 행 높이/열 너비는 자동 조정 부산물이 많아 기본 제외(참고 노트만),
+      --key format_checks에 명시된 세트만 채점(±0.5)
+    """
+    from openpyxl.utils.cell import coordinate_to_tuple, range_boundaries
+    book_a, book_s = ctx["book_a"], ctx["book_s"]
+    asheet, ssheet = ctx["asheet"], ctx["ssheet"]
+    judge = ctx["judge"]
+    fd = ctx["fdiffs"]
+    sha = book_a.raw[asheet]
+    shs = book_s.raw[ssheet] if ssheet else None
+    a_members, a_anchors = merge_maps(sha)
+    s_members, s_anchors = merge_maps(shs) if shs is not None else ({}, {})
+
+    # --- 채점 단위(unit) 구성: 문제↔정답 diff에서만 ---
+    units = []
+    for kind in CELL_FMT_KINDS:
+        for coord in fd.get(kind, []):
+            r, c = coordinate_to_tuple(coord)
+            units.append({"pos": (r, c), "kind": kind, "coord": coord})
+    for coord in fd.get("border", []):
+        r, c = coordinate_to_tuple(coord)
+        units.append({"pos": (r, c), "kind": "border", "coord": coord,
+                      "edges": (fd.get("border_edges") or {}).get(coord, [])})
+    for rng in fd.get("merge", []):
+        try:
+            min_c, min_r, _mc, _mr = range_boundaries(rng)
+        except Exception:
+            continue
+        units.append({"pos": (min_r, min_c), "kind": "merge",
+                      "range": rng, "coord": rng})
+    for (r, c, coord) in ctx["vdiffs"]:
+        units.append({"pos": (r, c), "kind": "value", "coord": coord,
+                      "rc": (r, c)})
+
+    # --- 별도 항목: 정의된 이름 / (key 명시 시) 행 높이 ---
+    standalone = []
+    if fd.get("names"):
+        standalone.append(("names", fd["names"]))
+    key_rh = _key_row_heights(ctx, res.name)
+    if key_rh:
+        standalone.append(("key_rowheight", key_rh))
+    key_cw = _key_col_widths(ctx, res.name)
+    if key_cw:
+        standalone.append(("key_colwidth", key_cw))
+
+    # --- 행 높이/열 너비: 감점 없는 참고 노트만 (1pt 초과 차이일 때) ---
+    if not key_rh and fd.get("rowheight") and shs is not None:
+        noted = []
+        for (r, ha) in fd["rowheight"]:
+            hs = shs.row_dimensions[r].height \
+                if r in shs.row_dimensions else None
+            if ha is not None and (hs is None or abs(hs - ha) > 1.0):
+                noted.append(str(r))
+        if noted:
+            res.notes.append(
+                f"행 높이가 정답 파일과 다릅니다({', '.join(noted[:6])}행) — "
+                "글꼴 크기 등에 따른 자동 조정 차이일 수 있어 감점하지 "
+                "않습니다. 문제지에 행 높이 지시가 있는 경우만 확인하세요.")
+    if not key_cw and fd.get("colwidth") and shs is not None:
+        noted = []
+        for (cl, wa) in fd["colwidth"]:
+            ws_ = shs.column_dimensions[cl].width \
+                if cl in shs.column_dimensions else None
+            if wa is not None and (ws_ is None or abs(ws_ - wa) > 1.0):
+                noted.append(str(cl))
+        if noted:
+            res.notes.append(
+                f"열 너비가 정답 파일과 다릅니다({', '.join(noted[:6])}열) — "
+                "감점하지 않습니다. 문제지에 열 너비 지시가 있는 경우만 "
+                "확인하세요.")
+
+    if not units and not standalone:
+        res.earned = res.alloc
+        res.notes.append("채점할 서식 차이가 없어 만점 처리")
+        return
+
+    target = max(1, 5 - len(standalone))
+    clusters = _cluster_units(units, target) if units else []
+    n = len(clusters) + len(standalone)
+    per = res.alloc / n
+    passed = 0
+    mr, mc = scan_bounds(sha, shs) if shs is not None else scan_bounds(sha)
+    s_edges = sheet_edge_map(shs, mr, mc) if shs is not None else {}
+    s_merges = {str(x).upper() for x in shs.merged_cells.ranges} \
+        if shs is not None else set()
+
+    for cl in clusters:
+        fails = []
+        for u in cl:
+            k = u["kind"]
+            if k == "merge":
+                if u["range"].upper() not in s_merges:
+                    fails.append(u)
+            elif k == "value":
+                r, c = u["rc"]
+                if not judge.judge(r, c)[0]:
+                    fails.append(u)
+            elif k == "border":
+                bad = any((s_edges.get(key) or None) != (style or None)
+                          for key, style in (u.get("edges") or []))
+                if shs is None or bad:
+                    fails.append(u)
+            else:
+                r, c = u["pos"]
+                sig_a = fmt_signature_m(sha, r, c, k, a_members, a_anchors)
+                sig_s = fmt_signature_m(shs, r, c, k, s_members, s_anchors) \
+                    if shs is not None else None
+                if sig_a != sig_s:
+                    u["sig_a"], u["sig_s"] = sig_a, sig_s
+                    fails.append(u)
+        if not fails:
+            passed += 1
+            continue
+        # --- 실패 카드: 범위 표기 + 속성별 정답/내답 + 파생 힌트 ---
+        loc = compress_coords([u["coord"] for u in cl])
+        props = []
+        hints = []
+        seen_kinds = []
+        for u in fails:
+            k = u["kind"]
+            if k in seen_kinds and k != "value":
+                continue
+            seen_kinds.append(k)
+            if k == "merge":
+                rngs = [x["range"] for x in fails if x["kind"] == "merge"]
+                props.append({"name": "병합",
+                              "expected": "병합하고 가운데 맞춤 ("
+                                          + ", ".join(rngs[:3]) + ")",
+                              "got": "병합 없음"})
+                hints.extend(hints_for_kind("merge", None))
+            elif k == "value":
+                if sum(1 for p in props if p["name"].startswith("셀 값")) < 2:
+                    r, c = u["rc"]
+                    _ok, exp, got, _ef = judge.judge(r, c)
+                    props.append({"name": f"셀 값({u['coord']})",
+                                  "expected": fmt_value(exp),
+                                  "got": fmt_value(got)})
+                    hints.extend(hints_for_kind("value", None))
+            elif k == "border":
+                b_fails = [x for x in fails if x["kind"] == "border"]
+                exp, got = _border_props(b_fails, s_edges)
+                props.append({"name": "테두리", "expected": exp, "got": got})
+                hints.extend(hints_for_kind("border", None))
+            else:
+                props.extend(props_for_kind(k, u.get("sig_a"), u.get("sig_s")))
+                hints.extend(hints_for_kind(k, u.get("sig_a")))
+        uniq_hints = []
+        for h in hints:
+            if h not in uniq_hints:
+                uniq_hints.append(h)
+        label = "서식 지시 (" + ", ".join(loc[:2]) \
+            + (" 외" if len(loc) > 2 else "") + ")"
+        add_card(res, label, per, "format",
+                 cells=[{"coord": t} for t in loc[:6]],
+                 props=props, hint=" / ".join(uniq_hints[:3]) or None,
+                 more=max(0, len(loc) - 6))
+        res.details.append(
+            "[서식] " + ", ".join(loc[:4]) + " 불일치: "
+            + ", ".join(dict.fromkeys(p["name"] for p in props)))
+
+    # --- 별도 항목 채점 ---
+    for kind, payload in standalone:
+        if kind == "names":
+            stu_names = defined_names_for_sheet(book_s, ssheet) \
+                if ssheet else {}
+            missing = [k for k, v in payload.items()
+                       if stu_names.get(k) != v]
+            if not missing:
+                passed += 1
+            else:
+                res.details.append("[정의된 이름] 불일치 (이름 "
+                                   + ", ".join(missing[:5]) + ")")
+                add_card(res, "서식 - 정의된 이름", per, "format",
+                         cells=[{"coord": nm} for nm in missing[:5]],
+                         props=[{"name": "정의된 이름",
+                                 "expected": f"'{missing[0]}' = "
+                                             + str(payload[missing[0]]),
+                                 "got": "없음 또는 다른 범위"}],
+                         hint="범위를 선택한 뒤 이름 상자(수식 입력줄 왼쪽)에 "
+                              "이름을 입력하고 Enter를 누릅니다.")
+        elif kind == "key_rowheight":
+            bad = []
+            for r, want in sorted(payload.items()):
+                hs = shs.row_dimensions[r].height \
+                    if shs is not None and r in shs.row_dimensions else None
+                if not _size_matches(hs, want):
+                    bad.append((r, want, hs))
+            if not bad:
+                passed += 1
+            else:
+                rows_txt = ", ".join(str(r) for r, _w, _h in bad) + "행"
+                res.details.append(f"[행 높이] 불일치 ({rows_txt})")
+                add_card(res, "서식 - 행 높이", per, "format",
+                         cells=[{"coord": f"{r}행"} for r, _w, _h in bad],
+                         props=[{"name": f"{r}행 높이",
+                                 "expected": f"{w:g}",
+                                 "got": f"{h:g}" if h is not None else "기본"}
+                                for r, w, h in bad[:3]],
+                         hint="행 머리글 우클릭 → 행 높이에서 숫자를 "
+                              "입력합니다.")
+        elif kind == "key_colwidth":
+            bad = []
+            for cl, want in sorted(payload.items()):
+                cw_s = shs.column_dimensions[cl].width \
+                    if shs is not None and cl in shs.column_dimensions \
+                    else None
+                if not _size_matches(cw_s, want):
+                    bad.append((cl, want, cw_s))
+            if not bad:
+                passed += 1
+            else:
+                cols_txt = ", ".join(cl for cl, _w, _s in bad) + "열"
+                res.details.append(f"[열 너비] 불일치 ({cols_txt})")
+                add_card(res, "서식 - 열 너비", per, "format",
+                         cells=[{"coord": f"{cl}열"} for cl, _w, _s in bad],
+                         props=[{"name": f"{cl}열 너비",
+                                 "expected": f"{w:g}",
+                                 "got": f"{s:g}" if s is not None else "기본"}
+                                for cl, w, s in bad[:3]],
+                         hint="열 머리글 우클릭 → 열 너비에서 숫자를 "
+                              "입력합니다.")
+
     res.earned = int(round(per * passed))
-    if passed < len(items):
-        res.details.insert(0, f"서식 검사 항목 {len(items)}개 중 {passed}개 통과 "
+    if passed < n:
+        res.details.insert(0, f"서식 지시 {n}개 중 {passed}개 통과 "
                               f"(항목당 {per:.1f}점)")
 
 
-def _check_fmt_item(kind, payload, judge, sha, shs, book_a, book_s, asheet, ssheet):
-    """서식 항목 하나를 학생 시트와 대조. (통과, 사유, 불일치목록) 반환."""
-    if shs is None and kind != "names":
-        return False, "학생 시트 없음", []
-    if kind == "value":
-        wrong = [(r, c, co) for (r, c, co) in payload
-                 if not judge.judge(r, c)[0]]
-        why = "셀 " + ", ".join(w[2] for w in wrong[:8]) if wrong else ""
-        return (not wrong), why, wrong
-    if kind == "merge":
-        sm = {str(x).upper() for x in shs.merged_cells.ranges}
-        missing = [rng for rng in payload if rng not in sm]
-        return (not missing), \
-            ("누락 병합 " + ", ".join(missing[:5]) if missing else ""), missing
-    if kind == "rowheight":
-        bad = [str(r) for (r, ha) in payload
-               if not _size_matches(shs.row_dimensions[r].height
-                                    if r in shs.row_dimensions else None, ha)]
-        return (not bad), ("행 " + ", ".join(bad[:6]) if bad else ""), bad
-    if kind == "colwidth":
-        bad = [cl for (cl, wa) in payload
-               if not _size_matches(shs.column_dimensions[cl].width
-                                    if cl in shs.column_dimensions else None, wa)]
-        return (not bad), ("열 " + ", ".join(bad[:6]) if bad else ""), bad
-    if kind == "names":
-        stu_names = defined_names_for_sheet(book_s, ssheet) if ssheet else {}
-        missing = [k for k, v in payload.items() if stu_names.get(k) != v]
-        return (not missing), \
-            ("이름 " + ", ".join(missing[:5]) if missing else ""), missing
-    # 셀 단위 서식
-    bad = []
-    for coord in payload:
-        ca = sha[coord]
-        try:
-            cs = shs[coord]
-        except Exception:
-            bad.append(coord)
-            continue
-        if fmt_signature(ca, kind) != fmt_signature(cs, kind):
-            bad.append(coord)
-    return (not bad), ("셀 " + ", ".join(bad[:8]) if bad else ""), bad
+def _is_cond_syntax(v):
+    return isinstance(v, str) and bool(
+        re.match(r"^\s*(<>|<=|>=|<|>|=)", v) or "*" in v or "?" in v)
 
 
-FMT_HINTS = {
-    "value": "문제 지시대로 값을 정확히 입력했는지 확인하세요.",
-    "number_format": "셀 서식(Ctrl+1) → 표시 형식 → 사용자 지정에서 형식 "
-                     "코드를 입력합니다.",
-    "font": "홈 탭 글꼴 그룹에서 글꼴 이름·크기·굵게·기울임·밑줄·색을 "
-            "지시대로 지정합니다.",
-    "fill": "홈 탭 → 채우기 색(페인트 통)에서 지정합니다.",
-    "alignment": "홈 탭 맞춤 그룹에서 가로/세로 가운데, 텍스트 줄 바꿈, "
-                 "'선택 영역의 가운데로'(Ctrl+1 → 맞춤)를 확인합니다.",
-    "border": "홈 탭 → 테두리에서 '모든 테두리/바깥쪽 테두리'를 지시 "
-              "범위에 적용합니다.",
-    "merge": "범위를 선택하고 홈 탭 → '병합하고 가운데 맞춤'을 누릅니다.",
-    "rowheight": "행 머리글 우클릭 → 행 높이에서 숫자를 입력합니다.",
-    "colwidth": "열 머리글 우클릭 → 열 너비에서 숫자를 입력합니다.",
-    "names": "범위를 선택한 뒤 이름 상자(수식 입력줄 왼쪽)에 이름을 입력하고 "
-             "Enter를 누릅니다.",
-    "style": "홈 탭 → 셀 스타일(쉼표/통화/백분율 등)에서 지정합니다.",
-}
+def _norm_field(v):
+    return re.sub(r"\s+", "", str(v)).lower() if v is not None else None
 
 
-def _add_fmt_card(res, kind, label, lost, bad, judge, sha, shs):
-    """기본작업-2 서식 항목 오답 카드."""
-    cells = []
-    note = None
-    if kind == "value" and bad:
-        cells = make_cell_entries(judge, bad, 3)
-    elif kind == "number_format" and bad:
-        for coord in bad[:3]:
-            exp_nf = sha[coord].number_format if sha is not None else None
-            got_nf = None
-            try:
-                got_nf = shs[coord].number_format if shs is not None else None
-            except Exception:
-                pass
-            cells.append({"coord": coord, "expected": exp_nf,
-                          "got": got_nf, "formula": None})
-        if cells and cells[0]["expected"]:
-            note = explain_number_format(cells[0]["expected"])
-    else:
-        for b in bad[:5]:
-            cells.append({"coord": str(b), "expected": None,
-                          "got": None, "formula": None})
-    add_card(res, f"서식 - {label}", lost, "format", cells=cells,
-             note=note, hint=FMT_HINTS.get(kind),
-             more=max(0, len(bad) - len(cells)))
+def _norm_cond(v):
+    """조건/데이터 값 정규화 (공백·대소문자 무시, 수식은 수식 정규화)."""
+    if v is None:
+        return None
+    if isinstance(v, str):
+        s = v.strip()
+        if s.startswith("="):
+            return ("f", norm_formula(s))
+        return ("s", re.sub(r"\s+", "", s).lower())
+    if isinstance(v, bool):
+        return ("b", v)
+    if isinstance(v, (int, float)):
+        return ("n", round(float(v), 6))
+    return ("s", str(v))
+
+
+def _block_grid(sh, r1, r2, c1, c2):
+    if sh is None:
+        return []
+    return [[sh.cell(r, c).value for c in range(c1, c2 + 1)]
+            for r in range(r1, r2 + 1)]
+
+
+def _cond_rows(grid):
+    """조건 범위 -> (행별 (필드,조건) 짝 집합의 Counter, 머리글)."""
+    from collections import Counter
+    header = [_norm_field(v) for v in grid[0]]
+    rows = []
+    for row in grid[1:]:
+        pairs = frozenset(
+            (header[i], _norm_cond(v)) for i, v in enumerate(row)
+            if v is not None and header[i])
+        if pairs:
+            rows.append(pairs)
+    return Counter(rows), header
+
+
+def compare_condition_block(ga, gs):
+    """고급 필터 조건 범위 의미 비교 — 열 순서/행 순서 무관.
+
+    같은 행의 (필드, 조건) 짝 집합이 행 단위로 일치하면 동일한 조건.
+    """
+    ca, _ha = _cond_rows(ga)
+    cs, _hs = _cond_rows(gs) if gs else (None, None)
+    if cs is not None and ca == cs:
+        return True, []
+    msgs = []
+    flat_s = {}
+    if cs:
+        for rowset in cs:
+            for (f, cond) in rowset:
+                flat_s.setdefault(f, []).append(cond)
+
+    def _fmt(cond):
+        if cond is None:
+            return "없음"
+        return str(cond[1])
+
+    missing_rows = ca - cs if cs is not None else ca
+    for rowset in missing_rows:
+        for (f, cond) in sorted(rowset, key=str):
+            got = flat_s.get(f)
+            if got and cond not in got:
+                msgs.append(f"'{f}' 조건이 {_fmt(cond)} 이어야 하는데 "
+                            f"{_fmt(got[0])} 입니다")
+            elif not got:
+                msgs.append(f"'{f}' 조건({_fmt(cond)})이 없습니다 — 필드명 "
+                            "오타 여부도 확인하세요")
+    if not msgs:
+        msgs.append("조건의 AND(같은 행)/OR(다른 행) 배치가 정답과 다릅니다")
+    return False, msgs[:4]
+
+
+def compare_result_block(ga, gs):
+    """고급 필터 결과 표 비교 — 열 순서는 머리글로 재정렬, 행은 집합 비교.
+
+    반환: (통과, 메시지들, 행 순서만 다른지)
+    """
+    from collections import Counter
+    ha = [_norm_field(v) for v in ga[0]]
+    hs = [_norm_field(v) for v in gs[0]] if gs else []
+    ha_set = sorted(h for h in ha if h)
+    hs_set = sorted(h for h in hs if h)
+    if ha_set != hs_set:
+        return False, ["추출된 필드(머리글)가 정답과 다릅니다: 정답 "
+                       + ", ".join(ha_set) + " / 내 답 "
+                       + (", ".join(hs_set) or "없음")], False
+    idx_s = {}
+    for i, h in enumerate(hs):
+        if h and h not in idx_s:
+            idx_s[h] = i
+    cols_a = [i for i, h in enumerate(ha) if h]
+
+    def _rows(grid, mapper):
+        out = []
+        for row in grid[1:]:
+            t = tuple(mapper(row, i) for i in cols_a)
+            if any(x is not None for x in t):
+                out.append(t)
+        return out
+
+    rows_a = _rows(ga, lambda row, i: _norm_cond(row[i]))
+    rows_s = _rows(gs, lambda row, i: _norm_cond(row[idx_s[ha[i]]]))
+    if Counter(rows_a) == Counter(rows_s):
+        return True, [], rows_a != rows_s
+    only_a = Counter(rows_a) - Counter(rows_s)
+    only_s = Counter(rows_s) - Counter(rows_a)
+    msgs = []
+    if only_a:
+        msgs.append(f"정답에 있는 결과 행 {sum(only_a.values())}개가 "
+                    "누락되었습니다")
+    if only_s:
+        msgs.append(f"정답에 없는 행 {sum(only_s.values())}개가 "
+                    "포함되었습니다 (조건 재확인)")
+    return False, msgs or ["결과 행이 정답과 다릅니다"], False
 
 
 def grade_basic3(res, ctx):
-    """기본작업-3: 조건부 서식 규칙 비교, 없으면 값 diff 비례."""
+    """기본작업-3: 조건부 서식 규칙 비교, 없으면 값 diff.
+
+    고급 필터는 의미 동치 비교: 조건 범위의 열/행 배치가 달라도 (필드,
+    조건) 짝이 같으면 정답, 결과 표는 행 집합 비교(순서 무관·무감점 노트).
+    텍스트 나누기 등 일반 블록은 셀 단위 비교 유지.
+    """
     book_p, book_a, book_s = ctx["book_p"], ctx["book_a"], ctx["book_s"]
     psheet, asheet, ssheet = ctx["psheet"], ctx["asheet"], ctx["ssheet"]
     cf_a = cf_rule_set(book_a.raw[asheet])
@@ -1043,18 +1883,93 @@ def grade_basic3(res, ctx):
         res.notes.append("문제/정답 간 차이가 없어 자동 만점 처리")
         return
     judge = ctx["judge"]
-    wrong = [(r, c, co) for (r, c, co) in diffs if not judge.judge(r, c)[0]]
-    res.earned = int(round(res.alloc * (len(diffs) - len(wrong)) / len(diffs)))
-    if wrong:
-        res.details.append(f"결과 셀 {len(diffs)}개 중 {len(wrong)}개 불일치")
-        add_wrong_cells(res, judge, wrong, limit=15)
-        add_card(res, "고급 필터/텍스트 나누기 결과",
-                 res.alloc - res.earned, "cell",
-                 cells=make_cell_entries(judge, wrong, 3),
-                 more=max(0, len(wrong) - 3),
-                 hint="조건 범위(필드명+조건)를 먼저 정확히 입력하고, 고급 "
-                      "필터의 목록/조건/복사 위치 범위를 다시 확인하세요. "
-                      "AND 조건은 같은 행, OR 조건은 다른 행에 적습니다.")
+    from openpyxl.utils import get_column_letter
+    shp = book_p.raw[psheet]
+    sha = book_a.raw[asheet]
+    shs = book_s.raw[ssheet] if ssheet else None
+    coord_of = {(r, c): co for (r, c, co) in diffs}
+    clusters = cluster_cells([(r, c) for (r, c, _co) in diffs], target=99)
+    # 원본 표 머리글 후보: 문제 시트의 문자열 값들
+    header_pool = set()
+    try:
+        for row in shp.iter_rows(min_row=1,
+                                 max_row=min(40, shp.max_row or 1)):
+            for cell in row:
+                if isinstance(cell.value, str) and cell.value.strip():
+                    header_pool.add(_norm_field(cell.value))
+    except Exception:
+        pass
+    blocks = []
+    for cl in clusters:
+        r1 = min(r for r, _c in cl)
+        r2 = max(r for r, _c in cl)
+        c1 = min(c for _r, c in cl)
+        c2 = max(c for _r, c in cl)
+        ga = _block_grid(sha, r1, r2, c1, c2)
+        first = [v for v in ga[0] if v is not None] if ga else []
+        headerish = bool(first) and all(
+            isinstance(v, str) and _norm_field(v) in header_pool
+            for v in first)
+        cond_syntax = any(_is_cond_syntax(v) for row in ga[1:] for v in row)
+        if headerish and len(ga) >= 2 and (cond_syntax or len(ga) == 2):
+            btype = "cond"
+        elif headerish and len(ga) >= 3:
+            btype = "result"
+        else:
+            btype = "cells"
+        blocks.append((btype, cl, (r1, r2, c1, c2), ga))
+    passed_b = 0
+    for btype, cl, (r1, r2, c1, c2), ga in blocks:
+        rng_txt = (f"{get_column_letter(c1)}{r1}:{get_column_letter(c2)}{r2}"
+                   if (r1, c1) != (r2, c2) else f"{get_column_letter(c1)}{r1}")
+        gs = _block_grid(shs, r1, r2, c1, c2) if shs is not None else []
+        if btype == "cond":
+            ok, msgs = compare_condition_block(ga, gs)
+            if ok:
+                passed_b += 1
+                continue
+            res.details.append(f"[고급 필터 조건] {rng_txt}: "
+                               + "; ".join(msgs))
+            add_card(res, f"고급 필터 조건 ({rng_txt})",
+                     res.alloc / len(blocks), "cell",
+                     cells=[{"coord": rng_txt}],
+                     props=[{"name": "조건", "expected": "문제 지시 조건",
+                             "got": m} for m in msgs[:3]],
+                     hint="필드명은 원본 표 머리글과 똑같이, AND 조건은 같은 "
+                          "행, OR 조건은 다른 행에 적습니다. 열 순서는 달라도 "
+                          "됩니다.")
+        elif btype == "result":
+            ok, msgs, order_diff = compare_result_block(ga, gs)
+            if ok:
+                passed_b += 1
+                if order_diff:
+                    res.notes.append("고급 필터 결과의 행 순서가 정답과 "
+                                     "다르지만 내용이 같아 정답 처리했습니다.")
+                continue
+            res.details.append(f"[고급 필터 결과] {rng_txt}: "
+                               + "; ".join(msgs))
+            add_card(res, f"고급 필터 결과 ({rng_txt})",
+                     res.alloc / len(blocks), "cell",
+                     cells=[{"coord": rng_txt}],
+                     props=[{"name": "결과 표", "expected": "지시 조건에 맞는 "
+                             "행 추출", "got": m} for m in msgs[:3]],
+                     hint="데이터 탭 → 고급에서 목록/조건/복사 위치 범위를 "
+                          "다시 확인하세요.")
+        else:
+            cells3 = [(r, c, coord_of[(r, c)]) for (r, c) in cl]
+            wrong = [(r, c, co) for (r, c, co) in cells3
+                     if not judge.judge(r, c)[0]]
+            if not wrong:
+                passed_b += 1
+                continue
+            res.details.append(f"[결과 셀] {rng_txt}: {len(wrong)}개 불일치")
+            add_wrong_cells(res, judge, wrong, limit=6)
+            entries = make_cell_entries(judge, wrong, 3)
+            add_card(res, f"결과 셀 ({rng_txt})", res.alloc / len(blocks),
+                     "cell", cells=entries, more=max(0, len(wrong) - 3),
+                     hint="텍스트 나누기/자동 필터 등 지시 결과를 원본과 "
+                          "대조하세요.")
+    res.earned = int(round(res.alloc * passed_b / len(blocks)))
 
 
 CALC_FUNC_NOTE = ("이 채점기는 결과값 기준이라 문제가 제시한 함수를 썼는지는 "
@@ -1185,15 +2100,40 @@ def grade_macro(res, ctx):
             units_ok += 1
         else:
             wrong_cells.append((r, c, co))
-    # 서식 diff (셀 단위)
+    # 서식 diff (셀 단위, 병합 인지 + edge 테두리)
+    from openpyxl.utils.cell import coordinate_to_tuple
+    a_members, a_anchors = merge_maps(sha)
+    s_members, s_anchors = merge_maps(shs) if shs is not None else ({}, {})
+    s_edges = None
+    if "border" in ctx["fdiffs"] and shs is not None:
+        _mr, _mc = scan_bounds(sha, shs)
+        s_edges = sheet_edge_map(shs, _mr, _mc)
     fmt_bad = []
     for kind, payload in ctx["fdiffs"].items():
-        if kind in ("rowheight", "colwidth", "merge", "names"):
+        if kind in ("rowheight", "colwidth", "merge", "names",
+                    "border_edges"):
+            continue
+        if kind == "border":
+            edge_info = ctx["fdiffs"].get("border_edges") or {}
+            for coord in payload:
+                units_total += 1
+                ok = s_edges is not None and all(
+                    (s_edges.get(key) or None) == (style or None)
+                    for key, style in edge_info.get(coord, []))
+                if ok:
+                    units_ok += 1
+                else:
+                    fmt_bad.append(f"{coord}(테두리)")
             continue
         for coord in payload:
             units_total += 1
-            ok = shs is not None and \
-                fmt_signature(sha[coord], kind) == fmt_signature(shs[coord], kind)
+            try:
+                r, c = coordinate_to_tuple(coord)
+                ok = shs is not None and \
+                    fmt_signature_m(sha, r, c, kind, a_members, a_anchors) \
+                    == fmt_signature_m(shs, r, c, kind, s_members, s_anchors)
+            except Exception:
+                ok = False
             if ok:
                 units_ok += 1
             else:
@@ -1217,11 +2157,17 @@ def grade_macro(res, ctx):
                       "작업을 수행하고 기록을 중지했는지, 기록 후 단추로 실행해 "
                       "결과가 나오는지 확인하세요.")
     if fmt_bad:
-        res.details.append("매크로 서식 불일치: " + ", ".join(fmt_bad[:10]))
+        by_kind = {}
+        for b in fmt_bad:
+            m = re.match(r"^([A-Z]+\d+)\((.+)\)$", b)
+            if m:
+                by_kind.setdefault(m.group(2), []).append(m.group(1))
+        chips = [f"{k}: {', '.join(compress_coords(v)[:3])}"
+                 for k, v in by_kind.items()] or fmt_bad[:5]
+        res.details.append("매크로 서식 불일치: " + ", ".join(chips))
         add_card(res, "매크로 서식 결과", 0, "macro",
-                 cells=[{"coord": b, "expected": None, "got": None,
-                         "formula": None} for b in fmt_bad[:5]],
-                 more=max(0, len(fmt_bad) - 5),
+                 cells=[{"coord": ch, "expected": None, "got": None,
+                         "formula": None} for ch in chips[:5]],
                  hint="서식 매크로가 지시한 서식(채우기·글꼴 등)을 정확히 "
                       "기록했는지 확인하세요.")
     # 단추/도형 존재 +2
@@ -2496,6 +3442,15 @@ def _wrong_card_html(card):
         if card.get("more"):
             body.append(f'<div class="wc-chips">외 {card["more"]}개 셀 동일 유형'
                         "</div>")
+    if card.get("props"):
+        rows = "".join(
+            f'<div class="prop-row"><span class="prop-name">'
+            f'{esc(p.get("name", "?"))}</span>'
+            f'<span class="prop-exp">정답: {esc(p.get("expected", "?"))}</span>'
+            f'<span class="prop-got">내 답: {esc(p.get("got", "?"))}</span>'
+            "</div>"
+            for p in card["props"][:8])
+        body.append(f'<div class="props">{rows}</div>')
     if card.get("note"):
         body.append(f'<p class="wc-note">{esc(card["note"])}</p>')
     if card.get("diff_notes"):
@@ -2641,6 +3596,14 @@ svg { font-family:'Malgun Gothic','맑은 고딕',sans-serif; display:block; }
   font-size:0.8rem; }
 .wc-note { font-size:0.85rem; color:#1B3A26; background:#F4FAF5;
   border-radius:8px; padding:8px 12px; margin-bottom:8px; }
+.props { border:1px solid #D7E3DA; border-radius:8px; padding:8px 12px;
+  margin-bottom:8px; }
+.prop-row { display:flex; gap:12px; flex-wrap:wrap; font-size:0.86rem;
+  padding:3px 0; border-bottom:1px dashed #E8EFEA; }
+.prop-row:last-child { border-bottom:none; }
+.prop-name { font-weight:700; min-width:88px; }
+.prop-exp { color:#0B5D31; }
+.prop-got { color:#B45309; }
 .diffbox { background:#FBF6EE; border:1px solid #E5D5B8; border-radius:8px;
   padding:10px 14px; margin-bottom:8px; }
 .diff-title { font-weight:700; font-size:0.84rem; color:#8A5A00;
@@ -2749,6 +3712,7 @@ def write_json(path, results, score100, global_notes, paths):
                 "student_formula": card.get("student_formula"),
                 "expected_formula": card.get("expected_formula"),
                 "diff_notes": card.get("diff_notes") or [],
+                "props": card.get("props") or [],
             }
             for r in results for card in r.wrong
         ],
