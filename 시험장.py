@@ -10,7 +10,7 @@
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "1.2.0"
+__version__ = "1.4.0"
 
 import argparse
 import json
@@ -355,9 +355,13 @@ def append_record(record, path=RECORDS_PATH):
 
 
 def records_summary(records):
-    """세트별 최고점과 최근 3회 점수. {세트명: {"best":.., "recent":[..]}}"""
+    """세트별 최고점과 최근 3회 점수 (부분 연습 기록은 제외).
+
+    {세트명: {"best":.., "recent":[..]}}"""
     by = {}
     for r in records:
+        if r.get("mode") == "부분연습":
+            continue
         by.setdefault(r.get("세트명", "?"), []).append(r)
     out = {}
     for name, rows in by.items():
@@ -387,8 +391,8 @@ def make_attempt_copy(problem, set_name, when=None):
 
 def run_grading(grade_py, problem, answer, student,
                 key=None, html=None, json_out=None, history=None,
-                timeout=600):
-    """grade.py를 서브프로세스로 실행.
+                sheets=None, timeout=600):
+    """grade.py를 서브프로세스로 실행. sheets 지정 시 부분 채점.
 
     반환: (결과 dict 또는 None, stdout, stderr, returncode)
     결과 dict는 --json 출력이 우선, 실패 시 콘솔 총점 파싱 폴백.
@@ -403,6 +407,8 @@ def run_grading(grade_py, problem, answer, student,
         cmd += ["--json", json_out]
     if history and os.path.isfile(history):
         cmd += ["--history", history]
+    if sheets:
+        cmd += ["--sheets", ",".join(sheets)]
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True,
@@ -489,6 +495,58 @@ def classify_grading_error(rc, text):
             or "찾을 수 없습니다" in t or "열 수 없습니다" in t:
         return "file"
     return "other"
+
+
+# ---------------------------------------------------------------------------
+# 부분 연습 모드 (루틴 주차별 영역 연습)
+# ---------------------------------------------------------------------------
+
+PRACTICE_AREAS = [
+    # (영역명, 포함 시트, 권장 시간(분))
+    ("기본작업", ["기본작업-1", "기본작업-2", "기본작업-3"], 8),
+    ("계산작업", ["계산작업"], 15),
+    ("분석작업", ["분석작업-1", "분석작업-2"], 7),
+    ("기타작업", ["매크로작업", "차트작업"], 8),
+]
+PRACTICE_PRESETS = [
+    ("Day 1-2: 기본작업", ["기본작업"]),
+    ("Day 3-6: 계산작업", ["계산작업"]),
+    ("Day 8-9: 분석작업", ["분석작업"]),
+    ("Day 10-11: 기타작업", ["기타작업"]),
+]
+
+
+def sheets_for_areas(area_names):
+    """영역명 목록 -> 시트명 목록 (순서 유지)."""
+    out = []
+    for name, sheet_list, _min in PRACTICE_AREAS:
+        if name in area_names:
+            out.extend(sheet_list)
+    return out
+
+
+def practice_minutes(area_names):
+    """영역명 목록 -> 권장 시간 합(분)."""
+    total = sum(m for name, _s, m in PRACTICE_AREAS if name in area_names)
+    return max(MIN_MINUTES, min(MAX_MINUTES, total)) if total else \
+        DEFAULT_MINUTES
+
+
+def make_practice_copy(problem, set_name, area_label, when=None):
+    """문제 파일 -> 부분연습_<세트>_<영역>_<일시>.<확장자> 사본."""
+    when = when or datetime.now()
+    ext = os.path.splitext(problem)[1]
+    stamp = when.strftime("%Y%m%d_%H%M")
+    safe_area = re.sub(r"[\\/:*?\"<>|,\s]+", "", str(area_label))[:20]
+    d = os.path.dirname(os.path.abspath(problem))
+    dst = os.path.join(d, f"부분연습_{set_name}_{safe_area}_{stamp}{ext}")
+    n = 2
+    while os.path.exists(dst):
+        dst = os.path.join(
+            d, f"부분연습_{set_name}_{safe_area}_{stamp}_{n}{ext}")
+        n += 1
+    shutil.copy2(problem, dst)
+    return dst
 
 
 # ---------------------------------------------------------------------------
@@ -856,17 +914,29 @@ if HAS_TK:
             self.configure(bg=BG)
             self.attributes("-topmost", True)
             total = result.get("total", 0)
+            partial = result.get("mode") == "partial"
+            max_total = result.get("max_total") or 100
             passed = total >= result.get("pass_line", PASS_LINE)
             frm = tk.Frame(self, bg=BG, padx=28, pady=20)
             frm.pack(fill="both", expand=True)
-            tk.Label(frm, text="채점 결과", bg=BG, fg=SUB,
+            head_txt = "부분 연습 결과" if partial else "채점 결과"
+            tk.Label(frm, text=head_txt, bg=BG, fg=SUB,
                      font=UI_FONT).pack()
-            tk.Label(frm, text=f"{total}점", bg=BG,
-                     fg=BRAND if passed else RED,
-                     font=("Malgun Gothic", 42, "bold")).pack()
-            verdict = "합격권" if passed else "미달"
-            tk.Label(frm, text=f"합격선 {PASS_LINE}점 기준: {verdict}",
-                     bg=BG, fg=INK, font=UI_FONT_BOLD).pack(pady=(0, 10))
+            if partial:
+                names = ", ".join(result.get("graded_sheets") or [])
+                tk.Label(frm, text=f"{total} / {max_total:g}점", bg=BG,
+                         fg=BRAND,
+                         font=("Malgun Gothic", 38, "bold")).pack()
+                tk.Label(frm, text=f"채점 영역: {names}",
+                         bg=BG, fg=INK, font=UI_FONT_BOLD).pack(pady=(0, 10))
+            else:
+                tk.Label(frm, text=f"{total}점", bg=BG,
+                         fg=BRAND if passed else RED,
+                         font=("Malgun Gothic", 42, "bold")).pack()
+                verdict = "합격권" if passed else "미달"
+                tk.Label(frm, text=f"합격선 {PASS_LINE}점 기준: {verdict}",
+                         bg=BG, fg=INK,
+                         font=UI_FONT_BOLD).pack(pady=(0, 10))
             sheets = result.get("sheets") or []
             if sheets:
                 box = tk.Frame(frm, bg=CARD, highlightbackground=LINE,
@@ -930,13 +1000,21 @@ if HAS_TK:
             self.resizable(False, False)
             self.protocol("WM_DELETE_WINDOW", self._on_close)
 
-            tk.Label(self, text=exam["set"]["name"], bg=INK, fg="#A7C8B2",
+            practice = exam.get("practice_info")
+            head = exam["set"]["name"]
+            if practice:
+                head += f" · 부분 연습({practice['label']})"
+            tk.Label(self, text=head, bg=INK,
+                     fg="#F2B24C" if practice else "#A7C8B2",
                      font=("Malgun Gothic", 9)).pack(padx=16, pady=(10, 0))
             self.time_lbl = tk.Label(self, text=self._fmt(), bg=INK,
                                      fg="#7BD59A", font=DIGIT_FONT)
             self.time_lbl.pack(padx=24, pady=(0, 2))
-            self.status_lbl = tk.Label(self, text="시험 진행 중", bg=INK,
-                                       fg="#A7C8B2", font=("Malgun Gothic", 9))
+            self.status_lbl = tk.Label(
+                self,
+                text=(f"부분 연습 — {practice['label']}" if practice
+                      else "시험 진행 중"),
+                bg=INK, fg="#A7C8B2", font=("Malgun Gothic", 9))
             self.status_lbl.pack()
             if not exam["set"].get("pdf"):
                 tk.Label(self, text="문제지 미연결", bg=INK, fg="#8FA69A",
@@ -1185,6 +1263,122 @@ if HAS_TK:
             self.app.start_exam()
 
 
+    class PracticeDialog(tk.Toplevel):
+        """부분 연습 영역 선택 대화상자.
+
+        확인 시 self.result = {"sheets": [...], "label": "...", "minutes": n}
+        """
+
+        def __init__(self, app):
+            super().__init__(app)
+            self.result = None
+            self.title(f"{APP_TITLE} - 부분 연습")
+            self.configure(bg=BG)
+            self.resizable(False, False)
+            frm = tk.Frame(self, bg=BG, padx=18, pady=14)
+            frm.pack(fill="both", expand=True)
+            tk.Label(frm, text="연습할 영역을 선택하세요", bg=BG, fg=INK,
+                     font=UI_FONT_BOLD).pack(anchor="w")
+            tk.Label(frm, text="루틴 주차 프리셋:", bg=BG, fg=SUB,
+                     font=("Malgun Gothic", 9)).pack(anchor="w", pady=(8, 2))
+            pf = tk.Frame(frm, bg=BG)
+            pf.pack(fill="x")
+            for label, areas in PRACTICE_PRESETS:
+                tk.Button(pf, text=label, font=("Malgun Gothic", 8),
+                          relief="groove", padx=5, pady=2,
+                          command=lambda a=areas: self.apply_preset(a)
+                          ).pack(side="left", padx=2)
+            self.area_vars = {}
+            af = tk.Frame(frm, bg=BG)
+            af.pack(fill="x", pady=(8, 2))
+            for name, sheet_list, minutes in PRACTICE_AREAS:
+                v = tk.BooleanVar(value=False)
+                self.area_vars[name] = v
+                tk.Checkbutton(
+                    af, text=f"{name}  ({' · '.join(sheet_list)}, "
+                             f"권장 {minutes}분)",
+                    variable=v, bg=BG, fg=INK, anchor="w", font=UI_FONT,
+                    activebackground=BG, command=self._sync_minutes
+                ).pack(anchor="w")
+            self.adv_open = False
+            self.adv_btn = tk.Button(
+                frm, text="개별 시트 선택 ▸", relief="flat", bg=BG, fg=SUB,
+                font=("Malgun Gothic", 9), command=self._toggle_adv)
+            self.adv_btn.pack(anchor="w", pady=(4, 0))
+            self.adv_frame = tk.Frame(frm, bg=BG)
+            self.sheet_vars = {}
+            for _name, sheet_list, _m in PRACTICE_AREAS:
+                for sh in sheet_list:
+                    v = tk.BooleanVar(value=False)
+                    self.sheet_vars[sh] = v
+                    tk.Checkbutton(self.adv_frame, text=sh, variable=v,
+                                   bg=BG, fg=INK, activebackground=BG,
+                                   font=("Malgun Gothic", 9)
+                                   ).pack(anchor="w", padx=16)
+            tf = tk.Frame(frm, bg=BG)
+            tf.pack(fill="x", pady=(10, 0))
+            tk.Label(tf, text="연습 시간(분):", bg=BG, fg=INK,
+                     font=UI_FONT).pack(side="left")
+            self.minutes_var = tk.IntVar(value=DEFAULT_MINUTES)
+            tk.Spinbox(tf, from_=MIN_MINUTES, to=MAX_MINUTES,
+                       textvariable=self.minutes_var, width=4,
+                       font=UI_FONT).pack(side="left", padx=6)
+            bf = tk.Frame(frm, bg=BG)
+            bf.pack(fill="x", pady=(12, 0))
+            tk.Button(bf, text="연습 시작", font=UI_FONT_BOLD, bg=BRAND,
+                      fg="white", activebackground=BRAND_DARK, relief="flat",
+                      padx=16, pady=4, command=self._start).pack(side="left")
+            tk.Button(bf, text="취소", font=UI_FONT, relief="groove",
+                      padx=12, pady=4, command=self.destroy).pack(
+                side="right")
+            self.grab_set()
+
+        def apply_preset(self, areas):
+            for name, v in self.area_vars.items():
+                v.set(name in areas)
+            for v in self.sheet_vars.values():
+                v.set(False)
+            self._sync_minutes()
+
+        def _toggle_adv(self):
+            self.adv_open = not self.adv_open
+            if self.adv_open:
+                self.adv_frame.pack(fill="x")
+                self.adv_btn.configure(text="개별 시트 선택 ▾")
+            else:
+                self.adv_frame.pack_forget()
+                self.adv_btn.configure(text="개별 시트 선택 ▸")
+
+        def _sync_minutes(self):
+            areas = [n for n, v in self.area_vars.items() if v.get()]
+            if areas:
+                self.minutes_var.set(practice_minutes(areas))
+
+        def selection(self):
+            """(시트 목록, 영역 라벨). 개별 시트 체크가 있으면 우선."""
+            sheets = [sh for sh, v in self.sheet_vars.items() if v.get()]
+            if sheets:
+                label = "+".join(sheets) if len(sheets) <= 2 \
+                    else f"개별{len(sheets)}시트"
+                return sheets, label
+            areas = [n for n, v in self.area_vars.items() if v.get()]
+            return sheets_for_areas(areas), "+".join(areas)
+
+        def _start(self):
+            sheets, label = self.selection()
+            if not sheets:
+                messagebox.showinfo(APP_TITLE, "연습할 영역이나 시트를 "
+                                    "선택하세요.", parent=self)
+                return
+            try:
+                minutes = int(self.minutes_var.get())
+            except Exception:
+                minutes = DEFAULT_MINUTES
+            self.result = {"sheets": sheets, "label": label,
+                           "minutes": minutes}
+            self.destroy()
+
+
     class ExamApp(tk.Tk):
         """시작 화면."""
 
@@ -1266,6 +1460,11 @@ if HAS_TK:
                 fg="white", activebackground=BRAND_DARK, relief="flat",
                 padx=18, pady=5, command=self.start_exam)
             self.start_btn.pack(side="left", padx=4)
+            self.practice_btn = tk.Button(
+                ctrl, text="부분 연습", font=UI_FONT_BOLD, bg=BRAND_SOFT,
+                fg=BRAND_DARK, activebackground="#CFE9DA", relief="flat",
+                padx=12, pady=5, command=self.open_practice_dialog)
+            self.practice_btn.pack(side="left", padx=4)
             self.review_btn = tk.Button(
                 ctrl, text="오답노트 모드", font=UI_FONT_BOLD, bg="#B45309",
                 fg="white", activebackground="#8A5A00", relief="flat",
@@ -1327,6 +1526,11 @@ if HAS_TK:
             for r in records[-5:][::-1]:
                 score = r.get("점수")
                 score_s = f"{score}점" if score is not None else "채점 실패"
+                if r.get("mode") == "부분연습":
+                    mx = r.get("만점")
+                    score_s = (f"{score}/{mx:g}점" if score is not None
+                               and mx else score_s)
+                    score_s += f" [부분연습 · {r.get('영역', '?')}]"
                 lines.append(f"{r.get('일시', '?')}  |  {r.get('세트명', '?')}"
                              f"  |  {score_s}  |  {r.get('소요시간', '-')}")
             self.records_lbl.configure(text="\n".join(lines))
@@ -1499,7 +1703,8 @@ if HAS_TK:
                 return True
             return False
 
-        def start_exam(self):
+        def start_exam(self, practice=None):
+            """시험 시작. practice={"label","sheets","minutes"}면 부분 연습."""
             if self.exam_running:
                 messagebox.showinfo(APP_TITLE, "이미 시험이 진행 중입니다.",
                                     parent=self)
@@ -1517,8 +1722,9 @@ if HAS_TK:
                     return
             if not self._ensure_grade_py():
                 return
-            # 재응시: 새 깨끗한 사본으로 시작함을 명시
-            if set_records(s["name"]) and not messagebox.askokcancel(
+            # 재응시: 새 깨끗한 사본으로 시작함을 명시 (시험 모드만)
+            if not practice and set_records(s["name"]) \
+                    and not messagebox.askokcancel(
                     APP_TITLE,
                     "재응시: 원본 문제 파일에서 새 깨끗한 사본으로 "
                     "시작합니다.\n이전 풀이는 풀이_*.xlsx 파일로 그대로 "
@@ -1537,7 +1743,11 @@ if HAS_TK:
                             "왜곡됩니다 — 그대로 진행할까요?", parent=self):
                         return
             try:
-                student = make_attempt_copy(s["problem"], s["name"])
+                if practice:
+                    student = make_practice_copy(s["problem"], s["name"],
+                                                 practice["label"])
+                else:
+                    student = make_attempt_copy(s["problem"], s["name"])
             except OSError as e:
                 CollapsibleErrorDialog(
                     self, APP_TITLE, "풀이 사본을 만들 수 없습니다.", str(e))
@@ -1552,16 +1762,20 @@ if HAS_TK:
                     err)
             if s["pdf"]:
                 open_file(s["pdf"])
+            if practice:
+                minutes = int(practice.get("minutes")
+                              or practice_minutes([]))
+            else:
+                minutes = int(self.minutes_var.get() or DEFAULT_MINUTES)
             exam = {
                 "set": s,
                 "student": student,
-                "minutes": max(MIN_MINUTES,
-                               min(MAX_MINUTES, int(self.minutes_var.get()
-                                                    or DEFAULT_MINUTES))),
+                "minutes": max(MIN_MINUTES, min(MAX_MINUTES, minutes)),
                 "started": datetime.now(),
+                "practice_info": practice,
             }
             self.exam_running = True
-            self.start_btn.configure(state="disabled", text="시험 진행 중")
+            self.start_btn.configure(state="disabled", text="진행 중")
             TimerWindow(self, exam)
 
         def exam_closed(self):
@@ -1569,6 +1783,23 @@ if HAS_TK:
             self.start_btn.configure(state="normal", text="시험 시작")
             self.refresh_records()
             self._show_info()
+
+        # ---------------- 부분 연습 모드 ----------------
+
+        def open_practice_dialog(self):
+            if self.exam_running:
+                messagebox.showinfo(APP_TITLE, "이미 시험이 진행 중입니다.",
+                                    parent=self)
+                return
+            s = self._selected_set()
+            if not s:
+                messagebox.showinfo(APP_TITLE, "먼저 세트를 선택하세요.",
+                                    parent=self)
+                return
+            dlg = PracticeDialog(self)
+            self.wait_window(dlg)
+            if dlg.result:
+                self.start_exam(practice=dlg.result)
 
         # ---------------- 오답노트 모드 ----------------
 
@@ -1634,12 +1865,15 @@ if HAS_TK:
             json_path = base + ".json"
             state = {"done": False}
 
+            pinfo = exam.get("practice_info")
+
             def do_run():
                 return run_grading(
                     self.grade_py, exam["set"]["problem"],
                     exam["set"]["answer"], exam["student"],
                     key=exam["set"]["key"], html=html_path,
-                    json_out=json_path, history=RECORDS_PATH)
+                    json_out=json_path, history=RECORDS_PATH,
+                    sheets=pinfo.get("sheets") if pinfo else None)
 
             state["runner"] = do_run
 
@@ -1711,13 +1945,19 @@ if HAS_TK:
                              folder=os.path.dirname(html_path))
                 if os.path.isfile(html_path):
                     open_file(html_path)
+            pinfo = exam.get("practice_info")
             record = {
                 "일시": exam["started"].strftime("%Y-%m-%d %H:%M"),
                 "세트명": exam["set"]["name"] + (" (연습)" if practice else ""),
                 "점수": score,
                 "소요시간": format_elapsed(elapsed),
                 "리포트": html_path if os.path.isfile(html_path) else None,
+                "mode": "부분연습" if pinfo else "시험",
             }
+            if pinfo:
+                record["영역"] = pinfo.get("label")
+                if result:
+                    record["만점"] = result.get("max_total")
             try:
                 append_record(record)
             except OSError as e:
@@ -1759,6 +1999,18 @@ def run_smoke():
     review.toggle_check()
     assert review.retake_btn.cget("state") == "normal"  # 1/1 체크 완료
     review.destroy()
+    # 부분 연습 대화상자 스모크
+    dlg = PracticeDialog(app)
+    app.update_idletasks()
+    app.update()
+    dlg.apply_preset(["계산작업"])
+    sheets, label = dlg.selection()
+    assert sheets == ["계산작업"] and label == "계산작업"
+    assert dlg.minutes_var.get() == 15
+    dlg.apply_preset(["기본작업"])
+    sheets, label = dlg.selection()
+    assert sheets == ["기본작업-1", "기본작업-2", "기본작업-3"]
+    dlg.destroy()
     timer.finished = True
     timer.destroy()
     app.destroy()
