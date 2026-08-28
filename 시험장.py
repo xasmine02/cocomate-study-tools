@@ -10,7 +10,7 @@
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "1.6.0"
+__version__ = "1.7.0"
 
 import argparse
 import json
@@ -22,7 +22,7 @@ import sys
 import threading
 import time
 import webbrowser
-from datetime import datetime
+from datetime import date, datetime, timedelta
 
 try:
     import tkinter as tk
@@ -144,7 +144,8 @@ def set_tokens(text):
         toks.add(f"{m.group(1)}형")
     for m in re.finditer(r"([1-9])\s*급", s):
         toks.add(f"{m.group(1)}급")
-    for word in ("상시", "코코", "모의", "복원", "기출", "실기", "필기"):
+    for word in ("상시", "코코", "모의", "복원", "기출", "실기", "필기",
+                 "드릴", "계산"):
         if word in s:
             toks.add(word)
     return toks
@@ -495,6 +496,126 @@ def classify_grading_error(rc, text):
             or "찾을 수 없습니다" in t or "열 수 없습니다" in t:
         return "file"
     return "other"
+
+
+# ---------------------------------------------------------------------------
+# 오늘의 학습 — 14일 루틴 일정 (웹 루틴 v3와 동일: 2026-08-28 시작)
+# ---------------------------------------------------------------------------
+
+ROUTINE_START = date(2026, 8, 28)   # Day 1
+EXAM_DATE = date(2026, 9, 11)       # 시험일
+
+ROUTINE_PLAN = {
+    0: {"제목": "시작 전 준비", "종류": "안내",
+        "할일": "프로그램 설치 확인(Python·openpyxl), 모의고사 세트·문제지 "
+               "PDF 준비, 루틴 웹페이지 즐겨찾기. 8/28(금)부터 Day 1이 "
+               "시작됩니다."},
+    1: {"제목": "기본작업 전체", "종류": "부분연습", "영역": ["기본작업"],
+        "할일": "기본작업-1·2·3 부분 연습 (자료 입력·셀 서식·조건부 서식/"
+               "고급 필터)"},
+    2: {"제목": "계산 드릴 1~3", "종류": "드릴", "분": 45,
+        "할일": "계산드릴 워크북으로 판정·참조·시간날짜 45분"},
+    3: {"제목": "계산 드릴 4~6", "종류": "드릴", "분": 45,
+        "할일": "계산드릴 워크북으로 DB·통계조건·문자열 45분"},
+    4: {"제목": "계산 총정리 + 모의고사", "종류": "모의",
+        "세트": "2024 상시 1회", "목표": 60,
+        "할일": "모의고사 '2024 상시 1회' 전체 응시 (목표 60점)"},
+    5: {"제목": "분석작업 1", "종류": "부분연습", "영역": ["분석작업"],
+        "할일": "부분합·정렬·통합 부분 연습"},
+    6: {"제목": "분석작업 2", "종류": "부분연습", "영역": ["분석작업"],
+        "할일": "시나리오·목표값 찾기·피벗 테이블·데이터 표 부분 연습"},
+    7: {"제목": "매크로 + 차트", "종류": "부분연습", "영역": ["기타작업"],
+        "할일": "매크로작업·차트작업 부분 연습"},
+    8: {"제목": "모의고사", "종류": "모의", "세트": "코코 1회", "목표": 65,
+        "할일": "모의고사 '코코 1회' 응시 (목표 65점)"},
+    9: {"제목": "모의고사", "종류": "모의", "세트": "2024 A형", "목표": 70,
+        "할일": "모의고사 '2024 A형' 응시 (목표 70점)"},
+    10: {"제목": "모의고사", "종류": "모의", "세트": "코코 2회", "목표": 70,
+         "할일": "모의고사 '코코 2회' 응시 (목표 70점)"},
+    11: {"제목": "모의고사", "종류": "모의", "세트": "2024 상시 2회",
+         "목표": 75, "할일": "모의고사 '2024 상시 2회' 응시 (목표 75점)"},
+    12: {"제목": "모의고사", "종류": "모의", "세트": "2024 B형", "목표": 75,
+         "할일": "모의고사 '2024 B형' 응시 (목표 75점)"},
+    13: {"제목": "재도전 모의고사", "종류": "모의", "세트": "2026 1회",
+         "목표": 80, "할일": "모의고사 '2026 1회' 재도전 (목표 80점)"},
+    14: {"제목": "최종 점검", "종류": "안내",
+         "할일": "실수 노트 복습, 오답노트 모드로 약한 유형 재확인. "
+                "원하면 예비 세트(24 2급 상시 / 컴활 2급 상시)를 목록에서 "
+                "골라 가볍게 응시하세요. 오늘은 일찍 쉬는 것도 실력입니다."},
+    15: {"제목": "시험일", "종류": "안내",
+         "할일": "수험표·신분증 확인, 고사장 30분 전 도착. 저장은 Ctrl+S "
+                "수시로, 계산작업은 한 문제 3분 넘기면 다음으로. 그동안 "
+                "준비한 만큼 충분합니다 — 화이팅!"},
+    16: {"제목": "루틴 종료", "종류": "안내",
+         "할일": "14일 루틴을 완주했습니다. 수고 많았습니다! 결과와 관계 "
+                "없이 쌓은 실력은 남습니다."},
+}
+
+
+def routine_day_no(today=None):
+    """날짜 -> 일정 번호. 0=시작 전, 1~14=Day, 15=시험일, 16=이후."""
+    today = today or date.today()
+    delta = (today - ROUTINE_START).days
+    if delta < 0:
+        return 0
+    if delta <= 13:
+        return delta + 1
+    if today == EXAM_DATE:
+        return 15
+    return 16
+
+
+def routine_date_for(no):
+    """일정 번호 -> 날짜 (준비/이후는 None)."""
+    if 1 <= no <= 14:
+        return ROUTINE_START + timedelta(days=no - 1)
+    if no == 15:
+        return EXAM_DATE
+    return None
+
+
+def plan_for_day(no):
+    """일정 번호 -> 일정 dict (no/날짜 포함)."""
+    no = max(0, min(16, int(no)))
+    plan = dict(ROUTINE_PLAN[no])
+    plan["no"] = no
+    plan["날짜"] = routine_date_for(no)
+    return plan
+
+
+def plan_title(plan):
+    """카드 제목: 'Day 6 · 9/2(수) · 분석작업 2' 형태."""
+    d = plan.get("날짜")
+    d_txt = f"{d.month}/{d.day}({'월화수목금토일'[d.weekday()]})" if d else ""
+    if 1 <= plan["no"] <= 14:
+        head = f"Day {plan['no']}"
+    elif plan["no"] == 15:
+        head = "시험일"
+    else:
+        head = "루틴"
+    parts = [head]
+    if d_txt:
+        parts.append(d_txt)
+    parts.append(plan["제목"])
+    return " · ".join(parts)
+
+
+def find_set_for_tokens(sets, text):
+    """일정의 세트 지정 문구를 스캔된 세트에 퍼지 매칭 (유일 최고점만)."""
+    toks = set_tokens(text)
+    scored = []
+    for s in sets:
+        st = set_tokens(s["name"]) | set_tokens(os.path.basename(s["dir"]))
+        if _token_conflict(toks, st):
+            continue
+        shared = len(toks & st)
+        if shared >= 1:
+            scored.append((shared, s))
+    if not scored:
+        return None
+    best = max(sc for sc, _s in scored)
+    matched = [s for sc, s in scored if sc == best]
+    return matched[0] if len(matched) == 1 else None
 
 
 # ---------------------------------------------------------------------------
@@ -909,7 +1030,7 @@ if HAS_TK:
         """채점 결과 창: 큰 점수 + 시트별 점수 + 리포트 열기."""
 
         def __init__(self, master, result, html_path, folder=None,
-                     copied=False):
+                     copied=False, goal=None):
             super().__init__(master)
             self.title(f"{APP_TITLE} - 채점 결과")
             self.configure(bg=BG)
@@ -953,6 +1074,18 @@ if HAS_TK:
                     tk.Label(row, text=f"{earned:g} / {alloc:g}", bg=CARD,
                              fg=BRAND if ok else (AMBER if earned > 0 else RED),
                              font=UI_FONT_BOLD).pack(side="right")
+            if goal is not None and not partial:
+                diff = total - goal
+                if diff >= 0:
+                    g_txt = f"오늘 목표 {goal}점 달성! (+{diff}점)"
+                    g_fg, g_bg = BRAND_DARK, BRAND_SOFT
+                else:
+                    g_txt = f"오늘 목표 {goal}점까지 {-diff}점 — 오답노트로 " \
+                            "복습 후 재도전!"
+                    g_fg, g_bg = "#8A5A00", "#FBF0DC"
+                tk.Label(frm, text=g_txt, bg=g_bg, fg=g_fg,
+                         font=("Malgun Gothic", 9, "bold"), padx=10, pady=5,
+                         wraplength=360).pack(pady=(6, 0))
             if copied:
                 tk.Label(frm, text="성적이 복사되었습니다 — 루틴 웹페이지에서 "
                          "[성적 붙여넣기]를 누르면 자동 기록됩니다",
@@ -1182,7 +1315,8 @@ if HAS_TK:
                                       highlightthickness=0, bg=CARD, fg=INK,
                                       selectbackground=BRAND_SOFT,
                                       selectforeground=BRAND_DARK,
-                                      activestyle="none")
+                                      activestyle="none",
+                                      exportselection=False)
             sb = tk.Scrollbar(listfrm, command=self.listbox.yview)
             self.listbox.configure(yscrollcommand=sb.set)
             self.listbox.pack(side="left", fill="both", expand=True,
@@ -1402,6 +1536,8 @@ if HAS_TK:
             self._update_info = None
             self._update_prompted = False
             self._warned_dirty = set()   # 원본 오염 경고를 이미 띄운 세트
+            self.plan_no = routine_day_no()   # 오늘의 학습 일정 번호
+            self._pending_plan = None
             self._build_ui()
             self.refresh_sets()
             self.refresh_records()
@@ -1420,6 +1556,32 @@ if HAS_TK:
             tk.Label(header, text="컴활 2급 실기 모의고사 런처", bg=BRAND,
                      fg="#CFE9DA", font=UI_FONT).pack(side="left")
 
+            # 오늘의 학습 카드 (날짜 기반 루틴 일정)
+            plan_card = tk.Frame(self, bg=BRAND_SOFT, padx=14, pady=8)
+            plan_card.pack(fill="x", padx=16, pady=(10, 0))
+            row1 = tk.Frame(plan_card, bg=BRAND_SOFT)
+            row1.pack(fill="x")
+            tk.Button(row1, text="◀", font=UI_FONT, relief="flat",
+                      bg=BRAND_SOFT, fg=BRAND_DARK, padx=4,
+                      command=lambda: self._shift_plan(-1)).pack(side="left")
+            self.plan_title_lbl = tk.Label(row1, text="", bg=BRAND_SOFT,
+                                           fg=BRAND_DARK, font=UI_FONT_BOLD)
+            self.plan_title_lbl.pack(side="left", padx=6)
+            tk.Button(row1, text="▶", font=UI_FONT, relief="flat",
+                      bg=BRAND_SOFT, fg=BRAND_DARK, padx=4,
+                      command=lambda: self._shift_plan(1)).pack(side="left")
+            self.plan_start_btn = tk.Button(
+                row1, text="오늘 일정 시작", font=UI_FONT_BOLD, bg=BRAND,
+                fg="white", activebackground=BRAND_DARK, relief="flat",
+                padx=16, pady=4, command=self.start_today_plan)
+            self.plan_start_btn.pack(side="right")
+            self.plan_todo_lbl = tk.Label(plan_card, text="", bg=BRAND_SOFT,
+                                          fg=INK, font=("Malgun Gothic", 9),
+                                          justify="left", anchor="w",
+                                          wraplength=620)
+            self.plan_todo_lbl.pack(fill="x", pady=(4, 0))
+            self._render_plan_card()
+
             body = tk.Frame(self, bg=BG, padx=16, pady=12)
             body.pack(fill="both", expand=True)
             body.columnconfigure(0, weight=3)
@@ -1435,7 +1597,8 @@ if HAS_TK:
                                       highlightthickness=0, bg=CARD, fg=INK,
                                       selectbackground=BRAND_SOFT,
                                       selectforeground=BRAND_DARK,
-                                      activestyle="none")
+                                      activestyle="none",
+                                      exportselection=False)
             sb = tk.Scrollbar(listfrm, command=self.listbox.yview)
             self.listbox.configure(yscrollcommand=sb.set)
             self.listbox.pack(side="left", fill="both", expand=True,
@@ -1712,6 +1875,8 @@ if HAS_TK:
 
         def start_exam(self, practice=None):
             """시험 시작. practice={"label","sheets","minutes"}면 부분 연습."""
+            day_plan = getattr(self, "_pending_plan", None)
+            self._pending_plan = None
             if self.exam_running:
                 messagebox.showinfo(APP_TITLE, "이미 시험이 진행 중입니다.",
                                     parent=self)
@@ -1780,6 +1945,7 @@ if HAS_TK:
                 "minutes": max(MIN_MINUTES, min(MAX_MINUTES, minutes)),
                 "started": datetime.now(),
                 "practice_info": practice,
+                "plan": day_plan,
             }
             self.exam_running = True
             self.start_btn.configure(state="disabled", text="진행 중")
@@ -1790,6 +1956,88 @@ if HAS_TK:
             self.start_btn.configure(state="normal", text="시험 시작")
             self.refresh_records()
             self._show_info()
+
+        # ---------------- 오늘의 학습 ----------------
+
+        def _render_plan_card(self):
+            plan = plan_for_day(self.plan_no)
+            self.plan_title_lbl.configure(text=plan_title(plan))
+            todo = plan.get("할일", "")
+            if plan.get("목표"):
+                todo += f"  [목표 {plan['목표']}점]"
+            self.plan_todo_lbl.configure(text=todo)
+            today_no = routine_day_no()
+            self.plan_start_btn.configure(
+                text="오늘 일정 시작" if self.plan_no == today_no
+                else "이 일정 시작")
+
+        def _shift_plan(self, delta):
+            self.plan_no = max(0, min(16, self.plan_no + delta))
+            self._render_plan_card()
+
+        def _select_set_in_list(self, s):
+            for i, x in enumerate(self.sets):
+                if x.get("norm") == s.get("norm"):
+                    self.listbox.selection_clear(0, "end")
+                    self.listbox.selection_set(i)
+                    self.listbox.see(i)
+                    self._show_info()
+                    return True
+            return False
+
+        def start_today_plan(self):
+            plan = plan_for_day(self.plan_no)
+            kind = plan["종류"]
+            if kind == "안내":
+                messagebox.showinfo(f"{APP_TITLE} - {plan['제목']}",
+                                    plan["할일"], parent=self)
+                return
+            if self.exam_running:
+                messagebox.showinfo(APP_TITLE, "이미 시험이 진행 중입니다.",
+                                    parent=self)
+                return
+            day_tag = f"d{plan['no']:02d}" if 1 <= plan["no"] <= 14 else None
+            if kind == "부분연습":
+                s = self._selected_set()
+                if not s:
+                    messagebox.showinfo(
+                        APP_TITLE, "이 일정은 부분 연습입니다.\n먼저 아래 "
+                        "목록에서 연습할 세트를 선택한 뒤 다시 누르세요.",
+                        parent=self)
+                    return
+                dlg = PracticeDialog(self)
+                dlg.apply_preset(plan["영역"])
+                self.wait_window(dlg)
+                if dlg.result:
+                    self._pending_plan = {"day": day_tag, "목표": None}
+                    self.start_exam(practice=dlg.result)
+                return
+            if kind == "드릴":
+                s = find_set_for_tokens(self.sets, "계산 드릴")
+                if not s:
+                    messagebox.showinfo(
+                        APP_TITLE, "계산드릴 세트(계산드릴_문제/정답)를 "
+                        "찾지 못했습니다.\n드릴 파일을 스캔 폴더에 넣거나 "
+                        "[직접 선택]으로 지정하세요.", parent=self)
+                    return
+                self._select_set_in_list(s)
+                self.minutes_var.set(int(plan.get("분", 45)))
+                self._pending_plan = {"day": day_tag, "목표": None}
+                self.start_exam()
+                return
+            if kind == "모의":
+                s = find_set_for_tokens(self.sets, plan["세트"])
+                if not s:
+                    if messagebox.askyesno(
+                            APP_TITLE,
+                            f"'{plan['세트']}' 세트를 찾지 못했습니다.\n"
+                            "문제/정답 파일을 직접 선택할까요?", parent=self):
+                        self.choose_direct()
+                    return
+                self._select_set_in_list(s)
+                self._pending_plan = {"day": day_tag,
+                                      "목표": plan.get("목표")}
+                self.start_exam()
 
         # ---------------- 부분 연습 모드 ----------------
 
@@ -1963,9 +2211,10 @@ if HAS_TK:
             else:
                 score = result.get("total")
                 copied = self._copy_result_to_clipboard(result)
+                goal = (exam.get("plan") or {}).get("목표")
                 ResultWindow(self, result, html_path,
                              folder=os.path.dirname(html_path),
-                             copied=copied)
+                             copied=copied, goal=goal)
                 if os.path.isfile(html_path):
                     open_file(html_path)
             pinfo = exam.get("practice_info")
@@ -1981,6 +2230,9 @@ if HAS_TK:
                 record["영역"] = pinfo.get("label")
                 if result:
                     record["만점"] = result.get("max_total")
+            day_tag = (exam.get("plan") or {}).get("day")
+            if day_tag:
+                record["day"] = day_tag
             try:
                 append_record(record)
             except OSError as e:
@@ -2019,6 +2271,9 @@ def run_smoke():
     app.update_idletasks()
     app.update()
     assert "계산 문제 1" in review.listbox.get(0)
+    review.checks = set()        # 이전 스모크가 저장한 체크 상태 무시(결정성)
+    review._refresh_list()
+    review.listbox.selection_set(0)
     review.toggle_check()
     assert review.retake_btn.cget("state") == "normal"  # 1/1 체크 완료
     review.destroy()
@@ -2034,6 +2289,16 @@ def run_smoke():
     sheets, label = dlg.selection()
     assert sheets == ["기본작업-1", "기본작업-2", "기본작업-3"]
     dlg.destroy()
+    # 오늘의 학습 카드 + 미리보기 화살표
+    assert app.plan_title_lbl.cget("text"), "오늘의 학습 제목 비어 있음"
+    app.plan_no = 6
+    app._render_plan_card()
+    assert "Day 6" in app.plan_title_lbl.cget("text")
+    assert "9/2" in app.plan_title_lbl.cget("text")
+    before = app.plan_title_lbl.cget("text")
+    app._shift_plan(1)
+    assert app.plan_title_lbl.cget("text") != before
+    assert "Day 7" in app.plan_title_lbl.cget("text")
     # 클립보드 브리지 라운드트립
     fake = {"total": 87, "mode": "full", "graded_sheets": ["계산작업"]}
     assert app._copy_result_to_clipboard(fake) is True
