@@ -13,7 +13,7 @@
 의존성: Python 3.8+ / openpyxl (표준 라이브러리 외 유일한 의존성)
 """
 
-__version__ = "1.8.0"
+__version__ = "1.9.0"
 
 import argparse
 import html as html_mod
@@ -942,39 +942,41 @@ def compress_coords(coords):
     return sorted(set(out + ranges))
 
 
-def _cluster_units(units, target):
-    """서식 diff 단위를 공간 인접(맨해튼 거리 <=2)으로 묶고 target개로 병합."""
+def _cluster_units(units, target=None):
+    """서식 diff 단위를 '지시 단위' 공간 클러스터로 묶는다.
+
+    병합 조건: 두 클러스터에 (행 간격 <= 1 그리고 맨해튼 거리 <= 2)인
+    셀 쌍이 존재할 때만. 행 간격이 2행 이상 떨어진 영역(예: 2행 제목과
+    4~11행 표)은 서로 다른 지시로 보고 절대 병합하지 않는다.
+
+    target은 더 이상 강제 상한이 아니다(무리하게 합쳐 지시를 뒤섞지
+    않음) — 클러스터가 target을 넘으면 호출부가 배점을 비례 분할한다.
+    """
     if not units:
         return []
     clusters = [[u] for u in units]
 
-    def dist(c1, c2):
-        return min(abs(a["pos"][0] - b["pos"][0])
-                   + abs(a["pos"][1] - b["pos"][1])
-                   for a in c1 for b in c2)
+    def near(c1, c2):
+        """행 간격 1 이내이면서 맨해튼 거리 2 이내인 셀 쌍이 있는가."""
+        for a in c1:
+            for b in c2:
+                dr = abs(a["pos"][0] - b["pos"][0])
+                if dr <= 1 and dr + abs(a["pos"][1] - b["pos"][1]) <= 2:
+                    return True
+        return False
 
     merged = True
     while merged:
         merged = False
         for i in range(len(clusters)):
             for j in range(i + 1, len(clusters)):
-                if dist(clusters[i], clusters[j]) <= 2:
+                if near(clusters[i], clusters[j]):
                     clusters[i].extend(clusters[j])
                     del clusters[j]
                     merged = True
                     break
             if merged:
                 break
-    while len(clusters) > max(1, target):
-        best = None
-        for i in range(len(clusters)):
-            for j in range(i + 1, len(clusters)):
-                d = dist(clusters[i], clusters[j])
-                if best is None or d < best[0]:
-                    best = (d, i, j)
-        _d, i, j = best
-        clusters[i].extend(clusters[j])
-        del clusters[j]
     for cl in clusters:
         cl.sort(key=lambda u: (u["pos"][0], u["pos"][1]))
     clusters.sort(key=lambda cl: (cl[0]["pos"][0], cl[0]["pos"][1]))
@@ -1057,8 +1059,30 @@ def value_diff_cells(shp, sha):
     return out
 
 
+def _blank_answer_cell(sha, r, c):
+    """정답 셀에 표시할 값이 없는가 (None 또는 공백 문자열)."""
+    try:
+        v = sha.cell(r, c).value
+    except Exception:
+        return False
+    return v is None or (isinstance(v, str) and v.strip() == "")
+
+
+# 정답 셀이 비어 있으면 채점에서 제외하는 서식 종류.
+# 값이 없는 셀의 글꼴·표시 형식은 화면에 아무 영향이 없다 — 예:
+# 'B2 제목에 굴림체' 지시를 정답 제작자가 B2:H2 전체에 걸어도
+# centerContinuous 표시 텍스트는 앵커(B2) 글꼴로 렌더되므로 C2:H2의
+# 글꼴 불일치는 오탐. 반면 채우기·테두리·맞춤(centerContinuous 참여)·
+# 병합은 빈 셀이어도 화면에 보이므로 채점을 유지한다.
+BLANK_SKIP_KINDS = ("font", "number_format")
+
+
 def format_diff_items(book_p, book_a, psheet, asheet):
-    """문제↔정답 서식 diff를 종류별 항목으로. {kind: [셀좌표...] 또는 데이터}"""
+    """문제↔정답 서식 diff를 종류별 항목으로. {kind: [셀좌표...] 또는 데이터}
+
+    정답 파일에서 값이 비어 있는 셀은 글꼴·표시 형식 diff에서 제외
+    (BLANK_SKIP_KINDS) — 화면 영향이 없는 차이는 채점 대상이 아니다.
+    """
     shp, sha = book_p.raw[psheet], book_a.raw[asheet]
     mr, mc = scan_bounds(shp, sha)
     items = {}
@@ -1069,7 +1093,10 @@ def format_diff_items(book_p, book_a, psheet, asheet):
             # 병합 하위(비앵커) 셀은 앵커가 대표하므로 개별 비교하지 않음
             if (r, c) in a_members or (r, c) in p_members:
                 continue
+            blank_a = _blank_answer_cell(sha, r, c)
             for kind in CELL_FMT_KINDS:
+                if blank_a and kind in BLANK_SKIP_KINDS:
+                    continue
                 sp = fmt_signature_m(shp, r, c, kind, p_members, p_anchors)
                 sa = fmt_signature_m(sha, r, c, kind, a_members, a_anchors)
                 if sp != sa:
@@ -1461,6 +1488,8 @@ class SheetResult:
         self.notes = []     # 안내/경고
         self.missing = False
         self.wrong = []     # 오답노트 카드(구조화) 목록
+        self.diff_total = 0    # 채점 대상(문제↔정답) 값 diff 셀 수
+        self.diff_matched = 0  # 그중 학생 파일이 정답과 일치한 셀 수
 
 
 def _fmt_expected(exp, ef):
@@ -1648,7 +1677,10 @@ def grade_basic2(res, ctx):
     """기본작업-2: 서식 diff를 '지시 단위'(공간 인접 클러스터)로 채점.
 
     - 채점 후보는 문제↔정답 diff 셀만 (지시 범위 밖 잔여 서식 감점 없음)
-    - 병합은 앵커 기준, 테두리는 edge 합성, 색은 테마 해석 후 RGB 비교
+    - 행 간격 2행 이상 떨어진 영역은 별도 지시로 취급(절대 병합 안 함).
+      지시가 5개를 넘으면 합치는 대신 배점을 항목 수로 비례 분할
+    - 병합은 앵커 기준, 테두리는 edge 합성, 색은 테마 해석 후 RGB 비교,
+      정답에서 값이 빈 셀은 글꼴·표시 형식 채점 제외(화면 영향 없음)
     - 행 높이/열 너비는 자동 조정 부산물이 많아 기본 제외(참고 노트만),
       --key format_checks에 명시된 세트만 채점(±0.5)
     """
@@ -1732,8 +1764,9 @@ def grade_basic2(res, ctx):
         res.notes.append("채점할 서식 차이가 없어 만점 처리")
         return
 
-    target = max(1, 5 - len(standalone))
-    clusters = _cluster_units(units, target) if units else []
+    # 지시 단위 클러스터. 5개를 넘어도 강제로 합치지 않고(지시 뒤섞임
+    # 방지) 배점을 항목 수(n)로 비례 분할한다 — 합계는 res.alloc 유지.
+    clusters = _cluster_units(units) if units else []
     n = len(clusters) + len(standalone)
     per = res.alloc / n
     passed = 0
@@ -1775,6 +1808,13 @@ def grade_basic2(res, ctx):
             continue
         # --- 실패 카드: 범위 표기 + 속성별 정답/내답 + 파생 힌트 ---
         loc = compress_coords([u["coord"] for u in cl])
+
+        def _kind_loc(k):
+            """이 클러스터에서 종류 k가 실패한 셀/범위 표기 (인용 출처)."""
+            locs = compress_coords([x["coord"] for x in fails
+                                    if x["kind"] == k])
+            return ", ".join(locs[:2]) + (" 외" if len(locs) > 2 else "")
+
         props = []
         hints = []
         seen_kinds = []
@@ -1810,10 +1850,15 @@ def grade_basic2(res, ctx):
             elif k == "border":
                 b_fails = [x for x in fails if x["kind"] == "border"]
                 exp, got = _border_props(b_fails, s_edges)
-                props.append({"name": "테두리", "expected": exp, "got": got})
+                props.append({"name": f"테두리({_kind_loc(k)})",
+                              "expected": exp, "got": got})
                 hints.extend(hints_for_kind("border", None))
             else:
-                props.extend(props_for_kind(k, u.get("sig_a"), u.get("sig_s")))
+                # 속성 행마다 이 클러스터의 diff 셀/범위를 명시해 인용
+                where = _kind_loc(k)
+                for p in props_for_kind(k, u.get("sig_a"), u.get("sig_s")):
+                    p["name"] = f"{p['name']}({where})"
+                    props.append(p)
                 hints.extend(hints_for_kind(k, u.get("sig_a")))
         uniq_hints = []
         for h in hints:
@@ -2759,6 +2804,15 @@ def run_grading(problem_path, answer_path, student_path, key, sheets=None):
         alloc = points.get(n, 0)
         res = SheetResult(psheet, alloc)
         ctx = ctxs[n]
+        # 풀이 파일 실수 감지용: 채점 대상 diff 셀 일치율 집계
+        try:
+            res.diff_total = len(ctx["vdiffs"])
+            if ssheet is not None:
+                res.diff_matched = sum(
+                    1 for (rr, cc, _co) in ctx["vdiffs"]
+                    if ctx["judge"].judge(rr, cc)[0])
+        except Exception:
+            pass
         if ssheet is None:
             res.missing = True
             res.earned = 0
@@ -3809,8 +3863,9 @@ def _wrong_card_html(card):
     chip_only = cells and all(c.get("expected") is None and c.get("got") is None
                               for c in cells)
     if chip_only:
-        chips = "".join(f'<span class="cellchip">{esc(c["coord"])}</span>'
-                        for c in cells)
+        # ", " 구분자: 칩 스타일이 깨져도 'B2:H2B4:B11'처럼 붙지 않게
+        chips = ", ".join(f'<span class="cellchip">{esc(c["coord"])}</span>'
+                          for c in cells)
         body.append(f'<div class="wc-chips">확인할 위치: {chips}'
                     + (f' 외 {card["more"]}곳' if card.get("more") else "")
                     + "</div>")
@@ -3877,6 +3932,16 @@ def write_html(path, results, score100, global_notes, paths,
     vcls = "pass" if score100 >= PASS_LINE else "fail"
     set_name = set_name or derive_set_name(paths[0])
     now_txt = datetime.now().strftime("%Y-%m-%d %H:%M")
+
+    # 엉뚱한 사본 채점 감지: 채점 대상 diff 셀 일치율 10% 미만이면 경고
+    diff_total = sum(getattr(r, "diff_total", 0) or 0 for r in results)
+    diff_matched = sum(getattr(r, "diff_matched", 0) or 0 for r in results)
+    warn_html = ""
+    if diff_total > 0 and diff_matched / diff_total < 0.10:
+        warn_html = ('<div class="warn-banner">풀이가 거의 비어 있습니다 — '
+                     'Excel에서 저장(Ctrl+S)했는지, 풀이 사본 파일이 맞는지 '
+                     '확인하세요</div>')
+
     all_cards = [c for r in results for c in r.wrong]
     cat_losses, top3, checklist = build_diagnosis(results)
     max_total = sum(r.alloc for r in results) if partial else 100
@@ -3960,6 +4025,13 @@ h2 { font-size:1.06rem; color:#107C41; margin-bottom:12px;
 .badge.fail { background:#B3372E; }
 .files { color:#57705F; font-size:0.8rem; margin-top:12px;
   word-break:break-all; }
+.file-solve { display:inline-block; margin-top:3px; padding:2px 10px;
+  background:#E3F2E8; border:1px solid #BFDCCB; border-radius:6px;
+  color:#0B5D31; font-size:0.84rem; }
+.file-solve strong { font-weight:700; }
+.warn-banner { margin-top:14px; padding:10px 14px; border-radius:10px;
+  background:#FDECEA; border:1px solid #EFB9B2; color:#B3372E;
+  font-weight:700; font-size:0.9rem; }
 .scroll { overflow-x:auto; }
 svg { font-family:'Malgun Gothic','맑은 고딕',sans-serif; display:block; }
 .lead { color:#57705F; font-size:0.86rem; margin-bottom:14px; }
@@ -4059,8 +4131,9 @@ footer { color:#57705F; font-size:0.78rem; text-align:center;
         + '<div class="files">'
         f"문제 {esc(os.path.basename(paths[0]))}<br>"
         f"정답 {esc(os.path.basename(paths[1]))}<br>"
-        f"풀이 {esc(os.path.basename(paths[2]))}</div>"
-        "</div></div></div>\n"
+        f'<span class="file-solve">풀이 '
+        f"<strong>{esc(os.path.basename(paths[2]))}</strong></span></div>"
+        "</div></div>" + warn_html + "</div>\n"
         '<div class="card"><h2>영역별 점수</h2><div class="scroll">'
         + _svg_sheet_bars(results) + "</div></div>\n"
         + trend_html + wrong_html + diag_html + check_html + notes_html
