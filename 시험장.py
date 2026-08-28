@@ -10,7 +10,7 @@
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "1.5.1"
+__version__ = "1.6.0"
 
 import argparse
 import json
@@ -908,7 +908,8 @@ if HAS_TK:
     class ResultWindow(tk.Toplevel):
         """채점 결과 창: 큰 점수 + 시트별 점수 + 리포트 열기."""
 
-        def __init__(self, master, result, html_path, folder=None):
+        def __init__(self, master, result, html_path, folder=None,
+                     copied=False):
             super().__init__(master)
             self.title(f"{APP_TITLE} - 채점 결과")
             self.configure(bg=BG)
@@ -952,6 +953,12 @@ if HAS_TK:
                     tk.Label(row, text=f"{earned:g} / {alloc:g}", bg=CARD,
                              fg=BRAND if ok else (AMBER if earned > 0 else RED),
                              font=UI_FONT_BOLD).pack(side="right")
+            if copied:
+                tk.Label(frm, text="성적이 복사되었습니다 — 루틴 웹페이지에서 "
+                         "[성적 붙여넣기]를 누르면 자동 기록됩니다",
+                         bg=BRAND_SOFT, fg=BRAND_DARK,
+                         font=("Malgun Gothic", 9, "bold"), wraplength=360,
+                         padx=10, pady=6, justify="left").pack(pady=(10, 0))
             if folder and os.path.isdir(folder):
                 tk.Label(frm, text=f"저장 폴더: {folder}", bg=BG, fg=SUB,
                          font=("Malgun Gothic", 8), wraplength=360,
@@ -1894,6 +1901,20 @@ if HAS_TK:
 
             poll()
 
+        def _copy_result_to_clipboard(self, result):
+            """결과 JSON을 클립보드에 복사 — 루틴 웹 원클릭 연동용.
+
+            실패(클립보드 잠김 등)는 조용히 무시하고 False 반환."""
+            try:
+                payload = json.dumps(result, ensure_ascii=False,
+                                     separators=(",", ":"))
+                self.clipboard_clear()
+                self.clipboard_append(payload)
+                self.update_idletasks()
+                return True
+            except Exception:
+                return False
+
         def _install_with_progress(self):
             prog = tk.Toplevel(self)
             prog.title(APP_TITLE)
@@ -1941,8 +1962,10 @@ if HAS_TK:
                 score = None
             else:
                 score = result.get("total")
+                copied = self._copy_result_to_clipboard(result)
                 ResultWindow(self, result, html_path,
-                             folder=os.path.dirname(html_path))
+                             folder=os.path.dirname(html_path),
+                             copied=copied)
                 if os.path.isfile(html_path):
                     open_file(html_path)
             pinfo = exam.get("practice_info")
@@ -2011,6 +2034,12 @@ def run_smoke():
     sheets, label = dlg.selection()
     assert sheets == ["기본작업-1", "기본작업-2", "기본작업-3"]
     dlg.destroy()
+    # 클립보드 브리지 라운드트립
+    fake = {"total": 87, "mode": "full", "graded_sheets": ["계산작업"]}
+    assert app._copy_result_to_clipboard(fake) is True
+    back = app.clipboard_get()
+    import json as _json
+    assert _json.loads(back) == fake, back[:80]
     timer.finished = True
     timer.destroy()
     app.destroy()

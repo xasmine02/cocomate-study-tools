@@ -8,7 +8,7 @@ grade.py로 채점한 뒤 점수를 표시하고 HTML 리포트를 엽니다.
 콘솔이 없어도 모든 오류를 메시지 창으로 표시합니다.
 """
 
-__version__ = "1.0.0"
+__version__ = "1.6.0"
 
 import importlib.util
 import json
@@ -430,10 +430,23 @@ def main():
 
     total = result.get("total", 0)
     verdict = "합격권" if total >= result.get("pass_line", PASS_LINE) else "미달"
+    # 결과 JSON을 클립보드에 복사 — 루틴 웹 원클릭 연동 (실패는 조용히 무시)
+    copied = False
+    try:
+        root.clipboard_clear()
+        root.clipboard_append(json.dumps(result, ensure_ascii=False,
+                                         separators=(",", ":")))
+        root.update_idletasks()
+        copied = True
+    except Exception:
+        pass
     lines = [f"총점: {total} / 100점", f"합격선 {PASS_LINE}점 기준: {verdict}", ""]
     for s in result.get("sheets", []):
         lines.append(f"  {s.get('name', '?')}: "
                      f"{s.get('earned', 0):g} / {s.get('alloc', 0):g}점")
+    if copied:
+        lines += ["", "성적이 클립보드에 복사되었습니다 — 루틴 웹페이지에서 "
+                      "[성적 붙여넣기]를 누르면 자동 기록됩니다."]
     lines += ["", f"저장 폴더: {out_dir}",
               "", "확인을 누르면 상세 HTML 리포트가 열립니다."]
     if key:
