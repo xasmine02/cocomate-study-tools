@@ -10,7 +10,7 @@
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "1.7.0"
+__version__ = "1.8.0"
 
 import argparse
 import json
@@ -375,19 +375,169 @@ def records_summary(records):
     return out
 
 
+# --- 매크로 보존 사본 생성 (xlsx -> xlsm ZIP 변환 + MotW 제거) ---
+
+XLSX_MAIN_CT = ("application/vnd.openxmlformats-officedocument."
+                "spreadsheetml.sheet.main+xml")
+XLSM_MAIN_CT = "application/vnd.ms-excel.sheet.macroEnabled.main+xml"
+
+
+def convert_xlsx_to_xlsm(src, dst):
+    """xlsx -> xlsm ZIP 수준 변환.
+
+    [Content_Types].xml의 워크북 메인 파트 content-type만 교체하고 그 외
+    모든 파트는 바이트 무손실 복사 (openpyxl 재저장 없음 — 서식·차트 보존).
+    """
+    import zipfile
+    with zipfile.ZipFile(src) as zin, \
+            zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
+        for item in zin.infolist():
+            data = zin.read(item.filename)
+            if item.filename == "[Content_Types].xml":
+                data = data.replace(XLSX_MAIN_CT.encode("utf-8"),
+                                    XLSM_MAIN_CT.encode("utf-8"))
+            zout.writestr(item, data)
+    return dst
+
+
+def _strip_motw(path):
+    """Mark-of-the-Web(Zone.Identifier ADS) 제거 시도 — 실패는 조용히 무시."""
+    try:
+        os.remove(path + ":Zone.Identifier")
+    except OSError:
+        pass
+
+
+def _unique_stem(d, stem):
+    """같은 이름의 .xlsm/.xlsx 사본과 겹치지 않는 경로 어간."""
+    cand = os.path.join(d, stem)
+    n = 2
+    while os.path.exists(cand + ".xlsm") or os.path.exists(cand + ".xlsx"):
+        cand = os.path.join(d, f"{stem}_{n}")
+        n += 1
+    return cand
+
+
+def copy_as_macro_enabled(source, dst_stem):
+    """사본을 매크로 저장 가능한 .xlsm으로 생성.
+
+    원본이 .xlsx면 ZIP 수준 변환(무결성 스모크 실패 시 원본 확장자로
+    폴백), .xlsm이면 그대로 복사. 사본의 MotW도 제거.
+    """
+    ext = os.path.splitext(source)[1].lower()
+    if ext == ".xlsx":
+        dst = dst_stem + ".xlsm"
+        try:
+            convert_xlsx_to_xlsm(source, dst)
+            try:  # 무결성 스모크 (openpyxl 없으면 생략)
+                import openpyxl
+                openpyxl.load_workbook(dst).close()
+            except ImportError:
+                pass
+        except Exception:
+            try:
+                if os.path.isfile(dst):
+                    os.remove(dst)
+            except OSError:
+                pass
+            dst = dst_stem + ".xlsx"
+            shutil.copy2(source, dst)
+    else:
+        dst = dst_stem + (ext or ".xlsm")
+        shutil.copy2(source, dst)
+    _strip_motw(dst)
+    return dst
+
+
 def make_attempt_copy(problem, set_name, when=None):
-    """문제 파일을 풀이_<세트명>_<yyyymmdd_HHMM>.<확장자> 사본으로 복사."""
+    """문제 파일을 풀이_<세트명>_<일시>.xlsm 사본으로 (매크로 저장 가능)."""
     when = when or datetime.now()
-    ext = os.path.splitext(problem)[1]
     stamp = when.strftime("%Y%m%d_%H%M")
     d = os.path.dirname(os.path.abspath(problem))
-    dst = os.path.join(d, f"풀이_{set_name}_{stamp}{ext}")
-    n = 2
-    while os.path.exists(dst):
-        dst = os.path.join(d, f"풀이_{set_name}_{stamp}_{n}{ext}")
-        n += 1
-    shutil.copy2(problem, dst)
-    return dst
+    return copy_as_macro_enabled(
+        problem, _unique_stem(d, f"풀이_{set_name}_{stamp}"))
+
+
+# --- 앱 설정 (세트설정.json의 "_설정" 영역) ---
+
+def get_app_setting(name, default=None, path=None):
+    cfg = load_set_config(path or SET_CONFIG_PATH)
+    return (cfg.get("_설정") or {}).get(name, default)
+
+
+def set_app_setting(name, value, path=None):
+    p = path or SET_CONFIG_PATH
+    cfg = load_set_config(p)
+    cfg.setdefault("_설정", {})[name] = value
+    return save_set_config(cfg, p)
+
+
+# --- Excel 신뢰 위치 등록 (매크로 차단 배너 해결) ---
+
+TRUST_MANUAL_GUIDE = (
+    "수동 설정: Excel → 파일 → 옵션 → 보안 센터 → 보안 센터 설정 → "
+    "신뢰할 수 있는 위치 → '새 위치 추가'에서 학습 폴더를 추가하고 "
+    "'이 위치의 하위 폴더도 신뢰할 수 있음'을 체크하세요.")
+
+
+def build_trusted_location_values(folder, version="16.0", slot="LocationCC"):
+    """등록할 레지스트리 키 경로·값 구성 (테스트 가능)."""
+    path = (rf"Software\Microsoft\Office\{version}\Excel\Security"
+            rf"\Trusted Locations\{slot}")
+    folder = str(folder).rstrip("\\/") + "\\"
+    return {"key": path,
+            "values": {"Path": folder, "AllowSubfolders": 1,
+                       "Description": "코코 시험장 학습 폴더"}}
+
+
+def register_trusted_location(folder, version=None):
+    """HKCU에 신뢰 위치 등록. (성공 여부, 메시지) 반환.
+
+    Windows 외 환경/실패 시 수동 설정 경로 안내를 메시지에 포함.
+    """
+    try:
+        import winreg
+    except ImportError:
+        return False, ("이 기능은 Windows에서만 동작합니다.\n\n"
+                       + TRUST_MANUAL_GUIDE)
+    versions = [version] if version else []
+    try:  # 설치된 Office 버전 키 탐색
+        with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                            r"Software\Microsoft\Office") as k:
+            i = 0
+            while True:
+                try:
+                    sub = winreg.EnumKey(k, i)
+                    i += 1
+                except OSError:
+                    break
+                if re.match(r"^\d+\.\d+$", sub):
+                    versions.append(sub)
+    except OSError:
+        pass
+    if "16.0" not in versions:
+        versions.append("16.0")  # Office 2016+/365 기본
+    seen = []
+    for v in sorted(set(versions), key=lambda x: -float(x)):
+        seen.append(v)
+    last_err = None
+    for v in seen:
+        try:
+            spec_reg = build_trusted_location_values(folder, v)
+            with winreg.CreateKey(winreg.HKEY_CURRENT_USER,
+                                  spec_reg["key"]) as k:
+                vals = spec_reg["values"]
+                winreg.SetValueEx(k, "Path", 0, winreg.REG_SZ, vals["Path"])
+                winreg.SetValueEx(k, "AllowSubfolders", 0, winreg.REG_DWORD,
+                                  vals["AllowSubfolders"])
+                winreg.SetValueEx(k, "Description", 0, winreg.REG_SZ,
+                                  vals["Description"])
+            return True, (f"Excel {v} 신뢰 위치로 등록했습니다:\n{folder}\n\n"
+                          "이미 열려 있는 Excel은 닫았다가 다시 여세요.")
+        except OSError as e:
+            last_err = e
+    return False, (f"레지스트리 등록에 실패했습니다 ({last_err}).\n\n"
+                   + TRUST_MANUAL_GUIDE)
 
 
 def run_grading(grade_py, problem, answer, student,
@@ -514,9 +664,10 @@ ROUTINE_PLAN = {
         "할일": "기본작업-1·2·3 부분 연습 (자료 입력·셀 서식·조건부 서식/"
                "고급 필터)"},
     2: {"제목": "계산 드릴 1~3", "종류": "드릴", "분": 45,
-        "할일": "계산드릴 워크북으로 판정·참조·시간날짜 45분"},
+        "할일": "계산드릴 시트 1~3 (판정·참조) + 기출 계산작업 해당 유형"},
     3: {"제목": "계산 드릴 4~6", "종류": "드릴", "분": 45,
-        "할일": "계산드릴 워크북으로 DB·통계조건·문자열 45분"},
+        "할일": "계산드릴 시트 4~6 (시간·문자열·DB·통계) + 기출 해당 유형 "
+               "+ 오답 재풀이"},
     4: {"제목": "계산 총정리 + 모의고사", "종류": "모의",
         "세트": "2024 상시 1회", "목표": 60,
         "할일": "모의고사 '2024 상시 1회' 전체 응시 (목표 60점)"},
@@ -575,11 +726,12 @@ def routine_date_for(no):
 
 
 def plan_for_day(no):
-    """일정 번호 -> 일정 dict (no/날짜 포함)."""
+    """일정 번호 -> 일정 dict (no/날짜/스텝 포함)."""
     no = max(0, min(16, int(no)))
     plan = dict(ROUTINE_PLAN[no])
     plan["no"] = no
     plan["날짜"] = routine_date_for(no)
+    plan["스텝"] = [dict(st) for st in ROUTINE_STEPS.get(no, [])]
     return plan
 
 
@@ -601,12 +753,18 @@ def plan_title(plan):
 
 
 def find_set_for_tokens(sets, text):
-    """일정의 세트 지정 문구를 스캔된 세트에 퍼지 매칭 (유일 최고점만)."""
+    """일정의 세트 지정 문구를 스캔된 세트에 퍼지 매칭 (유일 최고점만).
+
+    문구의 토큰(연도·회차·형·키워드)은 전부 세트에 있어야 합니다 —
+    '2024 B형'이 B형 파일이 없을 때 다른 2024 세트로 잘못 붙는 것 방지.
+    """
     toks = set_tokens(text)
     scored = []
     for s in sets:
         st = set_tokens(s["name"]) | set_tokens(os.path.basename(s["dir"]))
         if _token_conflict(toks, st):
+            continue
+        if toks - st:          # 문구 토큰이 하나라도 빠지면 다른 세트
             continue
         shared = len(toks & st)
         if shared >= 1:
@@ -616,6 +774,314 @@ def find_set_for_tokens(sets, text):
     best = max(sc for sc, _s in scored)
     matched = [s for sc, s in scored if sc == best]
     return matched[0] if len(matched) == 1 else None
+
+
+# ---------------------------------------------------------------------------
+# 단계 가이드 — 웹 루틴(routine.html) Day 카드 과제 목록과 1:1 시퀀스
+# ---------------------------------------------------------------------------
+# 스텝 형: 안내(체크만) / 부분연습(영역·시트) / 드릴(드릴 워크북 시트 1개) /
+#          모의(실전 응시, 채점 완료 시 자동 체크) / 오답노트(복습 모드)
+
+ROUTINE_STEPS = {
+    0: [
+        {"이름": "프로그램 설치·실행 확인", "형": "안내", "분": 15,
+         "설명": "시험장 프로그램 설치·실행 확인 — 채점까지 한 번 "
+                "돌려보기. 아무 세트나 [시험 시작]으로 열고 바로 종료해 "
+                "채점 흐름을 확인하세요."},
+        {"이름": "세트·문제지 PDF 준비 확인", "형": "안내", "분": 10,
+         "설명": "문제지 PDF와 기출 7세트·코코 모의고사 파일 준비 확인 — "
+                "아래 목록에 세트가 모두 보이고 (문제지 미연결) 표시가 "
+                "없는지 확인하세요."},
+        {"이름": "루틴 웹페이지 훑어보기", "형": "안내", "분": 10,
+         "설명": "이 루틴 한 바퀴 훑어보기 — 웹 루틴 페이지에서 실수 "
+                "노트·함수 사전 위치를 확인하고 즐겨찾기에 추가하세요."},
+    ],
+    1: [
+        {"이름": "2024 상시 1회 기본작업-1·2", "형": "부분연습",
+         "세트": "2024 상시 1회", "시트": ["기본작업-1", "기본작업-2"],
+         "라벨": "기본작업-1·2", "분": 10,
+         "설명": "2024 상시 1회 기본작업-1·2 풀기 — 자료 입력은 띄어쓰기·"
+                "특수문자까지 그대로, 셀 서식은 Ctrl+1."},
+        {"이름": "2024 상시 2회 기본작업-1·2", "형": "부분연습",
+         "세트": "2024 상시 2회", "시트": ["기본작업-1", "기본작업-2"],
+         "라벨": "기본작업-1·2", "분": 10,
+         "설명": "2024 상시 2회 기본작업-1·2 풀기."},
+        {"이름": "2024 A형 기본작업-3", "형": "부분연습",
+         "세트": "2024 A형", "시트": ["기본작업-3"], "라벨": "기본작업-3",
+         "분": 10,
+         "설명": "2024 A형 기본작업-3 풀기 — 조건부 서식 $B4 혼합참조 / "
+                "고급 필터 같은 행 AND·다른 행 OR."},
+        {"이름": "2024 B형 기본작업-3", "형": "부분연습",
+         "세트": "2024 B형", "시트": ["기본작업-3"], "라벨": "기본작업-3",
+         "분": 10, "설명": "2024 B형 기본작업-3 풀기."},
+        {"이름": "24 2급 상시 기본작업-3", "형": "부분연습",
+         "세트": "24 2급 상시", "시트": ["기본작업-3"], "라벨": "기본작업-3",
+         "분": 10, "설명": "24 2급 상시 기본작업-3 풀기."},
+    ],
+    2: [
+        {"이름": "계산 드릴 시트 1", "형": "드릴", "번호": 1, "분": 15,
+         "설명": "계산작업 집중 드릴 시트 1–3 (판정·참조) 중 시트 1 — "
+                "드릴 사본이 열리면 해당 시트만 15분 안에 푸세요."},
+        {"이름": "계산 드릴 시트 2", "형": "드릴", "번호": 2, "분": 15,
+         "설명": "드릴 시트 2 (판정·참조) — 15분."},
+        {"이름": "계산 드릴 시트 3", "형": "드릴", "번호": 3, "분": 15,
+         "설명": "드릴 시트 3 (판정·참조) — 15분."},
+        {"이름": "2024 상시 1회 계산작업(판정·참조)", "형": "부분연습",
+         "세트": "2024 상시 1회", "영역": ["계산작업"], "분": 15,
+         "설명": "2024 상시 1회 계산작업 중 판정·참조 문제만 풀기."},
+        {"이름": "2024 A형 계산작업(판정·참조)", "형": "부분연습",
+         "세트": "2024 A형", "영역": ["계산작업"], "분": 15,
+         "설명": "2024 A형 계산작업 중 판정·참조 문제만 풀기."},
+    ],
+    3: [
+        {"이름": "계산 드릴 시트 4", "형": "드릴", "번호": 4, "분": 15,
+         "설명": "계산작업 집중 드릴 시트 4–6 (시간·문자열·DB·통계) 중 "
+                "시트 4 — 15분."},
+        {"이름": "계산 드릴 시트 5", "형": "드릴", "번호": 5, "분": 15,
+         "설명": "드릴 시트 5 — 15분."},
+        {"이름": "계산 드릴 시트 6", "형": "드릴", "번호": 6, "분": 15,
+         "설명": "드릴 시트 6 — 15분."},
+        {"이름": "2024 B형 계산작업(해당 유형)", "형": "부분연습",
+         "세트": "2024 B형", "영역": ["계산작업"], "분": 15,
+         "설명": "2024 B형 계산작업 중 해당 유형만 풀기."},
+        {"이름": "24 2급 상시 계산작업(해당 유형)", "형": "부분연습",
+         "세트": "24 2급 상시", "영역": ["계산작업"], "분": 15,
+         "설명": "24 2급 상시 계산작업 중 해당 유형만 풀기."},
+        {"이름": "드릴 오답 전부 재풀이", "형": "안내", "분": 30,
+         "설명": "드릴 24문제 중 오답 전부 재풀이 — 드릴 워크북에서 "
+                "틀렸던 문제만 골라 다시 풀어보세요."},
+    ],
+    4: [
+        {"이름": "드릴 오답·계산 골격 총복습", "형": "안내", "분": 30,
+         "설명": "드릴 오답·계산 골격 총복습 (30분) — IF/VLOOKUP 등 "
+                "함수 골격을 손으로 다시 써보세요."},
+        {"이름": "2024 상시 1회 실전 응시", "형": "모의",
+         "세트": "2024 상시 1회", "목표": 60, "분": 40,
+         "설명": "2024 상시 1회 40분 실전 응시 (목표 60점). 종료하면 "
+                "자동 채점되고 이 단계도 자동으로 체크됩니다."},
+        {"이름": "점수 기록 + 오답노트", "형": "오답노트",
+         "세트": "2024 상시 1회", "분": 20,
+         "설명": "grade.py 채점 → 점수 기록 + 오답노트. 성적 JSON은 "
+                "클립보드에 복사되어 있으니 웹 루틴에 붙여넣고, 오답노트 "
+                "모드로 복습하세요."},
+    ],
+    5: [
+        {"이름": "2024 상시 2회 분석작업", "형": "부분연습",
+         "세트": "2024 상시 2회", "영역": ["분석작업"], "분": 10,
+         "설명": "2024 상시 2회 분석작업 중 부분합·통합·정렬 풀기."},
+        {"이름": "2024 A형 분석작업", "형": "부분연습",
+         "세트": "2024 A형", "영역": ["분석작업"], "분": 10,
+         "설명": "2024 A형 분석작업 중 부분합·통합·정렬 풀기."},
+        {"이름": "2024 B형 분석작업", "형": "부분연습",
+         "세트": "2024 B형", "영역": ["분석작업"], "분": 10,
+         "설명": "2024 B형 분석작업 중 부분합·통합·정렬 풀기."},
+    ],
+    6: [
+        {"이름": "24 2급 상시 분석작업", "형": "부분연습",
+         "세트": "24 2급 상시", "영역": ["분석작업"], "분": 10,
+         "설명": "24 2급 상시 분석작업 중 해당 유형 풀기 (시나리오·"
+                "목표값 찾기·피벗·데이터 표)."},
+        {"이름": "컴활 2급 상시 분석작업", "형": "부분연습",
+         "세트": "컴활 2급 상시", "영역": ["분석작업"], "분": 10,
+         "설명": "컴활 2급 상시 분석작업 중 해당 유형 풀기."},
+        {"이름": "2026 1회 분석작업", "형": "부분연습",
+         "세트": "2026 1회", "영역": ["분석작업"], "분": 10,
+         "설명": "2026 1회 분석작업 중 해당 유형 풀기."},
+    ],
+    7: [
+        {"이름": "2024 상시 1회 매크로 ×2", "형": "부분연습",
+         "세트": "2024 상시 1회", "시트": ["매크로작업"],
+         "라벨": "매크로작업", "분": 10,
+         "설명": "2024 상시 1회 매크로 문제 각 2회 반복 — 같은 문제를 두 "
+                "번 녹화해 손에 익히세요."},
+        {"이름": "2024 상시 2회 매크로 ×2", "형": "부분연습",
+         "세트": "2024 상시 2회", "시트": ["매크로작업"],
+         "라벨": "매크로작업", "분": 10,
+         "설명": "2024 상시 2회 매크로 문제 각 2회 반복."},
+        {"이름": "2024 A형 매크로 ×2", "형": "부분연습",
+         "세트": "2024 A형", "시트": ["매크로작업"], "라벨": "매크로작업",
+         "분": 10, "설명": "2024 A형 매크로 문제 각 2회 반복."},
+        {"이름": "2024 B형 차트", "형": "부분연습", "세트": "2024 B형",
+         "시트": ["차트작업"], "라벨": "차트작업", "분": 10,
+         "설명": "2024 B형 차트 문제 풀기."},
+        {"이름": "24 2급 상시 차트", "형": "부분연습",
+         "세트": "24 2급 상시", "시트": ["차트작업"], "라벨": "차트작업",
+         "분": 10, "설명": "24 2급 상시 차트 문제 풀기."},
+        {"이름": "2026 1회 차트", "형": "부분연습", "세트": "2026 1회",
+         "시트": ["차트작업"], "라벨": "차트작업", "분": 10,
+         "설명": "2026 1회 차트 문제 풀기."},
+    ],
+    8: [
+        {"이름": "코코 모의고사 1회 실전 응시", "형": "모의",
+         "세트": "코코 1회", "목표": 65, "분": 40,
+         "설명": "코코 모의고사 1회 40분 실전 응시 (목표 65점)."},
+        {"이름": "점수 기록 + 오답노트", "형": "오답노트", "세트": "코코 1회",
+         "분": 20,
+         "설명": "grade.py 채점 → 점수 기록 + 오답노트. 성적은 클립보드에 "
+                "복사되어 있습니다 — 웹 루틴에 붙여넣으세요."},
+    ],
+    9: [
+        {"이름": "Day 4·8 오답노트 복습", "형": "안내", "분": 30,
+         "설명": "Day 4·8 오답노트 복습 (30분) — 아래 목록에서 각 세트를 "
+                "선택해 [오답노트 모드]로 다시 훑어보세요."},
+        {"이름": "2024 A형 실전 응시", "형": "모의", "세트": "2024 A형",
+         "목표": 70, "분": 40,
+         "설명": "2024 A형 40분 실전 응시 (목표 70점)."},
+        {"이름": "점수 기록 + 오답노트", "형": "오답노트", "세트": "2024 A형",
+         "분": 20, "설명": "grade.py 채점 → 점수 기록 + 오답노트."},
+    ],
+    10: [
+        {"이름": "코코 모의고사 2회 실전 응시", "형": "모의",
+         "세트": "코코 2회", "목표": 70, "분": 40,
+         "설명": "코코 모의고사 2회 40분 실전 응시 (목표 70점)."},
+        {"이름": "점수 기록 + 오답노트", "형": "오답노트", "세트": "코코 2회",
+         "분": 20, "설명": "grade.py 채점 → 점수 기록 + 오답노트."},
+        {"이름": "취약 유형 드릴 재풀이", "형": "안내", "분": 20,
+         "설명": "취약 유형의 계산작업 집중 드릴 시트 재풀이 — 리포트 "
+                "약점 TOP3 유형의 드릴 시트를 다시 푸세요."},
+    ],
+    11: [
+        {"이름": "2024 상시 2회 실전 응시", "형": "모의",
+         "세트": "2024 상시 2회", "목표": 75, "분": 40,
+         "설명": "2024 상시 2회 40분 실전 응시 (목표 75점)."},
+        {"이름": "점수 기록 + 오답노트", "형": "오답노트",
+         "세트": "2024 상시 2회", "분": 20,
+         "설명": "grade.py 채점 → 점수 기록 + 오답노트."},
+    ],
+    12: [
+        {"이름": "2024 B형 실전 응시", "형": "모의", "세트": "2024 B형",
+         "목표": 75, "분": 40,
+         "설명": "2024 B형 40분 실전 응시 (목표 75점)."},
+        {"이름": "점수 기록 + 오답노트", "형": "오답노트", "세트": "2024 B형",
+         "분": 20, "설명": "grade.py 채점 → 점수 기록 + 오답노트."},
+    ],
+    13: [
+        {"이름": "2026 1회 실전 재응시", "형": "모의", "세트": "2026 1회",
+         "목표": 80, "분": 40,
+         "설명": "2026 1회 40분 실전 재응시 (목표 80점)."},
+        {"이름": "점수 기록 + 이전 점수와 비교", "형": "오답노트",
+         "세트": "2026 1회", "분": 15,
+         "설명": "grade.py 채점 → 점수 기록 + 이전 점수와 비교. 첫 응시 "
+                "점수에서 얼마나 올랐는지 확인하세요."},
+    ],
+    14: [
+        {"이름": "실수 노트 전체 1회독", "형": "안내", "분": 20,
+         "설명": "실수 노트 탭 전체 1회독 — 웹 루틴 페이지에서."},
+        {"이름": "오답노트 최종 복습", "형": "안내", "분": 30,
+         "설명": "오답노트 최종 복습 + 일찍 취침 — 각 세트를 선택해 "
+                "[오답노트 모드]로 훑어보세요. 오늘은 일찍 쉬는 것도 "
+                "실력입니다."},
+        {"이름": "(선택) 예비 세트 실전", "형": "안내", "분": 40,
+         "설명": "(선택) 예비 세트 24 2급 상시 · 컴활 2급 상시 중 택 1로 "
+                "40분 실전 — 원하면 아래 목록에서 골라 [시험 시작]하세요."},
+    ],
+}
+
+STEP_DONE_MESSAGE = ("오늘 완료! 웹 루틴에 성적 붙여넣기"
+                     "(클립보드에 이미 복사됨)")
+
+
+def plan_day_tag(no):
+    """일정 번호 -> 진행 저장 키 ('d00'~'d14', 그 외 None)."""
+    return f"d{no:02d}" if 0 <= int(no) <= 14 else None
+
+
+def sheet_names_of(path):
+    """엑셀 파일의 시트 이름 목록 (openpyxl 없이 zip에서 직접)."""
+    try:
+        import zipfile
+        with zipfile.ZipFile(path) as zf:
+            xml = zf.read("xl/workbook.xml").decode("utf-8", "replace")
+        return [m.group(1).replace("&amp;", "&").replace("&lt;", "<")
+                .replace("&gt;", ">").replace("&quot;", '"')
+                .replace("&apos;", "'")
+                for m in re.finditer(r'<sheet[^>]*\sname="([^"]*)"', xml)]
+    except Exception:
+        return []
+
+
+def drill_sheet_name(path, number):
+    """드릴 워크북에서 n번 드릴 시트 이름 찾기.
+
+    이름에 번호가 들어간 시트 우선(드릴1, 1.판정 등), 없으면 순서상
+    n번째 시트. 못 찾으면 None.
+    """
+    names = sheet_names_of(path)
+    if not names:
+        return None
+    num = str(int(number))
+    cands = [n for n in names if re.search(rf"(?<!\d){num}(?!\d)", n)]
+    if len(cands) >= 1:
+        return cands[0]
+    if 1 <= int(number) <= len(names):
+        return names[int(number) - 1]
+    return None
+
+
+def load_step_progress(day_tag, path=None):
+    """세트설정.json '_진행'에서 완료 스텝 번호 집합 로드."""
+    cfg = load_set_config(path or SET_CONFIG_PATH)
+    raw = (cfg.get("_진행") or {}).get(day_tag) or []
+    out = set()
+    for x in raw:
+        try:
+            out.add(int(x))
+        except (TypeError, ValueError):
+            pass
+    return out
+
+
+def save_step_progress(day_tag, done, path=None):
+    """완료 스텝 번호 집합을 세트설정.json '_진행'에 저장."""
+    p = path or SET_CONFIG_PATH
+    cfg = load_set_config(p)
+    cfg.setdefault("_진행", {})[day_tag] = sorted(int(i) for i in done)
+    return save_set_config(cfg, p)
+
+
+def resolve_step_action(step, sets):
+    """스텝 -> 실행 방법. ('info'|'practice'|'exam'|'review'|'missing',
+    payload) 반환. GUI 없이 테스트 가능."""
+    kind = step.get("형", "안내")
+    if kind == "드릴":
+        s = find_set_for_tokens(sets, "계산 드릴")
+        if not s:
+            return "missing", {"이유": "계산드릴 세트(계산드릴_문제/정답)를 "
+                                     "찾지 못했습니다. 드릴 파일을 스캔 "
+                                     "폴더에 넣거나 [직접 선택]으로 "
+                                     "지정하세요."}
+        name = drill_sheet_name(s["problem"], step.get("번호", 1))
+        if not name:
+            return "missing", {"이유": f"드릴 워크북에서 {step.get('번호')}번 "
+                                     "시트를 찾지 못했습니다."}
+        return "practice", {"set": s, "sheets": [name],
+                            "label": f"드릴{step.get('번호', 1)}",
+                            "minutes": int(step.get("분", 15))}
+    if kind == "부분연습":
+        s = find_set_for_tokens(sets, step["세트"]) if step.get("세트") \
+            else None
+        sheets = list(step.get("시트") or
+                      sheets_for_areas(step.get("영역") or []))
+        label = step.get("라벨") or "+".join(step.get("영역") or []) \
+            or "+".join(sheets)
+        minutes = int(step.get("분") or
+                      practice_minutes(step.get("영역") or []))
+        return "practice", {"set": s, "sheets": sheets, "label": label,
+                            "minutes": minutes,
+                            "세트문구": step.get("세트")}
+    if kind == "모의":
+        s = find_set_for_tokens(sets, step.get("세트") or "")
+        if not s:
+            return "missing", {"이유": f"'{step.get('세트')}' 세트를 찾지 "
+                                     "못했습니다. 파일을 스캔 폴더에 넣거나 "
+                                     "[직접 선택]으로 지정하세요."}
+        return "exam", {"set": s, "minutes": int(step.get("분", 40)),
+                        "목표": step.get("목표")}
+    if kind == "오답노트":
+        s = find_set_for_tokens(sets, step.get("세트") or "") \
+            if step.get("세트") else None
+        return "review", {"set": s}
+    return "info", {"메시지": step.get("설명") or step.get("이름") or ""}
 
 
 # ---------------------------------------------------------------------------
@@ -654,20 +1120,13 @@ def practice_minutes(area_names):
 
 
 def make_practice_copy(problem, set_name, area_label, when=None):
-    """문제 파일 -> 부분연습_<세트>_<영역>_<일시>.<확장자> 사본."""
+    """문제 파일 -> 부분연습_<세트>_<영역>_<일시>.xlsm 사본."""
     when = when or datetime.now()
-    ext = os.path.splitext(problem)[1]
     stamp = when.strftime("%Y%m%d_%H%M")
     safe_area = re.sub(r"[\\/:*?\"<>|,\s]+", "", str(area_label))[:20]
     d = os.path.dirname(os.path.abspath(problem))
-    dst = os.path.join(d, f"부분연습_{set_name}_{safe_area}_{stamp}{ext}")
-    n = 2
-    while os.path.exists(dst):
-        dst = os.path.join(
-            d, f"부분연습_{set_name}_{safe_area}_{stamp}_{n}{ext}")
-        n += 1
-    shutil.copy2(problem, dst)
-    return dst
+    return copy_as_macro_enabled(
+        problem, _unique_stem(d, f"부분연습_{set_name}_{safe_area}_{stamp}"))
 
 
 # ---------------------------------------------------------------------------
@@ -761,18 +1220,12 @@ def find_latest_attempt(set_info):
 
 
 def make_review_copy(source, set_name, when=None):
-    """이전 풀이를 오답연습_<세트>_<일시>.<확장자> 사본으로 복사."""
+    """이전 풀이를 오답연습_<세트>_<일시>.xlsm 사본으로 복사."""
     when = when or datetime.now()
-    ext = os.path.splitext(source)[1]
     stamp = when.strftime("%Y%m%d_%H%M")
     d = os.path.dirname(os.path.abspath(source))
-    dst = os.path.join(d, f"오답연습_{set_name}_{stamp}{ext}")
-    n = 2
-    while os.path.exists(dst):
-        dst = os.path.join(d, f"오답연습_{set_name}_{stamp}_{n}{ext}")
-        n += 1
-    shutil.copy2(source, dst)
-    return dst
+    return copy_as_macro_enabled(
+        source, _unique_stem(d, f"오답연습_{set_name}_{stamp}"))
 
 
 def review_item_text(item):
@@ -1520,6 +1973,237 @@ if HAS_TK:
             self.destroy()
 
 
+    class StepGuideWindow(tk.Toplevel):
+        """오늘 일정 단계 가이드 — 과제 순서 그대로 한 단계씩 진행.
+
+        진행 상태는 세트설정.json '_진행'에 날짜 키(d01~)로 저장되어
+        프로그램을 껐다 켜도 이어집니다.
+        """
+
+        def __init__(self, app, plan):
+            super().__init__(app)
+            self.app = app
+            self.plan = plan
+            self.steps = plan.get("스텝") or []
+            self.day_tag = plan_day_tag(plan["no"])
+            self.done = load_step_progress(self.day_tag) \
+                if self.day_tag else set()
+            self._celebrated = self._all_done()
+            self.title(f"{APP_TITLE} - 오늘 일정")
+            self.configure(bg=BG)
+            self.geometry("560x460")
+            frm = tk.Frame(self, bg=BG, padx=16, pady=12)
+            frm.pack(fill="both", expand=True)
+            tk.Label(frm, text=plan_title(plan), bg=BG, fg=BRAND_DARK,
+                     font=UI_FONT_BOLD).pack(anchor="w")
+            self.progress_lbl = tk.Label(frm, text="", bg=BG, fg=SUB,
+                                         font=("Malgun Gothic", 9))
+            self.progress_lbl.pack(anchor="w", pady=(2, 6))
+            listfrm = tk.Frame(frm, bg=CARD, highlightbackground=LINE,
+                               highlightthickness=1)
+            listfrm.pack(fill="both", expand=True)
+            self.listbox = tk.Listbox(
+                listfrm, font=UI_FONT, bd=0, highlightthickness=0,
+                bg=CARD, fg=INK, selectbackground=BRAND_SOFT,
+                selectforeground=BRAND_DARK, activestyle="none",
+                exportselection=False)
+            sb = tk.Scrollbar(listfrm, command=self.listbox.yview)
+            self.listbox.configure(yscrollcommand=sb.set)
+            self.listbox.pack(side="left", fill="both", expand=True,
+                              padx=(6, 0), pady=6)
+            sb.pack(side="right", fill="y")
+            self.listbox.bind("<<ListboxSelect>>",
+                              lambda e: self._show_detail())
+            self.detail_lbl = tk.Label(
+                frm, text="", bg=CARD, fg=INK, font=("Malgun Gothic", 9),
+                justify="left", anchor="nw", padx=10, pady=8, wraplength=500,
+                highlightbackground=LINE, highlightthickness=1)
+            self.detail_lbl.pack(fill="x", pady=(8, 0))
+            bf = tk.Frame(frm, bg=BG)
+            bf.pack(fill="x", pady=(10, 0))
+            self.start_btn = tk.Button(
+                bf, text="이 단계 시작", font=UI_FONT_BOLD, bg=BRAND,
+                fg="white", activebackground=BRAND_DARK, relief="flat",
+                padx=16, pady=4, command=self.start_step)
+            self.start_btn.pack(side="left")
+            self.check_btn = tk.Button(
+                bf, text="완료 체크", font=UI_FONT_BOLD, bg=BRAND_SOFT,
+                fg=BRAND_DARK, activebackground="#CFE9DA", relief="flat",
+                padx=12, pady=4, command=self.toggle_check)
+            self.check_btn.pack(side="left", padx=6)
+            tk.Button(bf, text="닫기", font=UI_FONT, relief="groove",
+                      padx=12, pady=4, command=self.destroy).pack(
+                side="right")
+            self.refresh(select=self.current_index())
+
+        # --- 상태 ---
+
+        def _all_done(self):
+            return bool(self.steps) and \
+                all(i in self.done for i in range(len(self.steps)))
+
+        def current_index(self):
+            """첫 미완료 스텝 (전부 완료면 마지막)."""
+            for i in range(len(self.steps)):
+                if i not in self.done:
+                    return i
+            return max(0, len(self.steps) - 1)
+
+        def selected_index(self):
+            sel = self.listbox.curselection()
+            return sel[0] if sel and sel[0] < len(self.steps) else None
+
+        def refresh(self, select=None):
+            """목록·진행 라벨 갱신. select 지정 시 그 스텝 선택."""
+            if select is None:
+                select = self.selected_index()
+            cur = self.current_index()
+            self.listbox.delete(0, "end")
+            for i, st in enumerate(self.steps):
+                if i in self.done:
+                    mark = "[v]"
+                elif i == cur:
+                    mark = " ▶ "
+                else:
+                    mark = "    "
+                self.listbox.insert(
+                    "end",
+                    f" {mark} {i + 1}. {st['이름']}  ({st.get('분', '?')}분)")
+                if i in self.done:
+                    self.listbox.itemconfigure(i, foreground=SUB)
+            n_done = len([i for i in self.done
+                          if 0 <= i < len(self.steps)])
+            self.progress_lbl.configure(
+                text=f"{n_done}/{len(self.steps)} 완료 · 체크는 자동 저장 "
+                     "(껐다 켜도 이어짐)")
+            if select is None:
+                select = cur
+            select = max(0, min(select, len(self.steps) - 1)) \
+                if self.steps else None
+            if select is not None:
+                self.listbox.selection_clear(0, "end")
+                self.listbox.selection_set(select)
+                self.listbox.see(select)
+            self._show_detail()
+
+        def _show_detail(self):
+            i = self.selected_index()
+            if i is None:
+                self.detail_lbl.configure(text="스텝을 선택하세요.")
+                return
+            st = self.steps[i]
+            state = "완료" if i in self.done else (
+                "지금 할 차례" if i == self.current_index() else "대기")
+            kind = st.get("형", "안내")
+            lines = [f"{i + 1}. {st['이름']}  ·  {kind}  ·  예상 "
+                     f"{st.get('분', '?')}분  ·  {state}",
+                     "", st.get("설명", "")]
+            if kind == "안내":
+                lines.append("")
+                lines.append("이 단계는 직접 하고 [완료 체크]를 누르면 "
+                             "됩니다.")
+            elif kind in ("모의", "부분연습", "드릴"):
+                lines.append("")
+                lines.append("[이 단계 시작]을 누르면 풀이 사본과 타이머가 "
+                             "열립니다. 채점까지 끝나면 자동으로 "
+                             "체크됩니다.")
+            self.detail_lbl.configure(text="\n".join(lines))
+
+        # --- 동작 ---
+
+        def start_step(self):
+            i = self.selected_index()
+            if i is None:
+                return
+            st = self.steps[i]
+            kind, payload = resolve_step_action(st, self.app.sets)
+            if kind == "info":
+                messagebox.showinfo(f"{APP_TITLE} - {st['이름']}",
+                                    (payload or {}).get("메시지") or
+                                    st.get("설명", ""), parent=self)
+                return
+            if kind == "missing":
+                messagebox.showinfo(APP_TITLE, (payload or {}).get("이유")
+                                    or "필요한 세트를 찾지 못했습니다.",
+                                    parent=self)
+                return
+            if kind == "review":
+                s = (payload or {}).get("set")
+                if s:
+                    self.app._select_set_in_list(s)
+                self.app.open_review_mode()
+                return
+            if self.app.exam_running:
+                messagebox.showinfo(APP_TITLE, "이미 시험이 진행 중입니다.",
+                                    parent=self)
+                return
+            if kind == "practice":
+                s = payload.get("set")
+                if s:
+                    self.app._select_set_in_list(s)
+                elif not self.app._selected_set():
+                    ment = payload.get("세트문구")
+                    messagebox.showinfo(
+                        APP_TITLE,
+                        (f"'{ment}' 세트를 자동으로 찾지 못했습니다.\n"
+                         if ment else "") +
+                        "아래 목록에서 연습할 세트를 선택한 뒤 다시 "
+                        "누르세요.", parent=self)
+                    return
+                self.app._pending_plan = {"day": self.day_tag, "목표": None,
+                                          "step": i}
+                self.app.start_exam(practice={
+                    "sheets": payload["sheets"], "label": payload["label"],
+                    "minutes": payload["minutes"]})
+                return
+            if kind == "exam":
+                self.app._select_set_in_list(payload["set"])
+                try:
+                    self.app.minutes_var.set(int(payload.get("minutes", 40)))
+                except Exception:
+                    pass
+                self.app._pending_plan = {"day": self.day_tag,
+                                          "목표": payload.get("목표"),
+                                          "step": i}
+                self.app.start_exam()
+
+        def toggle_check(self):
+            i = self.selected_index()
+            if i is None:
+                return
+            if i in self.done:
+                self.done.discard(i)
+            else:
+                self.done.add(i)
+            self._persist()
+            # 다음 미완료 스텝으로 자동 포커스
+            self.refresh(select=self.current_index())
+            self.maybe_celebrate()
+
+        def mark_step_done(self, idx):
+            """외부(채점 완료)에서 스텝 자동 체크."""
+            if 0 <= idx < len(self.steps) and idx not in self.done:
+                self.done.add(idx)
+                self._persist()
+                self.refresh(select=self.current_index())
+                self.maybe_celebrate()
+
+        def _persist(self):
+            if self.day_tag:
+                try:
+                    save_step_progress(self.day_tag, self.done)
+                except Exception:
+                    pass
+
+        def maybe_celebrate(self):
+            if self._all_done() and not self._celebrated:
+                self._celebrated = True
+                messagebox.showinfo(APP_TITLE, STEP_DONE_MESSAGE,
+                                    parent=self)
+            elif not self._all_done():
+                self._celebrated = False
+
+
     class ExamApp(tk.Tk):
         """시작 화면."""
 
@@ -1538,6 +2222,7 @@ if HAS_TK:
             self._warned_dirty = set()   # 원본 오염 경고를 이미 띄운 세트
             self.plan_no = routine_day_no()   # 오늘의 학습 일정 번호
             self._pending_plan = None
+            self.step_guide = None            # 단계 가이드 창 (열려 있으면)
             self._build_ui()
             self.refresh_sets()
             self.refresh_records()
@@ -1580,6 +2265,10 @@ if HAS_TK:
                                           justify="left", anchor="w",
                                           wraplength=620)
             self.plan_todo_lbl.pack(fill="x", pady=(4, 0))
+            self.trust_hint_lbl = tk.Label(
+                plan_card, text="매크로 차단 배너가 뜨면 [Excel 신뢰 위치로 "
+                "등록]을 눌러주세요", bg=BRAND_SOFT, fg="#8A5A00",
+                font=("Malgun Gothic", 8), anchor="w")
             self._render_plan_card()
 
             body = tk.Frame(self, bg=BG, padx=16, pady=12)
@@ -1653,6 +2342,10 @@ if HAS_TK:
             tk.Button(ctrl, text="업데이트 확인", font=UI_FONT, relief="groove",
                       padx=10, pady=4,
                       command=self.manual_update_check).pack(
+                side="right", padx=4)
+            tk.Button(ctrl, text="Excel 신뢰 위치로 등록", font=UI_FONT,
+                      relief="groove", padx=10, pady=4,
+                      command=self.on_register_trust).pack(
                 side="right", padx=4)
 
             tk.Label(body, text="최근 응시 기록", bg=BG, fg=INK,
@@ -1914,6 +2607,23 @@ if HAS_TK:
                             "깨끗한 원본이 아니면 채점 기준(diff)이 "
                             "왜곡됩니다 — 그대로 진행할까요?", parent=self):
                         return
+            # 매크로 안내 (세트당 1회, 매크로작업 포함 시)
+            needs_macro = practice is None or any(
+                "매크로" in str(sh) for sh in (practice.get("sheets") or []))
+            if needs_macro and s.get("norm"):
+                cfg = load_set_config()
+                ent = cfg.setdefault(s["norm"], {})
+                if not ent.get("매크로안내"):
+                    ent["매크로안내"] = True
+                    save_set_config(cfg)
+                    messagebox.showinfo(
+                        APP_TITLE,
+                        "매크로 안내\n\n빨간 '매크로 차단' 배너가 보이면:\n"
+                        "1) 파일 우클릭 → 속성 → '차단 해제' 체크, 또는\n"
+                        "2) 시험장의 [Excel 신뢰 위치로 등록] 사용\n\n"
+                        "저장할 때는 반드시 .xlsm 형식을 유지하세요 "
+                        "(풀이 사본은 자동으로 .xlsm으로 만들어 드립니다).",
+                        parent=self)
             try:
                 if practice:
                     student = make_practice_copy(s["problem"], s["name"],
@@ -1965,11 +2675,41 @@ if HAS_TK:
             todo = plan.get("할일", "")
             if plan.get("목표"):
                 todo += f"  [목표 {plan['목표']}점]"
+            steps = plan.get("스텝")
+            if steps:
+                tag = plan_day_tag(plan["no"])
+                n_done = len([i for i in (load_step_progress(tag)
+                                          if tag else set())
+                              if 0 <= i < len(steps)])
+                todo += f"  [스텝 {n_done}/{len(steps)} 완료]"
             self.plan_todo_lbl.configure(text=todo)
             today_no = routine_day_no()
             self.plan_start_btn.configure(
                 text="오늘 일정 시작" if self.plan_no == today_no
                 else "이 일정 시작")
+            try:  # 신뢰 위치 미등록이면 1줄 안내
+                if get_app_setting("신뢰위치등록"):
+                    self.trust_hint_lbl.pack_forget()
+                else:
+                    self.trust_hint_lbl.pack(fill="x", pady=(2, 0))
+            except Exception:
+                pass
+
+        def on_register_trust(self):
+            if not messagebox.askyesno(
+                    APP_TITLE,
+                    "이 학습 폴더를 Excel '신뢰할 수 있는 위치'로 등록하면 "
+                    "매크로 차단 배너가 사라집니다.\n\nExcel 보안 설정"
+                    "(레지스트리 HKCU)을 수정합니다. 진행할까요?\n\n"
+                    f"등록 폴더: {self.scan_root}", parent=self):
+                return
+            ok, msg = register_trusted_location(self.scan_root)
+            if ok:
+                set_app_setting("신뢰위치등록", True)
+                self._render_plan_card()
+                messagebox.showinfo(APP_TITLE, msg, parent=self)
+            else:
+                messagebox.showwarning(APP_TITLE, msg, parent=self)
 
         def _shift_plan(self, delta):
             self.plan_no = max(0, min(16, self.plan_no + delta))
@@ -1986,58 +2726,21 @@ if HAS_TK:
             return False
 
         def start_today_plan(self):
+            """오늘(또는 미리보기 중인) 일정의 단계 가이드 창 열기."""
             plan = plan_for_day(self.plan_no)
-            kind = plan["종류"]
-            if kind == "안내":
+            if not plan.get("스텝"):
+                # 스텝이 없는 날(시험일/루틴 종료)은 안내만
                 messagebox.showinfo(f"{APP_TITLE} - {plan['제목']}",
                                     plan["할일"], parent=self)
                 return
-            if self.exam_running:
-                messagebox.showinfo(APP_TITLE, "이미 시험이 진행 중입니다.",
-                                    parent=self)
-                return
-            day_tag = f"d{plan['no']:02d}" if 1 <= plan["no"] <= 14 else None
-            if kind == "부분연습":
-                s = self._selected_set()
-                if not s:
-                    messagebox.showinfo(
-                        APP_TITLE, "이 일정은 부분 연습입니다.\n먼저 아래 "
-                        "목록에서 연습할 세트를 선택한 뒤 다시 누르세요.",
-                        parent=self)
+            g = getattr(self, "step_guide", None)
+            if g is not None and g.winfo_exists():
+                if g.plan["no"] == plan["no"]:
+                    g.lift()
+                    g.focus_force()
                     return
-                dlg = PracticeDialog(self)
-                dlg.apply_preset(plan["영역"])
-                self.wait_window(dlg)
-                if dlg.result:
-                    self._pending_plan = {"day": day_tag, "목표": None}
-                    self.start_exam(practice=dlg.result)
-                return
-            if kind == "드릴":
-                s = find_set_for_tokens(self.sets, "계산 드릴")
-                if not s:
-                    messagebox.showinfo(
-                        APP_TITLE, "계산드릴 세트(계산드릴_문제/정답)를 "
-                        "찾지 못했습니다.\n드릴 파일을 스캔 폴더에 넣거나 "
-                        "[직접 선택]으로 지정하세요.", parent=self)
-                    return
-                self._select_set_in_list(s)
-                self.minutes_var.set(int(plan.get("분", 45)))
-                self._pending_plan = {"day": day_tag, "목표": None}
-                self.start_exam()
-                return
-            if kind == "모의":
-                s = find_set_for_tokens(self.sets, plan["세트"])
-                if not s:
-                    if messagebox.askyesno(
-                            APP_TITLE,
-                            f"'{plan['세트']}' 세트를 찾지 못했습니다.\n"
-                            "문제/정답 파일을 직접 선택할까요?", parent=self):
-                        self.choose_direct()
-                    return
-                self._select_set_in_list(s)
-                self._pending_plan = {"day": day_tag,
-                                      "목표": plan.get("목표")}
-                self.start_exam()
+                g.destroy()
+            self.step_guide = StepGuideWindow(self, plan)
 
         # ---------------- 부분 연습 모드 ----------------
 
@@ -2239,6 +2942,21 @@ if HAS_TK:
                 messagebox.showwarning(
                     APP_TITLE, f"기록.json 저장에 실패했습니다: {e}",
                     parent=self)
+            # 단계 가이드에서 시작한 스텝: 채점 완료 시 자동 체크
+            step_idx = (exam.get("plan") or {}).get("step")
+            if day_tag and step_idx is not None and score is not None:
+                try:
+                    g = getattr(self, "step_guide", None)
+                    if g is not None and g.winfo_exists() \
+                            and g.day_tag == day_tag:
+                        g.mark_step_done(int(step_idx))
+                    else:
+                        done = load_step_progress(day_tag)
+                        done.add(int(step_idx))
+                        save_step_progress(day_tag, done)
+                    self._render_plan_card()
+                except Exception:
+                    pass
 
 
 # ---------------------------------------------------------------------------
@@ -2299,6 +3017,58 @@ def run_smoke():
     app._shift_plan(1)
     assert app.plan_title_lbl.cget("text") != before
     assert "Day 7" in app.plan_title_lbl.cget("text")
+    # 단계 가이드 창 (진행 상태는 매 실행 초기화 -> 결정적)
+    save_step_progress("d04", set())
+    guide = StepGuideWindow(app, plan_for_day(4))
+    app.update_idletasks()
+    app.update()
+    assert guide.listbox.size() == 3, guide.listbox.size()
+    assert "0/3" in guide.progress_lbl.cget("text")
+    assert guide.current_index() == 0
+    assert "▶" in guide.listbox.get(0)
+    guide.listbox.selection_clear(0, "end")
+    guide.listbox.selection_set(0)
+    guide.toggle_check()          # 1단계 완료 체크
+    assert 0 in guide.done and "1/3" in guide.progress_lbl.cget("text")
+    assert guide.selected_index() == 1, "다음 미완료 스텝 자동 포커스"
+    assert "[v]" in guide.listbox.get(0) and "▶" in guide.listbox.get(1)
+    guide.mark_step_done(1)       # 채점 완료 자동 체크 경로
+    assert "2/3" in guide.progress_lbl.cget("text")
+    assert load_step_progress("d04") == {0, 1}, "진행 상태 저장"
+    guide.destroy()
+    guide2 = StepGuideWindow(app, plan_for_day(4))   # 재시작 후 이어하기
+    app.update_idletasks()
+    app.update()
+    assert guide2.done == {0, 1} and guide2.current_index() == 2
+    guide2.destroy()
+    # [이 단계 시작] -> start_exam 배선 (start_exam은 스텁으로 대체)
+    fake_s = {"name": "2024년 상시1회 2급", "norm": "smoke상시1", "dir": BASE_DIR,
+              "problem": "p", "answer": "a", "key": None, "pdf": None}
+    saved_sets, saved_start = app.sets, app.start_exam
+    calls = []
+    app.sets = [fake_s]
+    app.listbox.delete(0, "end")
+    app.listbox.insert("end", " " + fake_s["name"])
+    app.start_exam = lambda practice=None: calls.append(
+        (practice, app._pending_plan))
+    guide3 = StepGuideWindow(app, plan_for_day(4))
+    guide3.listbox.selection_clear(0, "end")
+    guide3.listbox.selection_set(1)          # 모의 스텝
+    guide3.start_step()
+    assert len(calls) == 1, "모의 스텝 -> start_exam 호출"
+    practice_arg, pend = calls[0]
+    assert practice_arg is None and pend == {"day": "d04", "목표": 60,
+                                             "step": 1}, (practice_arg, pend)
+    assert app.minutes_var.get() == 40
+    guide3.destroy()
+    app.sets, app.start_exam = saved_sets, saved_start
+    app._pending_plan = None
+    save_step_progress("d04", set())  # 스모크 잔여 상태 제거
+    # 스텝 실행 매핑 (세트 없는 환경 -> 모의는 missing)
+    kind, _p = resolve_step_action(plan_for_day(4)["스텝"][1], saved_sets)
+    assert kind in ("exam", "missing")
+    kind, _p = resolve_step_action(plan_for_day(0)["스텝"][0], saved_sets)
+    assert kind == "info"
     # 클립보드 브리지 라운드트립
     fake = {"total": 87, "mode": "full", "graded_sheets": ["계산작업"]}
     assert app._copy_result_to_clipboard(fake) is True

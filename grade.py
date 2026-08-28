@@ -13,7 +13,7 @@
 의존성: Python 3.8+ / openpyxl (표준 라이브러리 외 유일한 의존성)
 """
 
-__version__ = "1.5.0"
+__version__ = "1.8.0"
 
 import argparse
 import html as html_mod
@@ -1953,6 +1953,110 @@ def _cond_rows(grid):
     return Counter(rows), header
 
 
+def _excel_cond_match_norm(cond, value):
+    """정규화된 조건 1개를 값에 평가. 판정 불가(수식 등)면 None."""
+    if cond is None:
+        return True
+    kind, cv = cond
+    if kind == "f":
+        return None
+    if kind == "n":
+        vn = _as_number(value)
+        return vn is not None and abs(vn - cv) < 1e-9
+    if kind == "b":
+        return isinstance(value, bool) and value == cv
+    s = str(cv)  # 소문자·공백 제거 상태
+    vtxt = re.sub(r"\s+", "", str(value)).lower() if value is not None else ""
+    m = re.match(r"^(<>|<=|>=|<|>|=)(.*)$", s)
+    if m:
+        op, rhs = m.groups()
+        rn, vn = _as_number(rhs), _as_number(value)
+        if rn is not None and vn is not None:
+            return {"<>": vn != rn, "<=": vn <= rn, ">=": vn >= rn,
+                    "<": vn < rn, ">": vn > rn,
+                    "=": abs(vn - rn) < 1e-9}[op]
+        if op == "=":
+            return vtxt == rhs
+        if op == "<>":
+            return vtxt != rhs
+        return {"<=": vtxt <= rhs, ">=": vtxt >= rhs,
+                "<": vtxt < rhs, ">": vtxt > rhs}[op]
+    if "*" in s or "?" in s:
+        pat = "^" + re.escape(s).replace(r"\*", ".*").replace(r"\?", ".") + "$"
+        return re.match(pat, vtxt) is not None
+    return vtxt.startswith(s)  # 일반 텍스트 조건 = 시작 일치
+
+
+def _locate_source_table(shp, fields):
+    """문제 시트에서 필드 머리글 행을 찾아 (헤더맵, 데이터 행 목록) 반환."""
+    mr, mc = scan_bounds(shp)
+    for r in range(1, min(mr, 30) + 1):
+        hdr = {}
+        for c in range(1, mc + 1):
+            v = shp.cell(r, c).value
+            if isinstance(v, str) and v.strip():
+                hdr.setdefault(_norm_field(v), c)
+        if fields and fields <= set(hdr):
+            rows = []
+            rr = r + 1
+            while rr <= mr:
+                vals = {f: shp.cell(rr, col).value for f, col in hdr.items()}
+                if all(v is None for v in vals.values()):
+                    break
+                rows.append(vals)
+                rr += 1
+            return hdr, rows
+    return None, None
+
+
+def filter_result_equivalent(shp, ga, gs):
+    """학생 조건이 표기만 다르고 필터 결과 행 집합은 정답과 같은지.
+
+    판단 불가(수식 조건·표 미발견 등)면 None.
+    """
+    try:
+        ca, _ha = _cond_rows(ga)
+        cs, _hs = _cond_rows(gs)
+        if not ca or not cs:
+            return None
+        pairs = [p for rows in list(ca) + list(cs) for p in rows]
+        fields = set()
+        for f, cond in pairs:
+            if f == "#수식#" or (isinstance(cond, tuple) and cond[0] == "f"):
+                return None
+            fields.add(f)
+        hdr, rows = _locate_source_table(shp, fields)
+        if hdr is None or not rows:
+            return None
+
+        def match_set(counter):
+            out = set()
+            for i, vals in enumerate(rows):
+                for rowset in counter:          # 행 = OR
+                    ok = True
+                    for f, cond in rowset:      # 같은 행 = AND
+                        m = _excel_cond_match_norm(cond, vals.get(f))
+                        if m is None:
+                            raise ValueError("판정 불가 조건")
+                        if not m:
+                            ok = False
+                            break
+                    if ok:
+                        out.add(i)
+                        break
+            return out
+
+        return match_set(ca) == match_set(cs)
+    except Exception:
+        return None
+
+
+COND_EQUIV_NOTE = ("필터 결과는 정답과 같지만, 조건식이 문제 지시와 다릅니다 "
+                   "(예: '~이 아니면서'는 <>값). 실제 시험은 조건 셀에 입력한 "
+                   "내용도 채점할 수 있어 오답 처리했습니다 — '~이 아닌' "
+                   "조건은 항상 <> 로 쓰세요.")
+
+
 def compare_condition_block(ga, gs):
     """고급 필터 조건 범위 의미 비교 — 열 순서/행 순서 무관.
 
@@ -2125,13 +2229,18 @@ def grade_basic3(res, ctx):
             if ok:
                 passed_b += 1
                 continue
-            res.details.append(f"[고급 필터 조건] {rng_txt}: "
-                               + "; ".join(msgs))
+            # 표기만 다르고 필터 결과는 같은 경우 문구 구분 (감점은 유지)
+            equiv = filter_result_equivalent(shp, ga, gs) if gs else None
+            note_txt = COND_EQUIV_NOTE if equiv else None
+            res.details.append(
+                f"[고급 필터 조건] {rng_txt}: " + "; ".join(msgs)
+                + (" (필터 결과는 동일 — 조건식 표기 문제)" if equiv else ""))
             add_card(res, f"고급 필터 조건 ({rng_txt})",
                      res.alloc / len(blocks), "cell",
                      cells=[{"coord": rng_txt}],
                      props=[{"name": "조건", "expected": "문제 지시 조건",
                              "got": m} for m in msgs[:3]],
+                     note=note_txt,
                      hint="필드명은 원본 표 머리글과 똑같이, AND 조건은 같은 "
                           "행, OR 조건은 다른 행에 적습니다. 열 순서는 달라도 "
                           "됩니다.")
