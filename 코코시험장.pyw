@@ -9,7 +9,7 @@
 """
 
 import importlib.util
-__version__ = "1.0.0"
+__version__ = "1.7.0"
 # 자동 업데이트 확인은 이 파일이 실행하는 시험장.py가 수행합니다.
 # (이 래퍼 자체도 시험장.py의 업데이트 대상 파일에 포함되어 함께 갱신됩니다)
 
@@ -150,6 +150,9 @@ if __name__ == "__main__":
     except SystemExit:
         raise
     except Exception:
+        if "--smoke" in sys.argv:  # 자동 테스트: 대화상자 대신 traceback
+            traceback.print_exc()
+            sys.exit(1)
         _show_error(f"{APP} - 오류",
                     "실행 중 오류가 발생했습니다.\n\n" + traceback.format_exc())
         sys.exit(1)
