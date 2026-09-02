@@ -6,11 +6,13 @@
 시작 화면에서 모의고사 세트를 고르고 [시험 시작]을 누르면
 문제 파일 사본이 Excel로 열리고 타이머가 시작됩니다.
 제출하면 grade.py로 자동 채점해 점수와 리포트를 보여 줍니다.
+오늘의 학습(일정 v4, 9/3 시작·시험 2회): 매일 모의고사 1세트 40분 완주
+→ 채점 → 오답노트 → 오답 재풀이. 세트는 기록 기반으로 자동 선택됩니다.
 
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "1.8.0"
+__version__ = "2.1.0"
 
 import argparse
 import json
@@ -356,12 +358,12 @@ def append_record(record, path=RECORDS_PATH):
 
 
 def records_summary(records):
-    """세트별 최고점과 최근 3회 점수 (부분 연습 기록은 제외).
+    """세트별 최고점과 최근 3회 점수 (부분 연습·오답 재풀이 기록은 제외).
 
     {세트명: {"best":.., "recent":[..]}}"""
     by = {}
     for r in records:
-        if r.get("mode") == "부분연습":
+        if r.get("mode") in ("부분연습", "오답재풀이"):
             continue
         by.setdefault(r.get("세트명", "?"), []).append(r)
     out = {}
@@ -540,14 +542,10 @@ def register_trusted_location(folder, version=None):
                    + TRUST_MANUAL_GUIDE)
 
 
-def run_grading(grade_py, problem, answer, student,
-                key=None, html=None, json_out=None, history=None,
-                sheets=None, timeout=600):
-    """grade.py를 서브프로세스로 실행. sheets 지정 시 부분 채점.
-
-    반환: (결과 dict 또는 None, stdout, stderr, returncode)
-    결과 dict는 --json 출력이 우선, 실패 시 콘솔 총점 파싱 폴백.
-    """
+def build_grade_cmd(grade_py, problem, answer, student, key=None, html=None,
+                    json_out=None, history=None, sheets=None):
+    """grade.py 실행 인자 목록. sheets 지정 시 '--sheets 시트1,시트2' 부분 채점.
+    (오답 재풀이는 오답 시트 목록을 그대로 넘깁니다 — GUI 없이 테스트 가능)"""
     cmd = [sys.executable, grade_py,
            "--problem", problem, "--answer", answer, "--student", student]
     if key:
@@ -559,7 +557,22 @@ def run_grading(grade_py, problem, answer, student,
     if history and os.path.isfile(history):
         cmd += ["--history", history]
     if sheets:
-        cmd += ["--sheets", ",".join(sheets)]
+        cmd += ["--sheets", ",".join(str(s).strip() for s in sheets
+                                     if str(s).strip())]
+    return cmd
+
+
+def run_grading(grade_py, problem, answer, student,
+                key=None, html=None, json_out=None, history=None,
+                sheets=None, timeout=600):
+    """grade.py를 서브프로세스로 실행. sheets 지정 시 부분 채점.
+
+    반환: (결과 dict 또는 None, stdout, stderr, returncode)
+    결과 dict는 --json 출력이 우선, 실패 시 콘솔 총점 파싱 폴백.
+    """
+    cmd = build_grade_cmd(grade_py, problem, answer, student, key=key,
+                          html=html, json_out=json_out, history=history,
+                          sheets=sheets)
     try:
         proc = subprocess.run(
             cmd, capture_output=True, text=True,
@@ -649,106 +662,244 @@ def classify_grading_error(rc, text):
 
 
 # ---------------------------------------------------------------------------
-# 오늘의 학습 — 14일 루틴 일정 (웹 루틴 v3와 동일: 2026-08-28 시작)
+# 오늘의 학습 — 14일 루틴 일정 v4 (웹 루틴과 동일: 2026-09-03 시작, 시험 2회)
+#   매일 모의고사 1세트 40분 완주 → 채점 → 오답노트 → 오답 재풀이
 # ---------------------------------------------------------------------------
 
-ROUTINE_START = date(2026, 8, 28)   # Day 1
-EXAM_DATE = date(2026, 9, 11)       # 시험일
+ROUTINE_START = date(2026, 9, 3)                     # Day 1 (9/3 목)
+EXAM_DATES = [date(2026, 9, 11), date(2026, 9, 18)]  # 시험 1 · 시험 2
+EXAM_DATE = EXAM_DATES[0]                            # (구 코드 호환)
+ROUTINE_TAG = "2026-09"     # 기록.json 루틴 세대 표시 (구 루틴 기록과 구분)
+PROGRESS_NS = "r0903"       # 세트설정.json '_진행' 키 접두 (구 루틴 진행과 분리)
+
+PLAN_EXAM1, PLAN_EXAM2, PLAN_AFTER = 15, 16, 17     # 시험 1 / 시험 2 / 이후
+PLAN_ORDER = ([0] + list(range(1, 9)) + [PLAN_EXAM1]
+              + list(range(9, 15)) + [PLAN_EXAM2, PLAN_AFTER])  # 시간순
+AUTO = "자동선택"           # 세트 슬롯 값: 기록 기반 자동 선택
 
 ROUTINE_PLAN = {
-    0: {"제목": "시작 전 준비", "종류": "안내",
-        "할일": "프로그램 설치 확인(Python·openpyxl), 모의고사 세트·문제지 "
-               "PDF 준비, 루틴 웹페이지 즐겨찾기. 8/28(금)부터 Day 1이 "
-               "시작됩니다."},
-    1: {"제목": "기본작업 전체", "종류": "부분연습", "영역": ["기본작업"],
-        "할일": "기본작업-1·2·3 부분 연습 (자료 입력·셀 서식·조건부 서식/"
-               "고급 필터)"},
-    2: {"제목": "계산 드릴 1~3", "종류": "드릴", "분": 45,
-        "할일": "계산드릴 시트 1~3 (판정·참조) + 기출 계산작업 해당 유형"},
-    3: {"제목": "계산 드릴 4~6", "종류": "드릴", "분": 45,
-        "할일": "계산드릴 시트 4~6 (시간·문자열·DB·통계) + 기출 해당 유형 "
-               "+ 오답 재풀이"},
-    4: {"제목": "계산 총정리 + 모의고사", "종류": "모의",
-        "세트": "2024 상시 1회", "목표": 60,
-        "할일": "모의고사 '2024 상시 1회' 전체 응시 (목표 60점)"},
-    5: {"제목": "분석작업 1", "종류": "부분연습", "영역": ["분석작업"],
-        "할일": "부분합·정렬·통합 부분 연습"},
-    6: {"제목": "분석작업 2", "종류": "부분연습", "영역": ["분석작업"],
-        "할일": "시나리오·목표값 찾기·피벗 테이블·데이터 표 부분 연습"},
-    7: {"제목": "매크로 + 차트", "종류": "부분연습", "영역": ["기타작업"],
-        "할일": "매크로작업·차트작업 부분 연습"},
-    8: {"제목": "모의고사", "종류": "모의", "세트": "코코 1회", "목표": 65,
-        "할일": "모의고사 '코코 1회' 응시 (목표 65점)"},
-    9: {"제목": "모의고사", "종류": "모의", "세트": "2024 A형", "목표": 70,
-        "할일": "모의고사 '2024 A형' 응시 (목표 70점)"},
-    10: {"제목": "모의고사", "종류": "모의", "세트": "코코 2회", "목표": 70,
-         "할일": "모의고사 '코코 2회' 응시 (목표 70점)"},
-    11: {"제목": "모의고사", "종류": "모의", "세트": "2024 상시 2회",
-         "목표": 75, "할일": "모의고사 '2024 상시 2회' 응시 (목표 75점)"},
-    12: {"제목": "모의고사", "종류": "모의", "세트": "2024 B형", "목표": 75,
-         "할일": "모의고사 '2024 B형' 응시 (목표 75점)"},
-    13: {"제목": "재도전 모의고사", "종류": "모의", "세트": "2026 1회",
-         "목표": 80, "할일": "모의고사 '2026 1회' 재도전 (목표 80점)"},
-    14: {"제목": "최종 점검", "종류": "안내",
-         "할일": "실수 노트 복습, 오답노트 모드로 약한 유형 재확인. "
-                "원하면 예비 세트(24 2급 상시 / 컴활 2급 상시)를 목록에서 "
-                "골라 가볍게 응시하세요. 오늘은 일찍 쉬는 것도 실력입니다."},
-    15: {"제목": "시험일", "종류": "안내",
-         "할일": "수험표·신분증 확인, 고사장 30분 전 도착. 저장은 Ctrl+S "
-                "수시로, 계산작업은 한 문제 3분 넘기면 다음으로. 그동안 "
-                "준비한 만큼 충분합니다 — 화이팅!"},
-    16: {"제목": "루틴 종료", "종류": "안내",
-         "할일": "14일 루틴을 완주했습니다. 수고 많았습니다! 결과와 관계 "
-                "없이 쌓은 실력은 남습니다."},
+    0: {"제목": "내일 시작", "종류": "안내",
+        "할일": "내일 9/3(목)부터 Day 1이 시작됩니다. 프로그램 실행·채점 "
+               "흐름 확인, 모의고사 세트·문제지 PDF 준비, 루틴 웹페이지 "
+               "즐겨찾기까지 오늘 마쳐 두세요."},
+    1: {"제목": "1차 완주", "종류": "모의", "세트": ["2024 상시 1회"],
+        "목표": None},
+    2: {"제목": "1차 완주", "종류": "모의", "세트": ["코코 1회"],
+        "목표": None},
+    3: {"제목": "1차 완주", "종류": "모의",
+        "세트": ["2024 A형", "2024 상시 2회"], "목표": None},
+    4: {"제목": "1차 완주", "종류": "모의", "세트": ["코코 2회", "2024 B형"],
+        "목표": None},
+    5: {"제목": "1차 완주", "종류": "모의", "세트": ["24 2급 상시"],
+        "목표": None},
+    6: {"제목": "1차 완주", "종류": "모의", "세트": ["컴활 2급 상시"],
+        "목표": None},
+    7: {"제목": "재도전", "종류": "모의", "세트": ["2026 1회"], "목표": 65},
+    8: {"제목": "시험 1 전 마무리", "종류": "모의", "세트": [AUTO],
+        "목표": 70, "특별": ["실수노트"]},
+    9: {"제목": "2차 완주", "종류": "모의", "세트": [AUTO], "목표": 75,
+        "특별": ["복기"]},
+    10: {"제목": "2차 완주", "종류": "모의", "세트": [AUTO, AUTO],
+         "목표": 75},
+    11: {"제목": "2차 완주", "종류": "모의", "세트": [AUTO], "목표": 80,
+         "메모": "신규 세트 우선"},
+    12: {"제목": "2차 완주", "종류": "모의", "세트": [AUTO], "목표": 80},
+    13: {"제목": "2차 완주", "종류": "모의", "세트": [AUTO], "목표": 85},
+    14: {"제목": "시험 2 전 최종", "종류": "모의", "세트": [AUTO],
+         "목표": 85, "특별": ["실수노트"]},
+    PLAN_EXAM1: {"제목": "시험 1", "종류": "안내",
+                 "할일": "시험 1 당일. 수험표·신분증 확인, 고사장 30분 전 "
+                        "도착. 저장은 Ctrl+S 수시로, 계산작업은 한 문제 3분 "
+                        "넘기면 다음으로. 준비한 만큼 충분합니다 — 화이팅!"},
+    PLAN_EXAM2: {"제목": "시험 2", "종류": "안내",
+                 "할일": "시험 2 당일. 시험 1의 복기 메모를 한 번 훑고 "
+                        "출발하세요. 실수 노트의 항목만 지키면 됩니다 — "
+                        "화이팅!"},
+    PLAN_AFTER: {"제목": "루틴 완주", "종류": "안내",
+                 "할일": "14일 루틴과 시험 2회를 완주했습니다. 수고 많았습니다! "
+                        "결과와 관계없이 쌓은 실력은 남습니다."},
 }
 
-
-def routine_day_no(today=None):
-    """날짜 -> 일정 번호. 0=시작 전, 1~14=Day, 15=시험일, 16=이후."""
-    today = today or date.today()
-    delta = (today - ROUTINE_START).days
-    if delta < 0:
-        return 0
-    if delta <= 13:
-        return delta + 1
-    if today == EXAM_DATE:
-        return 15
-    return 16
+PREP_STEPS = [
+    {"이름": "프로그램 실행·채점 확인", "형": "안내", "분": 15,
+     "설명": "아무 세트나 [시험 시작]으로 열고 바로 제출해 채점까지 한 번 "
+            "돌려보세요. openpyxl 설치 안내가 뜨면 설치합니다."},
+    {"이름": "세트·문제지 PDF 준비 확인", "형": "안내", "분": 10,
+     "설명": "아래 목록에 기출 세트와 코코 모의고사가 모두 보이고 "
+            "(문제지 미연결) 표시가 없는지 확인하세요. 새 세트는 폴더에 "
+            "넣기만 하면 자동으로 편입됩니다."},
+    {"이름": "루틴 웹페이지 즐겨찾기", "형": "안내", "분": 5,
+     "설명": "웹 루틴 페이지에서 실수 노트·함수 사전 위치를 확인하고 "
+            "즐겨찾기에 추가하세요. 내일 9/3(목) Day 1: 2024 상시 1회 "
+            "40분 완주로 시작합니다."},
+]
 
 
 def routine_date_for(no):
-    """일정 번호 -> 날짜 (준비/이후는 None)."""
+    """일정 번호 -> 날짜. Day 1~14는 시험일을 건너뛰어 배정(시험일 제외)."""
+    no = int(no)
     if 1 <= no <= 14:
-        return ROUTINE_START + timedelta(days=no - 1)
-    if no == 15:
-        return EXAM_DATE
+        d = ROUTINE_START + timedelta(days=no - 1)
+        for ex in sorted(EXAM_DATES):   # 시험일에 닿으면 하루 밀림
+            if d >= ex:
+                d += timedelta(days=1)
+        return d
+    if no == PLAN_EXAM1:
+        return EXAM_DATES[0]
+    if no == PLAN_EXAM2:
+        return EXAM_DATES[1]
     return None
 
 
-def plan_for_day(no):
-    """일정 번호 -> 일정 dict (no/날짜/스텝 포함)."""
-    no = max(0, min(16, int(no)))
+def routine_day_no(today=None):
+    """날짜 -> 일정 번호. 0=시작 전, 1~14=Day, 15=시험1, 16=시험2, 17=이후."""
+    today = today or date.today()
+    if today < ROUTINE_START:
+        return 0
+    for no in PLAN_ORDER:
+        if routine_date_for(no) == today:
+            return no
+    return PLAN_AFTER
+
+
+def plan_day_tag(no):
+    """일정 번호 -> 진행 저장/기록 day 라벨 ('d00'~'d14', 그 외 None)."""
+    return f"d{int(no):02d}" if 0 <= int(no) <= 14 else None
+
+
+def dday_text(today=None):
+    """시험 2회 D-day 병기 문구: '시험1 D-6 · 시험2 D-13'."""
+    today = today or date.today()
+    parts = []
+    for i, ex in enumerate(EXAM_DATES, 1):
+        n = (ex - today).days
+        txt = "D-day" if n == 0 else (f"D-{n}" if n > 0 else f"D+{-n}")
+        parts.append(f"시험{i} {txt}")
+    return " · ".join(parts)
+
+
+def plan_slot_names(plan):
+    """세트 슬롯 표시명 목록 (자동 슬롯은 '자동 선택')."""
+    return [spec if spec != AUTO else "자동 선택"
+            for spec in (plan.get("세트") or [])]
+
+
+def build_day_steps(plan, slot_names=None):
+    """일정 -> 스텝 시퀀스 (공통 템플릿, 세트 슬롯마다 ①~④ 반복).
+
+    ① 시험 모드 40분 완주 ② 채점·성적 복사(자동 체크) ③ 오답노트 모드
+    ④ 오답 재풀이 15분 → (특별) 실수 노트 → ⑤ (선택) 함수 퀴즈.
+    """
+    no = plan.get("no", 0)
+    if plan.get("종류") != "모의":
+        return [dict(s) for s in PREP_STEPS] if no == 0 else []
+    slots = list(plan.get("세트") or [])
+    names = list(slot_names or plan_slot_names(plan))
+    goal = plan.get("목표")
+    g_txt = f" (목표 {goal}점)" if goal else ""
+    steps = []
+    if "복기" in (plan.get("특별") or []):
+        steps.append({"이름": "시험 1 복기", "형": "안내", "분": 15,
+                      "설명": "어제 시험 1을 복기하세요 — 막힌 문제·시간 "
+                             "배분·실수를 웹 루틴 실수 노트에 3줄로 "
+                             "적습니다. 시험 2까지 이 노트만 지키면 됩니다."})
+    for k, spec in enumerate(slots):
+        name = names[k] if k < len(names) else "자동 선택"
+        n_txt = f" ({k + 1}/{len(slots)})" if len(slots) > 1 else ""
+        auto_txt = (" 자동 선택된 세트는 창 위쪽에 이유와 함께 표시되며 "
+                    "[다른 세트로 바꾸기]로 바꿀 수 있습니다."
+                    if spec == AUTO else "")
+        steps.extend([
+            {"이름": f"{name} 시험 모드 40분 완주{n_txt}", "형": "모의",
+             "세트": spec, "슬롯": k, "목표": goal, "분": 40,
+             "설명": f"{name} 40분 실전 완주{g_txt}. 제출하면 자동 채점되고 "
+                    "이 단계와 다음 '채점·성적 복사' 단계가 자동으로 "
+                    "체크됩니다." + auto_txt},
+            {"이름": f"채점·성적 복사{n_txt}", "형": "채점", "세트": spec,
+             "슬롯": k, "분": 5,
+             "설명": "채점이 끝나면 자동 체크됩니다. 성적 JSON은 클립보드에 "
+                    "복사되어 있으니 웹 루틴에 [성적 붙여넣기]하세요."},
+            {"이름": f"오답노트 모드{n_txt}", "형": "오답노트", "세트": spec,
+             "슬롯": k, "분": 15,
+             "설명": "틀린 항목의 해설을 하나씩 읽고 '이해했음'을 체크하세요. "
+                    "이전 풀이 사본이 함께 열립니다."},
+            {"이름": f"오답 재풀이 15분{n_txt}", "형": "오답재풀이",
+             "세트": spec, "슬롯": k, "분": 15,
+             "설명": "오답이 있던 시트만 새 사본(오답재풀이_*.xlsm)에서 15분 "
+                    "안에 다시 풀고 제출하세요. 그 시트들만 채점됩니다."},
+        ])
+    if "실수노트" in (plan.get("특별") or []):
+        steps.append({"이름": "실수 노트 정리", "형": "안내", "분": 10,
+                      "설명": "오늘까지의 오답에서 반복된 실수를 웹 루틴 실수 "
+                             "노트에 정리하세요. 시험장에서 볼 마지막 "
+                             "체크리스트입니다."})
+    steps.append({"이름": "(선택) 함수 퀴즈", "형": "안내", "분": 10,
+                  "선택": True,
+                  "설명": "(선택) 웹 루틴 함수 퀴즈 10문제 — 오늘 틀린 함수가 "
+                         "있으면 그 함수부터. 건너뛰어도 됩니다."})
+    return steps
+
+
+def _default_todo(plan):
+    names = plan_slot_names(plan)
+    txt = ("모의고사 " + " + ".join(names) + " 40분 완주 → 채점 → 오답노트 "
+           "→ 오답 재풀이 15분")
+    if len(names) > 1:
+        txt += f" (오늘은 {len(names)}세트)"
+    if plan.get("메모"):
+        txt += f"  [{plan['메모']}]"
+    return txt
+
+
+def plan_for_day(no, slot_names=None):
+    """일정 번호 -> 일정 dict (no/날짜/할일/스텝 포함)."""
+    no = int(no)
+    if no not in ROUTINE_PLAN:
+        no = max(0, min(PLAN_AFTER, no))
+        if no not in ROUTINE_PLAN:
+            no = 0
     plan = dict(ROUTINE_PLAN[no])
     plan["no"] = no
     plan["날짜"] = routine_date_for(no)
-    plan["스텝"] = [dict(st) for st in ROUTINE_STEPS.get(no, [])]
+    plan["세트"] = list(plan.get("세트") or [])
+    if not plan.get("할일"):
+        plan["할일"] = _default_todo(plan)
+    plan["스텝"] = build_day_steps(plan, slot_names)
     return plan
 
 
-def plan_title(plan):
-    """카드 제목: 'Day 6 · 9/2(수) · 분석작업 2' 형태."""
+# 날짜별 기본 스텝 시퀀스 (세트명은 슬롯 표시명) — 무결성 테스트/조회용
+ROUTINE_STEPS = {no: plan_for_day(no)["스텝"] for no in PLAN_ORDER}
+
+
+def plan_title(plan, today=None, set_names=None):
+    """카드 제목: 'Day 3 · 9/5(토) · 1차 완주 — 2024 A형 + 2024 상시 2회'.
+
+    today를 주면 시험 2회 D-day를 병기합니다.
+    """
     d = plan.get("날짜")
     d_txt = f"{d.month}/{d.day}({'월화수목금토일'[d.weekday()]})" if d else ""
-    if 1 <= plan["no"] <= 14:
-        head = f"Day {plan['no']}"
-    elif plan["no"] == 15:
-        head = "시험일"
+    no = plan["no"]
+    if 1 <= no <= 14:
+        head = f"Day {no}"
+        names = list(set_names or plan_slot_names(plan))
+        body = f"{plan['제목']} — {' + '.join(names)}" if names \
+            else plan["제목"]
+    elif no in (PLAN_EXAM1, PLAN_EXAM2):
+        head, body = "시험일", plan["제목"]
+    elif no == PLAN_AFTER:
+        head, body = "루틴", plan["제목"]
     else:
-        head = "루틴"
+        s = ROUTINE_START
+        head = "준비"
+        body = (f"{plan['제목']} — {s.month}/{s.day}"
+                f"({'월화수목금토일'[s.weekday()]}) Day 1")
     parts = [head]
     if d_txt:
         parts.append(d_txt)
-    parts.append(plan["제목"])
+    parts.append(body)
+    if today:
+        parts.append(dday_text(today))
     return " · ".join(parts)
 
 
@@ -777,213 +928,183 @@ def find_set_for_tokens(sets, text):
 
 
 # ---------------------------------------------------------------------------
-# 단계 가이드 — 웹 루틴(routine.html) Day 카드 과제 목록과 1:1 시퀀스
+# 자동 세트 선택 (재응시 세트 고르기) — GUI 없이 테스트 가능
 # ---------------------------------------------------------------------------
-# 스텝 형: 안내(체크만) / 부분연습(영역·시트) / 드릴(드릴 워크북 시트 1개) /
-#          모의(실전 응시, 채점 완료 시 자동 체크) / 오답노트(복습 모드)
 
-ROUTINE_STEPS = {
-    0: [
-        {"이름": "프로그램 설치·실행 확인", "형": "안내", "분": 15,
-         "설명": "시험장 프로그램 설치·실행 확인 — 채점까지 한 번 "
-                "돌려보기. 아무 세트나 [시험 시작]으로 열고 바로 종료해 "
-                "채점 흐름을 확인하세요."},
-        {"이름": "세트·문제지 PDF 준비 확인", "형": "안내", "분": 10,
-         "설명": "문제지 PDF와 기출 7세트·코코 모의고사 파일 준비 확인 — "
-                "아래 목록에 세트가 모두 보이고 (문제지 미연결) 표시가 "
-                "없는지 확인하세요."},
-        {"이름": "루틴 웹페이지 훑어보기", "형": "안내", "분": 10,
-         "설명": "이 루틴 한 바퀴 훑어보기 — 웹 루틴 페이지에서 실수 "
-                "노트·함수 사전 위치를 확인하고 즐겨찾기에 추가하세요."},
-    ],
-    1: [
-        {"이름": "2024 상시 1회 기본작업-1·2", "형": "부분연습",
-         "세트": "2024 상시 1회", "시트": ["기본작업-1", "기본작업-2"],
-         "라벨": "기본작업-1·2", "분": 10,
-         "설명": "2024 상시 1회 기본작업-1·2 풀기 — 자료 입력은 띄어쓰기·"
-                "특수문자까지 그대로, 셀 서식은 Ctrl+1."},
-        {"이름": "2024 상시 2회 기본작업-1·2", "형": "부분연습",
-         "세트": "2024 상시 2회", "시트": ["기본작업-1", "기본작업-2"],
-         "라벨": "기본작업-1·2", "분": 10,
-         "설명": "2024 상시 2회 기본작업-1·2 풀기."},
-        {"이름": "2024 A형 기본작업-3", "형": "부분연습",
-         "세트": "2024 A형", "시트": ["기본작업-3"], "라벨": "기본작업-3",
-         "분": 10,
-         "설명": "2024 A형 기본작업-3 풀기 — 조건부 서식 $B4 혼합참조 / "
-                "고급 필터 같은 행 AND·다른 행 OR."},
-        {"이름": "2024 B형 기본작업-3", "형": "부분연습",
-         "세트": "2024 B형", "시트": ["기본작업-3"], "라벨": "기본작업-3",
-         "분": 10, "설명": "2024 B형 기본작업-3 풀기."},
-        {"이름": "24 2급 상시 기본작업-3", "형": "부분연습",
-         "세트": "24 2급 상시", "시트": ["기본작업-3"], "라벨": "기본작업-3",
-         "분": 10, "설명": "24 2급 상시 기본작업-3 풀기."},
-    ],
-    2: [
-        {"이름": "계산 드릴 시트 1", "형": "드릴", "번호": 1, "분": 15,
-         "설명": "계산작업 집중 드릴 시트 1–3 (판정·참조) 중 시트 1 — "
-                "드릴 사본이 열리면 해당 시트만 15분 안에 푸세요."},
-        {"이름": "계산 드릴 시트 2", "형": "드릴", "번호": 2, "분": 15,
-         "설명": "드릴 시트 2 (판정·참조) — 15분."},
-        {"이름": "계산 드릴 시트 3", "형": "드릴", "번호": 3, "분": 15,
-         "설명": "드릴 시트 3 (판정·참조) — 15분."},
-        {"이름": "2024 상시 1회 계산작업(판정·참조)", "형": "부분연습",
-         "세트": "2024 상시 1회", "영역": ["계산작업"], "분": 15,
-         "설명": "2024 상시 1회 계산작업 중 판정·참조 문제만 풀기."},
-        {"이름": "2024 A형 계산작업(판정·참조)", "형": "부분연습",
-         "세트": "2024 A형", "영역": ["계산작업"], "분": 15,
-         "설명": "2024 A형 계산작업 중 판정·참조 문제만 풀기."},
-    ],
-    3: [
-        {"이름": "계산 드릴 시트 4", "형": "드릴", "번호": 4, "분": 15,
-         "설명": "계산작업 집중 드릴 시트 4–6 (시간·문자열·DB·통계) 중 "
-                "시트 4 — 15분."},
-        {"이름": "계산 드릴 시트 5", "형": "드릴", "번호": 5, "분": 15,
-         "설명": "드릴 시트 5 — 15분."},
-        {"이름": "계산 드릴 시트 6", "형": "드릴", "번호": 6, "분": 15,
-         "설명": "드릴 시트 6 — 15분."},
-        {"이름": "2024 B형 계산작업(해당 유형)", "형": "부분연습",
-         "세트": "2024 B형", "영역": ["계산작업"], "분": 15,
-         "설명": "2024 B형 계산작업 중 해당 유형만 풀기."},
-        {"이름": "24 2급 상시 계산작업(해당 유형)", "형": "부분연습",
-         "세트": "24 2급 상시", "영역": ["계산작업"], "분": 15,
-         "설명": "24 2급 상시 계산작업 중 해당 유형만 풀기."},
-        {"이름": "드릴 오답 전부 재풀이", "형": "안내", "분": 30,
-         "설명": "드릴 24문제 중 오답 전부 재풀이 — 드릴 워크북에서 "
-                "틀렸던 문제만 골라 다시 풀어보세요."},
-    ],
-    4: [
-        {"이름": "드릴 오답·계산 골격 총복습", "형": "안내", "분": 30,
-         "설명": "드릴 오답·계산 골격 총복습 (30분) — IF/VLOOKUP 등 "
-                "함수 골격을 손으로 다시 써보세요."},
-        {"이름": "2024 상시 1회 실전 응시", "형": "모의",
-         "세트": "2024 상시 1회", "목표": 60, "분": 40,
-         "설명": "2024 상시 1회 40분 실전 응시 (목표 60점). 종료하면 "
-                "자동 채점되고 이 단계도 자동으로 체크됩니다."},
-        {"이름": "점수 기록 + 오답노트", "형": "오답노트",
-         "세트": "2024 상시 1회", "분": 20,
-         "설명": "grade.py 채점 → 점수 기록 + 오답노트. 성적 JSON은 "
-                "클립보드에 복사되어 있으니 웹 루틴에 붙여넣고, 오답노트 "
-                "모드로 복습하세요."},
-    ],
-    5: [
-        {"이름": "2024 상시 2회 분석작업", "형": "부분연습",
-         "세트": "2024 상시 2회", "영역": ["분석작업"], "분": 10,
-         "설명": "2024 상시 2회 분석작업 중 부분합·통합·정렬 풀기."},
-        {"이름": "2024 A형 분석작업", "형": "부분연습",
-         "세트": "2024 A형", "영역": ["분석작업"], "분": 10,
-         "설명": "2024 A형 분석작업 중 부분합·통합·정렬 풀기."},
-        {"이름": "2024 B형 분석작업", "형": "부분연습",
-         "세트": "2024 B형", "영역": ["분석작업"], "분": 10,
-         "설명": "2024 B형 분석작업 중 부분합·통합·정렬 풀기."},
-    ],
-    6: [
-        {"이름": "24 2급 상시 분석작업", "형": "부분연습",
-         "세트": "24 2급 상시", "영역": ["분석작업"], "분": 10,
-         "설명": "24 2급 상시 분석작업 중 해당 유형 풀기 (시나리오·"
-                "목표값 찾기·피벗·데이터 표)."},
-        {"이름": "컴활 2급 상시 분석작업", "형": "부분연습",
-         "세트": "컴활 2급 상시", "영역": ["분석작업"], "분": 10,
-         "설명": "컴활 2급 상시 분석작업 중 해당 유형 풀기."},
-        {"이름": "2026 1회 분석작업", "형": "부분연습",
-         "세트": "2026 1회", "영역": ["분석작업"], "분": 10,
-         "설명": "2026 1회 분석작업 중 해당 유형 풀기."},
-    ],
-    7: [
-        {"이름": "2024 상시 1회 매크로 ×2", "형": "부분연습",
-         "세트": "2024 상시 1회", "시트": ["매크로작업"],
-         "라벨": "매크로작업", "분": 10,
-         "설명": "2024 상시 1회 매크로 문제 각 2회 반복 — 같은 문제를 두 "
-                "번 녹화해 손에 익히세요."},
-        {"이름": "2024 상시 2회 매크로 ×2", "형": "부분연습",
-         "세트": "2024 상시 2회", "시트": ["매크로작업"],
-         "라벨": "매크로작업", "분": 10,
-         "설명": "2024 상시 2회 매크로 문제 각 2회 반복."},
-        {"이름": "2024 A형 매크로 ×2", "형": "부분연습",
-         "세트": "2024 A형", "시트": ["매크로작업"], "라벨": "매크로작업",
-         "분": 10, "설명": "2024 A형 매크로 문제 각 2회 반복."},
-        {"이름": "2024 B형 차트", "형": "부분연습", "세트": "2024 B형",
-         "시트": ["차트작업"], "라벨": "차트작업", "분": 10,
-         "설명": "2024 B형 차트 문제 풀기."},
-        {"이름": "24 2급 상시 차트", "형": "부분연습",
-         "세트": "24 2급 상시", "시트": ["차트작업"], "라벨": "차트작업",
-         "분": 10, "설명": "24 2급 상시 차트 문제 풀기."},
-        {"이름": "2026 1회 차트", "형": "부분연습", "세트": "2026 1회",
-         "시트": ["차트작업"], "라벨": "차트작업", "분": 10,
-         "설명": "2026 1회 차트 문제 풀기."},
-    ],
-    8: [
-        {"이름": "코코 모의고사 1회 실전 응시", "형": "모의",
-         "세트": "코코 1회", "목표": 65, "분": 40,
-         "설명": "코코 모의고사 1회 40분 실전 응시 (목표 65점)."},
-        {"이름": "점수 기록 + 오답노트", "형": "오답노트", "세트": "코코 1회",
-         "분": 20,
-         "설명": "grade.py 채점 → 점수 기록 + 오답노트. 성적은 클립보드에 "
-                "복사되어 있습니다 — 웹 루틴에 붙여넣으세요."},
-    ],
-    9: [
-        {"이름": "Day 4·8 오답노트 복습", "형": "안내", "분": 30,
-         "설명": "Day 4·8 오답노트 복습 (30분) — 아래 목록에서 각 세트를 "
-                "선택해 [오답노트 모드]로 다시 훑어보세요."},
-        {"이름": "2024 A형 실전 응시", "형": "모의", "세트": "2024 A형",
-         "목표": 70, "분": 40,
-         "설명": "2024 A형 40분 실전 응시 (목표 70점)."},
-        {"이름": "점수 기록 + 오답노트", "형": "오답노트", "세트": "2024 A형",
-         "분": 20, "설명": "grade.py 채점 → 점수 기록 + 오답노트."},
-    ],
-    10: [
-        {"이름": "코코 모의고사 2회 실전 응시", "형": "모의",
-         "세트": "코코 2회", "목표": 70, "분": 40,
-         "설명": "코코 모의고사 2회 40분 실전 응시 (목표 70점)."},
-        {"이름": "점수 기록 + 오답노트", "형": "오답노트", "세트": "코코 2회",
-         "분": 20, "설명": "grade.py 채점 → 점수 기록 + 오답노트."},
-        {"이름": "취약 유형 드릴 재풀이", "형": "안내", "분": 20,
-         "설명": "취약 유형의 계산작업 집중 드릴 시트 재풀이 — 리포트 "
-                "약점 TOP3 유형의 드릴 시트를 다시 푸세요."},
-    ],
-    11: [
-        {"이름": "2024 상시 2회 실전 응시", "형": "모의",
-         "세트": "2024 상시 2회", "목표": 75, "분": 40,
-         "설명": "2024 상시 2회 40분 실전 응시 (목표 75점)."},
-        {"이름": "점수 기록 + 오답노트", "형": "오답노트",
-         "세트": "2024 상시 2회", "분": 20,
-         "설명": "grade.py 채점 → 점수 기록 + 오답노트."},
-    ],
-    12: [
-        {"이름": "2024 B형 실전 응시", "형": "모의", "세트": "2024 B형",
-         "목표": 75, "분": 40,
-         "설명": "2024 B형 40분 실전 응시 (목표 75점)."},
-        {"이름": "점수 기록 + 오답노트", "형": "오답노트", "세트": "2024 B형",
-         "분": 20, "설명": "grade.py 채점 → 점수 기록 + 오답노트."},
-    ],
-    13: [
-        {"이름": "2026 1회 실전 재응시", "형": "모의", "세트": "2026 1회",
-         "목표": 80, "분": 40,
-         "설명": "2026 1회 40분 실전 재응시 (목표 80점)."},
-        {"이름": "점수 기록 + 이전 점수와 비교", "형": "오답노트",
-         "세트": "2026 1회", "분": 15,
-         "설명": "grade.py 채점 → 점수 기록 + 이전 점수와 비교. 첫 응시 "
-                "점수에서 얼마나 올랐는지 확인하세요."},
-    ],
-    14: [
-        {"이름": "실수 노트 전체 1회독", "형": "안내", "분": 20,
-         "설명": "실수 노트 탭 전체 1회독 — 웹 루틴 페이지에서."},
-        {"이름": "오답노트 최종 복습", "형": "안내", "분": 30,
-         "설명": "오답노트 최종 복습 + 일찍 취침 — 각 세트를 선택해 "
-                "[오답노트 모드]로 훑어보세요. 오늘은 일찍 쉬는 것도 "
-                "실력입니다."},
-        {"이름": "(선택) 예비 세트 실전", "형": "안내", "분": 40,
-         "설명": "(선택) 예비 세트 24 2급 상시 · 컴활 2급 상시 중 택 1로 "
-                "40분 실전 — 원하면 아래 목록에서 골라 [시험 시작]하세요."},
-    ],
-}
+def _record_date(r):
+    try:
+        return datetime.strptime(str(r.get("일시"))[:10], "%Y-%m-%d").date()
+    except Exception:
+        return None
+
+
+def set_exam_records(set_name, records):
+    """세트의 시험 모드(전체 응시) 기록 — 부분연습·오답재풀이 제외."""
+    return [r for r in set_records(set_name, records)
+            if r.get("mode") not in ("부분연습", "오답재풀이")]
+
+
+def pick_set_for_retry(sets, records, count=1, today=None, exclude=()):
+    """재응시 세트 자동 선택. [(세트, 이유)] count개 (서로 다른 세트).
+
+    우선순위: ① 응시 기록이 없는 신규 세트(폴더에 새로 넣은 세트 편입)
+    ② 기록상 최고점이 가장 낮은 세트 — 단, 최근 2일(오늘·어제) 응시한
+    세트는 제외 ③ 전부 제외되면 최저점 세트. exclude: 제외할 세트/이름.
+    """
+    today = today or date.today()
+    taken = set()
+    for x in exclude:
+        taken.add(x.get("norm") if isinstance(x, dict) else str(x))
+    picks = []
+    for _ in range(max(0, int(count))):
+        cands = [s for s in sets
+                 if s.get("norm") not in taken and s.get("name") not in taken]
+        if not cands:
+            break
+        fresh = [s for s in cands
+                 if not set_exam_records(s["name"], records)]
+        if fresh:
+            chosen, reason = fresh[0], "신규 세트라서 (응시 기록 없음)"
+        else:
+            rows = []
+            for s in cands:
+                recs = set_exam_records(s["name"], records)
+                scores = [r["점수"] for r in recs
+                          if isinstance(r.get("점수"), (int, float))]
+                best = max(scores) if scores else None
+                dates = [d for d in (_record_date(r) for r in recs) if d]
+                last = max(dates) if dates else None
+                recent = last is not None and (today - last).days < 2
+                rows.append((s, best, len(recs), recent))
+            pool = [r for r in rows if not r[3]] or rows
+            fallback = pool is rows and any(r[3] for r in rows)
+            s, best, n, _rec = min(
+                pool, key=lambda r: (r[1] if r[1] is not None else -1, r[2],
+                                     r[0]["name"]))
+            reason = (f"최저점 {best:g}점이라서" if best is not None
+                      else "채점 점수가 남아 있지 않아서")
+            if fallback:
+                reason += " (모든 세트를 최근 2일 내 응시 — 최저점으로 선택)"
+            chosen = s
+        picks.append((chosen, reason))
+        taken.add(chosen.get("norm"))
+        taken.add(chosen.get("name"))
+    return picks
+
+
+def load_auto_picks(day_tag, path=None):
+    """세트설정.json '_자동선택'에 저장된 오늘 자동 선택 [{세트, 이유}]."""
+    cfg = load_set_config(path or SET_CONFIG_PATH)
+    raw = (cfg.get("_자동선택") or {}).get(day_tag) or []
+    out = []
+    for x in raw:
+        if isinstance(x, dict) and x.get("세트"):
+            out.append({"세트": str(x["세트"]), "이유": str(x.get("이유") or "")})
+        elif isinstance(x, str):
+            out.append({"세트": x, "이유": ""})
+        else:
+            out.append(None)
+    return out
+
+
+def save_auto_picks(day_tag, picks, path=None):
+    """오늘의 자동 선택 결과 저장 (picks: [{세트, 이유} 또는 None])."""
+    p = path or SET_CONFIG_PATH
+    cfg = load_set_config(p)
+    cfg.setdefault("_자동선택", {})[day_tag] = [
+        {"세트": x["세트"], "이유": x.get("이유", "")} if x else None
+        for x in picks]
+    return save_set_config(cfg, p)
+
+
+def resolve_day_sets(plan, sets, records=None, today=None, saved=None):
+    """일정의 세트 슬롯 -> [(세트 or None, 이유)].
+
+    고정 슬롯은 퍼지 매칭, 자동 슬롯은 저장된 선택(saved)을 우선 복원하고
+    없으면 pick_set_for_retry로 고릅니다. 슬롯끼리는 서로 다른 세트.
+    """
+    slots = list(plan.get("세트") or [])
+    out = [None] * len(slots)
+    reasons = [""] * len(slots)
+    taken = set()
+    for k, spec in enumerate(slots):          # ① 고정 세트
+        if spec != AUTO:
+            s = find_set_for_tokens(sets, spec)
+            out[k], reasons[k] = s, ("일정 지정 세트" if s else
+                                    f"'{spec}' 세트를 찾지 못함")
+            if s:
+                taken.add(s["norm"])
+    saved = list(saved or [])
+    for k, spec in enumerate(slots):          # ② 저장된 자동 선택 복원
+        if spec == AUTO and k < len(saved) and saved[k]:
+            s = next((x for x in sets if x["name"] == saved[k]["세트"]
+                      and x["norm"] not in taken), None)
+            if s:
+                out[k] = s
+                reasons[k] = (saved[k].get("이유") or "이전 선택") + " (유지)"
+                taken.add(s["norm"])
+    for k, spec in enumerate(slots):          # ③ 새로 자동 선택
+        if spec == AUTO and out[k] is None:
+            picks = pick_set_for_retry(
+                [s for s in sets if s["norm"] not in taken],
+                records or [], 1, today)
+            if picks:
+                out[k], reasons[k] = picks[0]
+                taken.add(out[k]["norm"])
+            else:
+                reasons[k] = "선택할 세트가 없습니다 (세트를 폴더에 넣어 주세요)"
+    return list(zip(out, reasons))
+
+
+# ---------------------------------------------------------------------------
+# 오답 재풀이 (최신 채점 JSON의 오답 시트만 부분 채점) — GUI 없이 테스트 가능
+# ---------------------------------------------------------------------------
+
+def wrong_sheets_from_items(items):
+    """오답 항목 -> 오답이 있는 시트 목록 (등장 순, 중복 제거)."""
+    out = []
+    for it in items or []:
+        sh = str((it or {}).get("sheet") or "").strip()
+        if sh and sh not in out:
+            out.append(sh)
+    return out
+
+
+def make_retry_copy(problem, set_name, when=None):
+    """문제 파일 -> 오답재풀이_<세트>_<일시>.xlsm 사본."""
+    when = when or datetime.now()
+    stamp = when.strftime("%Y%m%d_%H%M")
+    d = os.path.dirname(os.path.abspath(problem))
+    return copy_as_macro_enabled(
+        problem, _unique_stem(d, f"오답재풀이_{set_name}_{stamp}"))
+
+
+def retry_payload_for_set(s, minutes=15):
+    """세트의 최신 전체 채점 JSON에서 오답 시트를 뽑아 재풀이 실행 정보로.
+
+    반환 ('retry', payload) / ('missing', {이유}) / ('info', {메시지, 자동완료}).
+    """
+    jp = find_latest_result_json(s, full_only=True)
+    if not jp:
+        return "missing", {"이유": f"'{s['name']}'의 채점 기록(채점결과 JSON)"
+                                 "이 없습니다. 먼저 시험 모드로 응시해 "
+                                 "채점을 받으세요."}
+    data, items = load_wrong_items(jp)
+    if data is None:
+        return "missing", {"이유": f"채점결과 파일을 읽을 수 없습니다:\n{jp}"}
+    sheets = wrong_sheets_from_items(items)
+    if not sheets:
+        return "info", {"메시지": f"최근 채점({data.get('total', '?')}점)에 "
+                                "오답 시트가 없습니다. 재풀이할 내용이 없어 "
+                                "이 단계를 완료 처리합니다.",
+                        "자동완료": True}
+    return "retry", {"set": s, "sheets": sheets, "label": "오답재풀이",
+                     "minutes": int(minutes), "mode": "오답재풀이",
+                     "json": jp, "점수": data.get("total")}
+
 
 STEP_DONE_MESSAGE = ("오늘 완료! 웹 루틴에 성적 붙여넣기"
                      "(클립보드에 이미 복사됨)")
-
-
-def plan_day_tag(no):
-    """일정 번호 -> 진행 저장 키 ('d00'~'d14', 그 외 None)."""
-    return f"d{no:02d}" if 0 <= int(no) <= 14 else None
 
 
 def sheet_names_of(path):
@@ -1018,10 +1139,15 @@ def drill_sheet_name(path, number):
     return None
 
 
+def _progress_key(day_tag):
+    """'_진행' 저장 키 — 새 루틴 세대는 접두를 붙여 구 진행과 분리."""
+    return f"{PROGRESS_NS}:{day_tag}"
+
+
 def load_step_progress(day_tag, path=None):
     """세트설정.json '_진행'에서 완료 스텝 번호 집합 로드."""
     cfg = load_set_config(path or SET_CONFIG_PATH)
-    raw = (cfg.get("_진행") or {}).get(day_tag) or []
+    raw = (cfg.get("_진행") or {}).get(_progress_key(day_tag)) or []
     out = set()
     for x in raw:
         try:
@@ -1035,14 +1161,29 @@ def save_step_progress(day_tag, done, path=None):
     """완료 스텝 번호 집합을 세트설정.json '_진행'에 저장."""
     p = path or SET_CONFIG_PATH
     cfg = load_set_config(p)
-    cfg.setdefault("_진행", {})[day_tag] = sorted(int(i) for i in done)
+    cfg.setdefault("_진행", {})[_progress_key(day_tag)] = \
+        sorted(int(i) for i in done)
     return save_set_config(cfg, p)
 
 
-def resolve_step_action(step, sets):
-    """스텝 -> 실행 방법. ('info'|'practice'|'exam'|'review'|'missing',
-    payload) 반환. GUI 없이 테스트 가능."""
+def resolve_step_action(step, sets, slot_sets=None):
+    """스텝 -> 실행 방법. ('info'|'practice'|'exam'|'review'|'retry'|
+    'missing', payload) 반환. GUI 없이 테스트 가능.
+
+    slot_sets: resolve_day_sets() 결과 [(세트, 이유)] — 스텝의 '슬롯'
+    번호로 세트를 찾습니다. 없으면 스텝의 '세트' 문구를 퍼지 매칭.
+    """
     kind = step.get("형", "안내")
+
+    def slot_set():
+        k = step.get("슬롯")
+        if slot_sets is not None and k is not None and k < len(slot_sets):
+            return slot_sets[k][0], slot_sets[k][1]
+        spec = step.get("세트")
+        if spec and spec != AUTO:
+            return find_set_for_tokens(sets, spec), "일정 지정 세트"
+        return None, ""
+
     if kind == "드릴":
         s = find_set_for_tokens(sets, "계산 드릴")
         if not s:
@@ -1070,17 +1211,29 @@ def resolve_step_action(step, sets):
                             "minutes": minutes,
                             "세트문구": step.get("세트")}
     if kind == "모의":
-        s = find_set_for_tokens(sets, step.get("세트") or "")
+        s, reason = slot_set()
         if not s:
-            return "missing", {"이유": f"'{step.get('세트')}' 세트를 찾지 "
-                                     "못했습니다. 파일을 스캔 폴더에 넣거나 "
-                                     "[직접 선택]으로 지정하세요."}
+            spec = step.get("세트")
+            why = ("응시할 세트를 자동으로 고르지 못했습니다. 세트 파일을 "
+                   "스캔 폴더에 넣거나 [다른 세트로 바꾸기]로 지정하세요."
+                   if spec == AUTO else
+                   f"'{spec}' 세트를 찾지 못했습니다. 파일을 스캔 폴더에 "
+                   "넣거나 [다른 세트로 바꾸기]/[직접 선택]으로 지정하세요.")
+            return "missing", {"이유": why}
         return "exam", {"set": s, "minutes": int(step.get("분", 40)),
-                        "목표": step.get("목표")}
+                        "목표": step.get("목표"), "이유": reason}
+    if kind == "채점":
+        return "info", {"메시지": step.get("설명") or "채점이 끝나면 자동으로 "
+                                                  "체크됩니다."}
     if kind == "오답노트":
-        s = find_set_for_tokens(sets, step.get("세트") or "") \
-            if step.get("세트") else None
+        s, _reason = slot_set()
         return "review", {"set": s}
+    if kind == "오답재풀이":
+        s, _reason = slot_set()
+        if not s:
+            return "missing", {"이유": "재풀이할 세트를 찾지 못했습니다. 먼저 "
+                                     "같은 슬롯의 시험 모드 단계를 진행하세요."}
+        return retry_payload_for_set(s, int(step.get("분", 15)))
     return "info", {"메시지": step.get("설명") or step.get("이름") or ""}
 
 
@@ -1166,8 +1319,12 @@ def problem_has_formula_traces(problem_path, sheet_name="계산작업"):
         return 0
 
 
-def find_latest_result_json(set_info):
-    """세트의 최신 채점결과 JSON 경로 (없으면 None)."""
+def find_latest_result_json(set_info, full_only=False):
+    """세트의 최신 채점결과 JSON 경로 (없으면 None).
+
+    full_only=True면 부분 채점(mode: partial — 부분 연습·오답 재풀이) 결과는
+    건너뛰고 전체 응시 결과만 찾습니다.
+    """
     d = os.path.join(set_info["dir"], "채점결과")
     best = None
     if os.path.isdir(d):
@@ -1175,13 +1332,16 @@ def find_latest_result_json(set_info):
             if not (fn.startswith("채점결과_") and fn.endswith(".json")):
                 continue
             path = os.path.join(d, fn)
-            if set_info["name"] not in fn:
+            if set_info["name"] not in fn or full_only:
                 try:
                     with open(path, encoding="utf-8") as f:
                         j = json.load(f)
-                    pb = os.path.basename(
-                        (j.get("files") or {}).get("problem") or "")
-                    if pb != os.path.basename(set_info["problem"]):
+                    if set_info["name"] not in fn:
+                        pb = os.path.basename(
+                            (j.get("files") or {}).get("problem") or "")
+                        if pb != os.path.basename(set_info["problem"]):
+                            continue
+                    if full_only and j.get("mode") == "partial":
                         continue
                 except Exception:
                     continue
@@ -1595,7 +1755,10 @@ if HAS_TK:
 
             practice = exam.get("practice_info")
             head = exam["set"]["name"]
-            if practice:
+            if practice and practice.get("mode") == "오답재풀이":
+                head += " · 오답 재풀이(" + ", ".join(
+                    practice.get("sheets") or []) + ")"
+            elif practice:
                 head += f" · 부분 연습({practice['label']})"
             tk.Label(self, text=head, bg=INK,
                      fg="#F2B24C" if practice else "#A7C8B2",
@@ -1605,8 +1768,10 @@ if HAS_TK:
             self.time_lbl.pack(padx=24, pady=(0, 2))
             self.status_lbl = tk.Label(
                 self,
-                text=(f"부분 연습 — {practice['label']}" if practice
-                      else "시험 진행 중"),
+                text=(("오답 재풀이 — 오답 시트만 채점"
+                       if practice.get("mode") == "오답재풀이"
+                       else f"부분 연습 — {practice['label']}")
+                      if practice else "시험 진행 중"),
                 bg=INK, fg="#A7C8B2", font=("Malgun Gothic", 9))
             self.status_lbl.pack()
             if not exam["set"].get("pdf"):
@@ -1973,29 +2138,102 @@ if HAS_TK:
             self.destroy()
 
 
-    class StepGuideWindow(tk.Toplevel):
-        """오늘 일정 단계 가이드 — 과제 순서 그대로 한 단계씩 진행.
+    class SetChooserDialog(tk.Toplevel):
+        """[다른 세트로 바꾸기] — 슬롯을 고르고 목록에서 세트 선택."""
 
-        진행 상태는 세트설정.json '_진행'에 날짜 키(d01~)로 저장되어
-        프로그램을 껐다 켜도 이어집니다.
+        def __init__(self, guide, sets, slot_count, on_apply):
+            super().__init__(guide)
+            self.sets = sets
+            self.on_apply = on_apply
+            self.title(f"{APP_TITLE} - 다른 세트로 바꾸기")
+            self.configure(bg=BG)
+            self.geometry("420x360")
+            frm = tk.Frame(self, bg=BG, padx=14, pady=10)
+            frm.pack(fill="both", expand=True)
+            top = tk.Frame(frm, bg=BG)
+            top.pack(fill="x")
+            tk.Label(top, text="바꿀 세트 슬롯:", bg=BG, fg=INK,
+                     font=UI_FONT).pack(side="left")
+            self.slot_var = tk.IntVar(value=1)
+            for k in range(max(1, slot_count)):
+                tk.Radiobutton(top, text=f"{k + 1}번", variable=self.slot_var,
+                               value=k + 1, bg=BG, fg=INK, font=UI_FONT,
+                               selectcolor=CARD).pack(side="left", padx=4)
+            listfrm = tk.Frame(frm, bg=CARD, highlightbackground=LINE,
+                               highlightthickness=1)
+            listfrm.pack(fill="both", expand=True, pady=(8, 8))
+            self.listbox = tk.Listbox(
+                listfrm, font=UI_FONT, bd=0, highlightthickness=0, bg=CARD,
+                fg=INK, selectbackground=BRAND_SOFT,
+                selectforeground=BRAND_DARK, activestyle="none",
+                exportselection=False)
+            sb = tk.Scrollbar(listfrm, command=self.listbox.yview)
+            self.listbox.configure(yscrollcommand=sb.set)
+            self.listbox.pack(side="left", fill="both", expand=True,
+                              padx=(6, 0), pady=6)
+            sb.pack(side="right", fill="y")
+            for s in sets:
+                self.listbox.insert("end", " " + s["name"])
+            bf = tk.Frame(frm, bg=BG)
+            bf.pack(fill="x")
+            tk.Button(bf, text="이 세트로 바꾸기", font=UI_FONT_BOLD,
+                      bg=BRAND, fg="white", activebackground=BRAND_DARK,
+                      relief="flat", padx=14, pady=4,
+                      command=self.apply).pack(side="left")
+            tk.Button(bf, text="취소", font=UI_FONT, relief="groove",
+                      padx=12, pady=4, command=self.destroy).pack(
+                side="right")
+
+        def apply(self):
+            sel = self.listbox.curselection()
+            if not sel or sel[0] >= len(self.sets):
+                messagebox.showinfo(APP_TITLE, "목록에서 세트를 선택하세요.",
+                                    parent=self)
+                return
+            self.on_apply(int(self.slot_var.get()) - 1, self.sets[sel[0]])
+            self.destroy()
+
+
+    class StepGuideWindow(tk.Toplevel):
+        """오늘 일정 단계 가이드 — 매일 '완주 → 채점 → 오답노트 → 오답 재풀이'.
+
+        세트 슬롯(고정/자동 선택)을 창을 열 때 확정해 위쪽에 이유와 함께
+        표시하고, [다른 세트로 바꾸기]로 바꿀 수 있습니다. 진행 상태는
+        세트설정.json '_진행'에 날짜 키(d01~)로 저장되어 이어집니다.
         """
 
         def __init__(self, app, plan):
             super().__init__(app)
             self.app = app
             self.plan = plan
-            self.steps = plan.get("스텝") or []
             self.day_tag = plan_day_tag(plan["no"])
+            self.slot_sets = []
+            self.steps = []
+            self._resolve_slots(save=True)
             self.done = load_step_progress(self.day_tag) \
                 if self.day_tag else set()
             self._celebrated = self._all_done()
             self.title(f"{APP_TITLE} - 오늘 일정")
             self.configure(bg=BG)
-            self.geometry("560x460")
+            self.geometry("600x540")
             frm = tk.Frame(self, bg=BG, padx=16, pady=12)
             frm.pack(fill="both", expand=True)
-            tk.Label(frm, text=plan_title(plan), bg=BG, fg=BRAND_DARK,
-                     font=UI_FONT_BOLD).pack(anchor="w")
+            self.title_lbl = tk.Label(frm, text="", bg=BG, fg=BRAND_DARK,
+                                      font=UI_FONT_BOLD, wraplength=560,
+                                      justify="left", anchor="w")
+            self.title_lbl.pack(anchor="w", fill="x")
+            pick_row = tk.Frame(frm, bg=BG)
+            pick_row.pack(fill="x", pady=(2, 0))
+            self.pick_lbl = tk.Label(pick_row, text="", bg=BG, fg=INK,
+                                     font=("Malgun Gothic", 9),
+                                     justify="left", anchor="w",
+                                     wraplength=420)
+            self.pick_lbl.pack(side="left", fill="x", expand=True)
+            self.change_btn = tk.Button(
+                pick_row, text="다른 세트로 바꾸기", font=UI_FONT,
+                relief="groove", padx=8, pady=2, command=self.change_set)
+            if plan.get("세트"):
+                self.change_btn.pack(side="right")
             self.progress_lbl = tk.Label(frm, text="", bg=BG, fg=SUB,
                                          font=("Malgun Gothic", 9))
             self.progress_lbl.pack(anchor="w", pady=(2, 6))
@@ -2016,7 +2254,7 @@ if HAS_TK:
                               lambda e: self._show_detail())
             self.detail_lbl = tk.Label(
                 frm, text="", bg=CARD, fg=INK, font=("Malgun Gothic", 9),
-                justify="left", anchor="nw", padx=10, pady=8, wraplength=500,
+                justify="left", anchor="nw", padx=10, pady=8, wraplength=540,
                 highlightbackground=LINE, highlightthickness=1)
             self.detail_lbl.pack(fill="x", pady=(8, 0))
             bf = tk.Frame(frm, bg=BG)
@@ -2034,7 +2272,93 @@ if HAS_TK:
             tk.Button(bf, text="닫기", font=UI_FONT, relief="groove",
                       padx=12, pady=4, command=self.destroy).pack(
                 side="right")
+            self._render_header()
             self.refresh(select=self.current_index())
+
+        # --- 세트 슬롯 ---
+
+        def _resolve_slots(self, save=False):
+            """세트 슬롯 확정 (저장된 자동 선택 복원 → 새로 선택 → 저장)."""
+            plan = self.plan
+            if plan.get("세트"):
+                saved = load_auto_picks(self.day_tag) if self.day_tag else []
+                self.slot_sets = resolve_day_sets(
+                    plan, self.app.sets, load_records(), saved=saved)
+                if save and self.day_tag and AUTO in plan["세트"]:
+                    self._save_picks()
+            else:
+                self.slot_sets = []
+            self.slot_names = [
+                (s["name"] if s else (spec if spec != AUTO
+                                      else "자동 선택(세트 없음)"))
+                for (s, _r), spec in zip(self.slot_sets, plan["세트"])]
+            self.steps = build_day_steps(plan, self.slot_names)
+
+        def _save_picks(self):
+            picks = []
+            for (s, reason), spec in zip(self.slot_sets, self.plan["세트"]):
+                picks.append({"세트": s["name"],
+                              "이유": reason.replace(" (유지)", "")}
+                             if (s and spec == AUTO) else None)
+            try:
+                save_auto_picks(self.day_tag, picks)
+            except Exception:
+                pass
+
+        def pick_text(self):
+            """세트 선택 결과·이유 표시 문구 (한 줄에 슬롯 하나)."""
+            lines = []
+            for k, ((s, reason), spec) in enumerate(
+                    zip(self.slot_sets, self.plan["세트"])):
+                head = f"세트 {k + 1}: " if len(self.slot_sets) > 1 else "세트: "
+                how = "자동 선택" if spec == AUTO else "일정 지정"
+                if s:
+                    lines.append(f"{head}{s['name']}  [{how} — {reason}]")
+                else:
+                    lines.append(f"{head}(없음)  [{how} — {reason}]")
+            return "\n".join(lines)
+
+        def _render_header(self):
+            self.title_lbl.configure(
+                text=plan_title(self.plan, today=date.today(),
+                                set_names=self.slot_names or None))
+            self.pick_lbl.configure(text=self.pick_text())
+
+        def change_set(self):
+            """[다른 세트로 바꾸기] 대화상자."""
+            if not self.plan.get("세트"):
+                return
+            if not self.app.sets:
+                messagebox.showinfo(APP_TITLE, "바꿀 세트가 없습니다. 세트를 "
+                                    "스캔 폴더에 넣거나 [직접 선택]하세요.",
+                                    parent=self)
+                return
+            SetChooserDialog(self, self.app.sets, len(self.plan["세트"]),
+                             self.apply_set_change)
+
+        def apply_set_change(self, slot, s):
+            """슬롯 seat를 세트 s로 교체 (같은 세트가 다른 슬롯에 있으면 맞교환)."""
+            if not (0 <= slot < len(self.slot_sets)):
+                return
+            new = list(self.slot_sets)
+            for k, (x, _r) in enumerate(new):
+                if k != slot and x and x.get("norm") == s.get("norm"):
+                    new[k] = (new[slot][0], "직접 선택 (맞교환)")
+            new[slot] = (s, "직접 선택")
+            self.slot_sets = new
+            self.slot_names = [
+                (x["name"] if x else spec)
+                for (x, _r), spec in zip(self.slot_sets, self.plan["세트"])]
+            self.steps = build_day_steps(self.plan, self.slot_names)
+            if self.day_tag:
+                picks = [{"세트": x["name"], "이유": r} if x else None
+                         for (x, r) in self.slot_sets]
+                try:
+                    save_auto_picks(self.day_tag, picks)
+                except Exception:
+                    pass
+            self._render_header()
+            self.refresh(select=self.selected_index())
 
         # --- 상태 ---
 
@@ -2098,12 +2422,24 @@ if HAS_TK:
             lines = [f"{i + 1}. {st['이름']}  ·  {kind}  ·  예상 "
                      f"{st.get('분', '?')}분  ·  {state}",
                      "", st.get("설명", "")]
-            if kind == "안내":
-                lines.append("")
+            lines.append("")
+            if kind in ("안내", "채점"):
                 lines.append("이 단계는 직접 하고 [완료 체크]를 누르면 "
-                             "됩니다.")
-            elif kind in ("모의", "부분연습", "드릴"):
-                lines.append("")
+                             "됩니다." if kind == "안내" else
+                             "채점이 끝나면 자동으로 체크됩니다 (직접 [완료 "
+                             "체크]도 가능).")
+            elif kind == "모의":
+                lines.append("[이 단계 시작]을 누르면 풀이 사본과 40분 타이머가 "
+                             "열립니다. 제출·채점까지 끝나면 자동으로 "
+                             "체크됩니다.")
+            elif kind == "오답노트":
+                lines.append("[이 단계 시작]을 누르면 오답노트 모드가 열립니다. "
+                             "다 보고 나면 [완료 체크]를 누르세요.")
+            elif kind == "오답재풀이":
+                lines.append("[이 단계 시작]을 누르면 오답 시트 목록으로 새 "
+                             "사본과 15분 타이머가 열리고, 제출하면 그 "
+                             "시트들만 채점된 뒤 자동 체크됩니다.")
+            elif kind in ("부분연습", "드릴"):
                 lines.append("[이 단계 시작]을 누르면 풀이 사본과 타이머가 "
                              "열립니다. 채점까지 끝나면 자동으로 "
                              "체크됩니다.")
@@ -2111,16 +2447,27 @@ if HAS_TK:
 
         # --- 동작 ---
 
+        def _auto_steps_for(self, i):
+            """채점 완료 시 함께 체크할 스텝: 자신 + 바로 뒤의 '채점' 스텝."""
+            out = [i]
+            if i + 1 < len(self.steps) and \
+                    self.steps[i + 1].get("형") == "채점":
+                out.append(i + 1)
+            return out
+
         def start_step(self):
             i = self.selected_index()
             if i is None:
                 return
             st = self.steps[i]
-            kind, payload = resolve_step_action(st, self.app.sets)
+            kind, payload = resolve_step_action(st, self.app.sets,
+                                                self.slot_sets)
             if kind == "info":
                 messagebox.showinfo(f"{APP_TITLE} - {st['이름']}",
                                     (payload or {}).get("메시지") or
                                     st.get("설명", ""), parent=self)
+                if (payload or {}).get("자동완료"):
+                    self.mark_step_done(i)
                 return
             if kind == "missing":
                 messagebox.showinfo(APP_TITLE, (payload or {}).get("이유")
@@ -2131,11 +2478,20 @@ if HAS_TK:
                 s = (payload or {}).get("set")
                 if s:
                     self.app._select_set_in_list(s)
-                self.app.open_review_mode()
+                self.app.open_review_mode(full_only=True)
                 return
             if self.app.exam_running:
                 messagebox.showinfo(APP_TITLE, "이미 시험이 진행 중입니다.",
                                     parent=self)
+                return
+            if kind == "retry":
+                s = payload["set"]
+                self.app._select_set_in_list(s)
+                self.app._pending_plan = {"day": self.day_tag, "목표": None,
+                                          "step": i, "done_steps": [i]}
+                self.app.start_exam(practice={
+                    "sheets": payload["sheets"], "label": payload["label"],
+                    "minutes": payload["minutes"], "mode": "오답재풀이"})
                 return
             if kind == "practice":
                 s = payload.get("set")
@@ -2151,7 +2507,7 @@ if HAS_TK:
                         "누르세요.", parent=self)
                     return
                 self.app._pending_plan = {"day": self.day_tag, "목표": None,
-                                          "step": i}
+                                          "step": i, "done_steps": [i]}
                 self.app.start_exam(practice={
                     "sheets": payload["sheets"], "label": payload["label"],
                     "minutes": payload["minutes"]})
@@ -2164,7 +2520,8 @@ if HAS_TK:
                     pass
                 self.app._pending_plan = {"day": self.day_tag,
                                           "목표": payload.get("목표"),
-                                          "step": i}
+                                          "step": i,
+                                          "done_steps": self._auto_steps_for(i)}
                 self.app.start_exam()
 
         def toggle_check(self):
@@ -2379,6 +2736,8 @@ if HAS_TK:
             if self.sets:
                 self.listbox.selection_set(0)
                 self._show_info()
+            if getattr(self, "plan_title_lbl", None) is not None:
+                self._render_plan_card()   # 세트 편입/자동 선택 반영
 
         def refresh_records(self):
             records = load_records()
@@ -2389,11 +2748,11 @@ if HAS_TK:
             for r in records[-5:][::-1]:
                 score = r.get("점수")
                 score_s = f"{score}점" if score is not None else "채점 실패"
-                if r.get("mode") == "부분연습":
+                if r.get("mode") in ("부분연습", "오답재풀이"):
                     mx = r.get("만점")
                     score_s = (f"{score}/{mx:g}점" if score is not None
                                and mx else score_s)
-                    score_s += f" [부분연습 · {r.get('영역', '?')}]"
+                    score_s += f" [{r.get('mode')} · {r.get('영역', '?')}]"
                 lines.append(f"{r.get('일시', '?')}  |  {r.get('세트명', '?')}"
                              f"  |  {score_s}  |  {r.get('소요시간', '-')}")
             self.records_lbl.configure(text="\n".join(lines))
@@ -2625,7 +2984,9 @@ if HAS_TK:
                         "(풀이 사본은 자동으로 .xlsm으로 만들어 드립니다).",
                         parent=self)
             try:
-                if practice:
+                if practice and practice.get("mode") == "오답재풀이":
+                    student = make_retry_copy(s["problem"], s["name"])
+                elif practice:
                     student = make_practice_copy(s["problem"], s["name"],
                                                  practice["label"])
                 else:
@@ -2671,10 +3032,29 @@ if HAS_TK:
 
         def _render_plan_card(self):
             plan = plan_for_day(self.plan_no)
-            self.plan_title_lbl.configure(text=plan_title(plan))
+            names = None
+            reasons = []
+            if plan.get("세트"):
+                tag = plan_day_tag(plan["no"])
+                try:
+                    saved = load_auto_picks(tag) if tag else []
+                    slot_sets = resolve_day_sets(plan, self.sets,
+                                                 load_records(), saved=saved)
+                except Exception:
+                    slot_sets = [(None, "") for _ in plan["세트"]]
+                names = [(s["name"] if s else
+                          (spec if spec != AUTO else "자동 선택(세트 없음)"))
+                         for (s, _r), spec in zip(slot_sets, plan["세트"])]
+                reasons = [(s["name"] if s else "(없음)") + " — " + r
+                           for (s, r), spec in zip(slot_sets, plan["세트"])
+                           if spec == AUTO]
+            self.plan_title_lbl.configure(
+                text=plan_title(plan, today=date.today(), set_names=names))
             todo = plan.get("할일", "")
             if plan.get("목표"):
                 todo += f"  [목표 {plan['목표']}점]"
+            if reasons:
+                todo += "\n자동 선택: " + " / ".join(reasons)
             steps = plan.get("스텝")
             if steps:
                 tag = plan_day_tag(plan["no"])
@@ -2712,7 +3092,9 @@ if HAS_TK:
                 messagebox.showwarning(APP_TITLE, msg, parent=self)
 
         def _shift_plan(self, delta):
-            self.plan_no = max(0, min(16, self.plan_no + delta))
+            order = PLAN_ORDER
+            i = order.index(self.plan_no) if self.plan_no in order else 0
+            self.plan_no = order[max(0, min(len(order) - 1, i + delta))]
             self._render_plan_card()
 
         def _select_set_in_list(self, s):
@@ -2761,13 +3143,13 @@ if HAS_TK:
 
         # ---------------- 오답노트 모드 ----------------
 
-        def open_review_mode(self):
+        def open_review_mode(self, full_only=False):
             s = self._selected_set()
             if not s:
                 messagebox.showinfo(APP_TITLE, "먼저 세트를 선택하세요.",
                                     parent=self)
                 return
-            jp = find_latest_result_json(s)
+            jp = find_latest_result_json(s, full_only=full_only)
             if not jp:
                 messagebox.showinfo(
                     APP_TITLE, "이 세트의 채점 기록(채점결과 JSON)이 "
@@ -2927,15 +3309,20 @@ if HAS_TK:
                 "점수": score,
                 "소요시간": format_elapsed(elapsed),
                 "리포트": html_path if os.path.isfile(html_path) else None,
-                "mode": "부분연습" if pinfo else "시험",
+                "mode": (pinfo.get("mode") or "부분연습") if pinfo else "시험",
             }
             if pinfo:
-                record["영역"] = pinfo.get("label")
+                if pinfo.get("mode") == "오답재풀이":
+                    record["영역"] = "오답재풀이(" + ",".join(
+                        pinfo.get("sheets") or []) + ")"
+                else:
+                    record["영역"] = pinfo.get("label")
                 if result:
                     record["만점"] = result.get("max_total")
             day_tag = (exam.get("plan") or {}).get("day")
             if day_tag:
-                record["day"] = day_tag
+                record["day"] = day_tag        # 새 체계 d01~d14
+                record["루틴"] = ROUTINE_TAG   # 구 루틴 기록과 구분
             try:
                 append_record(record)
             except OSError as e:
@@ -2943,16 +3330,20 @@ if HAS_TK:
                     APP_TITLE, f"기록.json 저장에 실패했습니다: {e}",
                     parent=self)
             # 단계 가이드에서 시작한 스텝: 채점 완료 시 자동 체크
-            step_idx = (exam.get("plan") or {}).get("step")
-            if day_tag and step_idx is not None and score is not None:
+            plan_info = exam.get("plan") or {}
+            step_idx = plan_info.get("step")
+            done_steps = plan_info.get("done_steps") or (
+                [step_idx] if step_idx is not None else [])
+            if day_tag and done_steps and score is not None:
                 try:
                     g = getattr(self, "step_guide", None)
                     if g is not None and g.winfo_exists() \
                             and g.day_tag == day_tag:
-                        g.mark_step_done(int(step_idx))
+                        for idx in done_steps:      # 시험 + 채점 스텝 자동 체크
+                            g.mark_step_done(int(idx))
                     else:
                         done = load_step_progress(day_tag)
-                        done.add(int(step_idx))
+                        done.update(int(idx) for idx in done_steps)
                         save_step_progress(day_tag, done)
                     self._render_plan_card()
                 except Exception:
@@ -2995,7 +3386,7 @@ def run_smoke():
     review.toggle_check()
     assert review.retake_btn.cget("state") == "normal"  # 1/1 체크 완료
     review.destroy()
-    # 부분 연습 대화상자 스모크
+    # 부분 연습 대화상자 스모크 (부분 연습 모드는 일정 밖 기능으로 유지)
     dlg = PracticeDialog(app)
     app.update_idletasks()
     app.update()
@@ -3007,66 +3398,106 @@ def run_smoke():
     sheets, label = dlg.selection()
     assert sheets == ["기본작업-1", "기본작업-2", "기본작업-3"]
     dlg.destroy()
-    # 오늘의 학습 카드 + 미리보기 화살표
+    # 오늘의 학습 카드 + 미리보기 화살표 (일정 v4: 9/3 시작, 시험 2회 D-day)
     assert app.plan_title_lbl.cget("text"), "오늘의 학습 제목 비어 있음"
-    app.plan_no = 6
+    app.plan_no = 3
     app._render_plan_card()
-    assert "Day 6" in app.plan_title_lbl.cget("text")
-    assert "9/2" in app.plan_title_lbl.cget("text")
-    before = app.plan_title_lbl.cget("text")
+    t3 = app.plan_title_lbl.cget("text")
+    assert "Day 3" in t3 and "9/5(토)" in t3 and "1차 완주 — " in t3, t3
+    assert "시험1 D" in t3 and "시험2 D" in t3, t3
     app._shift_plan(1)
-    assert app.plan_title_lbl.cget("text") != before
-    assert "Day 7" in app.plan_title_lbl.cget("text")
-    # 단계 가이드 창 (진행 상태는 매 실행 초기화 -> 결정적)
-    save_step_progress("d04", set())
-    guide = StepGuideWindow(app, plan_for_day(4))
+    assert "Day 4" in app.plan_title_lbl.cget("text")
+    app.plan_no = 8
+    app._shift_plan(1)                       # d08 다음은 시험 1 (시간순)
+    assert app.plan_no == PLAN_EXAM1
+    assert "시험일" in app.plan_title_lbl.cget("text")
+    app._shift_plan(1)
+    assert app.plan_no == 9
+    # 단계 가이드 창 — 2세트 날(Day 3): ①~④ ×2 + (선택) 퀴즈 = 9스텝
+    save_step_progress("d03", set())
+    guide = StepGuideWindow(app, plan_for_day(3))
     app.update_idletasks()
     app.update()
-    assert guide.listbox.size() == 3, guide.listbox.size()
-    assert "0/3" in guide.progress_lbl.cget("text")
+    assert guide.listbox.size() == 9, guide.listbox.size()
+    assert "0/9" in guide.progress_lbl.cget("text")
     assert guide.current_index() == 0
     assert "▶" in guide.listbox.get(0)
+    assert "세트 1:" in guide.pick_lbl.cget("text"), guide.pick_lbl.cget("text")
     guide.listbox.selection_clear(0, "end")
     guide.listbox.selection_set(0)
     guide.toggle_check()          # 1단계 완료 체크
-    assert 0 in guide.done and "1/3" in guide.progress_lbl.cget("text")
+    assert 0 in guide.done and "1/9" in guide.progress_lbl.cget("text")
     assert guide.selected_index() == 1, "다음 미완료 스텝 자동 포커스"
     assert "[v]" in guide.listbox.get(0) and "▶" in guide.listbox.get(1)
     guide.mark_step_done(1)       # 채점 완료 자동 체크 경로
-    assert "2/3" in guide.progress_lbl.cget("text")
-    assert load_step_progress("d04") == {0, 1}, "진행 상태 저장"
+    assert "2/9" in guide.progress_lbl.cget("text")
+    assert load_step_progress("d03") == {0, 1}, "진행 상태 저장"
     guide.destroy()
-    guide2 = StepGuideWindow(app, plan_for_day(4))   # 재시작 후 이어하기
+    guide2 = StepGuideWindow(app, plan_for_day(3))   # 재시작 후 이어하기
     app.update_idletasks()
     app.update()
     assert guide2.done == {0, 1} and guide2.current_index() == 2
     guide2.destroy()
+    save_step_progress("d03", set())
     # [이 단계 시작] -> start_exam 배선 (start_exam은 스텁으로 대체)
     fake_s = {"name": "2024년 상시1회 2급", "norm": "smoke상시1", "dir": BASE_DIR,
               "problem": "p", "answer": "a", "key": None, "pdf": None}
+    fake_s2 = {"name": "코코모의고사 2회", "norm": "smoke코코2", "dir": BASE_DIR,
+               "problem": "p2", "answer": "a2", "key": None, "pdf": None}
     saved_sets, saved_start = app.sets, app.start_exam
     calls = []
-    app.sets = [fake_s]
+    app.sets = [fake_s, fake_s2]
     app.listbox.delete(0, "end")
-    app.listbox.insert("end", " " + fake_s["name"])
+    for s in app.sets:
+        app.listbox.insert("end", " " + s["name"])
     app.start_exam = lambda practice=None: calls.append(
         (practice, app._pending_plan))
-    guide3 = StepGuideWindow(app, plan_for_day(4))
+    save_step_progress("d01", set())
+    guide3 = StepGuideWindow(app, plan_for_day(1))   # d01: 2024 상시 1회
+    assert guide3.slot_sets[0][0] is fake_s, guide3.pick_text()
+    assert "일정 지정" in guide3.pick_lbl.cget("text")
     guide3.listbox.selection_clear(0, "end")
-    guide3.listbox.selection_set(1)          # 모의 스텝
+    guide3.listbox.selection_set(0)          # 모의 스텝
     guide3.start_step()
     assert len(calls) == 1, "모의 스텝 -> start_exam 호출"
     practice_arg, pend = calls[0]
-    assert practice_arg is None and pend == {"day": "d04", "목표": 60,
-                                             "step": 1}, (practice_arg, pend)
+    assert practice_arg is None and pend == {
+        "day": "d01", "목표": None, "step": 0, "done_steps": [0, 1]}, \
+        (practice_arg, pend)
     assert app.minutes_var.get() == 40
     guide3.destroy()
+    save_step_progress("d01", set())
+    # 자동 선택 날(Day 8): 기록 없음 -> 신규 세트 우선 + 이유 표시 + 세트 바꾸기
+    save_step_progress("d08", set())
+    save_auto_picks("d08", [])
+    guide4 = StepGuideWindow(app, plan_for_day(8))
+    app.update_idletasks()
+    app.update()
+    ptxt = guide4.pick_lbl.cget("text")
+    assert "자동 선택" in ptxt and "신규 세트라서" in ptxt, ptxt
+    assert guide4.change_btn.winfo_manager(), "[다른 세트로 바꾸기] 표시"
+    assert guide4.steps[0]["이름"].startswith(guide4.slot_sets[0][0]["name"])
+    picked_before = guide4.slot_sets[0][0]["name"]
+    other = fake_s2 if picked_before == fake_s["name"] else fake_s
+    chooser = SetChooserDialog(guide4, app.sets, 1, guide4.apply_set_change)
+    app.update_idletasks()
+    app.update()
+    chooser.listbox.selection_set(app.sets.index(other))
+    chooser.apply()
+    assert guide4.slot_sets[0][0] is other
+    assert "직접 선택" in guide4.pick_lbl.cget("text")
+    assert guide4.steps[0]["이름"].startswith(other["name"]), guide4.steps[0]
+    assert load_auto_picks("d08")[0]["세트"] == other["name"], "선택 저장"
+    guide4.destroy()
+    save_auto_picks("d08", [])
+    save_step_progress("d08", set())
     app.sets, app.start_exam = saved_sets, saved_start
     app._pending_plan = None
-    save_step_progress("d04", set())  # 스모크 잔여 상태 제거
-    # 스텝 실행 매핑 (세트 없는 환경 -> 모의는 missing)
-    kind, _p = resolve_step_action(plan_for_day(4)["스텝"][1], saved_sets)
+    # 스텝 실행 매핑 (세트 없는 환경 -> 모의는 missing, 채점은 info)
+    kind, _p = resolve_step_action(plan_for_day(1)["스텝"][0], saved_sets)
     assert kind in ("exam", "missing")
+    kind, _p = resolve_step_action(plan_for_day(1)["스텝"][1], saved_sets)
+    assert kind == "info"
     kind, _p = resolve_step_action(plan_for_day(0)["스텝"][0], saved_sets)
     assert kind == "info"
     # 클립보드 브리지 라운드트립
@@ -3078,7 +3509,8 @@ def run_smoke():
     timer.finished = True
     timer.destroy()
     app.destroy()
-    print("SMOKE OK: 창 생성/위젯 렌더/타이머/오답노트 패널/파괴 정상")
+    print("SMOKE OK: 창 생성/위젯 렌더/타이머/오답노트 패널/단계 가이드(세트 "
+          "자동 선택·바꾸기)/파괴 정상")
 
 
 def _notify_no_tk():
