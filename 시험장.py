@@ -6,13 +6,14 @@
 시작 화면에서 모의고사 세트를 고르고 [시험 시작]을 누르면
 문제 파일 사본이 Excel로 열리고 타이머가 시작됩니다.
 제출하면 grade.py로 자동 채점해 점수와 리포트를 보여 줍니다.
-오늘의 학습(일정 v4, 9/3 시작·시험 2회): 매일 모의고사 1세트 40분 완주
-→ 채점 → 오답노트 → 오답 재풀이. 세트는 기록 기반으로 자동 선택됩니다.
+오늘의 학습(적응형 일정 v5, 9/3 시작·시험 2회): 매일 모의고사 1세트 40분 완주
+→ 채점 → 오답노트 → 오답 재풀이. 기록.json 기준으로 매번 재계산해 밀린 날의
+세트를 자동 재배치하고, 시험 전날까지 전 세트 완주를 보장하도록 용량을 올립니다.
 
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "2.1.1"
+__version__ = "2.2.0"
 
 import argparse
 import json
@@ -825,8 +826,9 @@ def build_day_steps(plan, slot_names=None):
         return [dict(s) for s in PREP_STEPS] if no == 0 else []
     slots = list(plan.get("세트") or [])
     names = list(slot_names or plan_slot_names(plan))
-    goal = plan.get("목표")
-    g_txt = f" (목표 {goal}점)" if goal else ""
+    goals = list(plan.get("목표들") or [])
+    if len(goals) < len(slots):
+        goals += [plan.get("목표")] * (len(slots) - len(goals))
     steps = []
     if "복기" in (plan.get("특별") or []):
         steps.append({"이름": "시험 1 복기", "형": "안내", "분": 15,
@@ -835,6 +837,8 @@ def build_day_steps(plan, slot_names=None):
                              "적습니다. 시험 2까지 이 노트만 지키면 됩니다."})
     for k, spec in enumerate(slots):
         name = names[k] if k < len(names) else "자동 선택"
+        goal = goals[k]
+        g_txt = f" (목표 {goal}점)" if goal else ""
         n_txt = f" ({k + 1}/{len(slots)})" if len(slots) > 1 else ""
         auto_txt = (" 자동 선택된 세트는 창 위쪽에 이유와 함께 표시되며 "
                     "[다른 세트로 바꾸기]로 바꿀 수 있습니다."
@@ -912,9 +916,15 @@ def plan_title(plan, today=None, set_names=None):
     no = plan["no"]
     if 1 <= no <= 14:
         head = f"Day {no}"
-        names = list(set_names or plan_slot_names(plan))
-        body = f"{plan['제목']} — {' + '.join(names)}" if names \
-            else plan["제목"]
+        names = list(set_names or plan.get("세트표시") or plan_slot_names(plan))
+        if plan.get("적응형"):
+            body = f"{plan['제목']}: {' + '.join(names)}" if names \
+                else plan["제목"]
+            if plan.get("남은세트") is not None and plan.get("종류") == "모의":
+                body += f" · 남은 세트 {plan['남은세트']}"
+        else:
+            body = f"{plan['제목']} — {' + '.join(names)}" if names \
+                else plan["제목"]
     elif no in (PLAN_EXAM1, PLAN_EXAM2):
         head, body = "시험일", plan["제목"]
     elif no == PLAN_AFTER:
@@ -1228,15 +1238,26 @@ def resolve_day_sets(plan, sets, records=None, today=None, saved=None,
     reasons = [""] * len(slots)
     taken = set()
     mapping = mapping or {}
+    objs = list(plan.get("세트객체") or [])
+    whys = list(plan.get("슬롯사유") or [])
     for k, spec in enumerate(slots):          # ① 고정 세트
         if spec != AUTO:
-            s = set_from_mapping(mapping[spec]) if spec in mapping else None
-            if s:
-                how = "직접 선택 저장됨"
-            else:
+            s, how = None, ""
+            if k < len(objs) and objs[k]:            # 적응형 배정 세트
+                s = objs[k]
+                how = "적응형 배정 · " + (whys[k] if k < len(whys) and whys[k]
+                                       else "배정")
+            if not s and spec in mapping:
+                s = set_from_mapping(mapping[spec])
+                how = "직접 선택 저장됨" if s else ""
+            if not s:
                 s, how = match_slot(sets, spec)
-            out[k], reasons[k] = s, (f"일정 지정 세트 · {how}" if s else
-                                    f"세트를 찾지 못함 · {how}")
+            if s and how.startswith("적응형 배정"):
+                reasons[k] = how
+            else:
+                reasons[k] = (f"일정 지정 세트 · {how}" if s else
+                              f"세트를 찾지 못함 · {how}")
+            out[k] = s
             if s:
                 taken.add(s["norm"])
     saved = list(saved or [])
@@ -1306,6 +1327,357 @@ def retry_payload_for_set(s, minutes=15):
     return "retry", {"set": s, "sheets": sheets, "label": "오답재풀이",
                      "minutes": int(minutes), "mode": "오답재풀이",
                      "json": jp, "점수": data.get("total")}
+
+
+# ---------------------------------------------------------------------------
+# 적응형 일정 엔진 v5 — 기록(기록.json) 기준으로 매번 재계산 (웹 루틴과 동일 규격)
+#   전날·그전날 못 한 세트는 자동으로 풀에 남아 오늘 이후로 재배치되고,
+#   시험 전날(구간 마감)까지 전 세트 완주를 보장하도록 용량을 올린다.
+# ---------------------------------------------------------------------------
+
+PRIORITY_SPECS = ["2024 상시 1회", "코코 1회", "2024 A형", "2024 상시 2회",
+                  "코코 2회", "2024 B형", "24 2급 상시", "컴활 2급 상시",
+                  "2026 1회"]          # 첫응시 고정 우선순위 (그 외 신규는 이름순)
+REDO_SPEC = "2026 1회"                # 1구간 필수 재도전 (루틴 중 미응시면)
+REDO_GOAL = 65
+RETRY_MIN_SEG1 = 2                    # 1구간 재응시 최소(재도전 포함)
+WEEKEND_CAP, WEEKDAY_CAP = 2, 1
+
+
+def segment_for(today):
+    """오늘 -> 구간 정보. kind: study(1·2구간) / exam / after."""
+    if today in EXAM_DATES:
+        return {"kind": "exam", "exam_no": EXAM_DATES.index(today) + 1}
+    if today > EXAM_DATES[-1]:
+        return {"kind": "after"}
+    if today < EXAM_DATES[0]:
+        return {"kind": "study", "seg": 1, "seg_start": ROUTINE_START,
+                "start": max(today, ROUTINE_START),
+                "end": EXAM_DATES[0] - timedelta(days=1)}
+    return {"kind": "study", "seg": 2,
+            "seg_start": EXAM_DATES[0] + timedelta(days=1), "start": today,
+            "end": EXAM_DATES[1] - timedelta(days=1)}
+
+
+def base_capacity(d, seg_end):
+    """기본 용량: 주말 2 / 평일 1 / 마감일 1(+실수노트) / 시험 다음날 1(+복기)."""
+    if d == EXAM_DATES[0] + timedelta(days=1) or d == seg_end:
+        return 1
+    return WEEKEND_CAP if d.weekday() >= 5 else WEEKDAY_CAP
+
+
+def exam_records_by_set(sets, records):
+    """{norm: [시험 모드 기록(날짜 오름차순)]} — 부분연습·오답재풀이 제외."""
+    out = {}
+    for s in sets:
+        recs = [r for r in set_exam_records(s["name"], records)
+                if _record_date(r)]
+        recs.sort(key=lambda r: (_record_date(r), str(r.get("일시"))))
+        out[s["norm"]] = recs
+    return out
+
+
+def prioritized_sets(sets):
+    """세트를 첫응시 우선순위로 정렬: PRIORITY_SPECS 순 → 그 외 이름순.
+    반환 [(세트, 우선순위 라벨)]."""
+    ranked = {}
+    for i, spec in enumerate(PRIORITY_SPECS):
+        s, _how = match_slot(sets, spec)
+        if s and s["norm"] not in ranked:
+            ranked[s["norm"]] = (i, spec)
+    rest = sorted((s for s in sets if s["norm"] not in ranked),
+                  key=lambda s: s["name"])
+    out = [(s, ranked[s["norm"]][1]) for s in
+           sorted((s for s in sets if s["norm"] in ranked),
+                  key=lambda s: ranked[s["norm"]][0])]
+    out.extend((s, "신규") for s in rest)
+    return out
+
+
+def _best(recs):
+    scores = [r["점수"] for r in recs
+              if isinstance(r.get("점수"), (int, float))]
+    return max(scores) if scores else None
+
+
+def _slot(kind, s, goal=None, why="", spec=None):
+    return {"kind": kind, "set": s, "name": s["name"] if s else "자동 선택",
+            "goal": goal, "auto": s is None, "why": why,
+            "spec": spec or (s["name"] if s else AUTO)}
+
+
+def build_adaptive_plan(today, records, sets):
+    """적응형 일정 계산 (결정적: 같은 입력이면 같은 출력).
+
+    반환 dict: kind, seg, start, end, days{날짜: [슬롯...]}, boost_days,
+    demoted, missed_days, reason, remaining, warning, retry_target.
+    슬롯: {kind: first|redo|retry, set, name, goal, auto, why, spec}
+    """
+    seg = segment_for(today)
+    plan = {"today": today, "kind": seg["kind"], "days": {}, "boost_days": [],
+            "demoted": [], "missed_days": [], "reason": "", "remaining": 0,
+            "warning": None, "retry_target": 0, "seg": seg.get("seg")}
+    if seg["kind"] != "study":
+        plan.update(seg)
+        return plan
+    start, end, seg_start = seg["start"], seg["end"], seg["seg_start"]
+    plan.update({"start": start, "end": end, "seg_start": seg_start})
+    by_set = exam_records_by_set(sets, records)
+    recs_all = [r for r in records
+                if r.get("mode") not in ("부분연습", "오답재풀이")
+                and _record_date(r)]
+    done_today = len([r for r in recs_all if _record_date(r) == today])
+    by_date = {}
+    for r in recs_all:
+        by_date.setdefault(_record_date(r), []).append(r)
+    plan["_recs_by_date"] = by_date
+
+    # 학습일·기본 용량
+    days = []
+    d = start
+    while d <= end:
+        if d not in EXAM_DATES:
+            days.append(d)
+        d += timedelta(days=1)
+    cap = {dd: base_capacity(dd, end) for dd in days}
+    if today in cap:
+        cap[today] = max(0, cap[today] - done_today)
+    boostable = [dd for dd in days
+                 if dd.weekday() < 5 and dd != EXAM_DATES[0] + timedelta(days=1)
+                 and not (dd == today and done_today >= 2)]
+
+    # 풀
+    ordered = prioritized_sets(sets)
+    first_pool = [(s, lab) for s, lab in ordered if not by_set.get(s["norm"])]
+    redo_set = None
+    if seg["seg"] == 1:
+        rs, _how = match_slot(sets, REDO_SPEC)
+        if rs and by_set.get(rs["norm"]) and not any(
+                _record_date(r) >= ROUTINE_START for r in by_set[rs["norm"]]):
+            redo_set = rs
+    mandatory = []
+    for s, lab in first_pool:
+        goal = REDO_GOAL if lab == REDO_SPEC else None
+        sl = _slot("first", s, goal, f"첫 응시 · 우선순위 {lab}", spec=s["name"])
+        sl["counts_as_retry"] = (lab == REDO_SPEC)   # 2026 1회는 재도전 몫
+        mandatory.append(sl)
+        if redo_set is not None and lab == REDO_SPEC:
+            redo_set = None
+    if redo_set is not None:
+        pos = len(mandatory)
+        for i, sl in enumerate(mandatory):
+            if sl["why"].endswith("신규"):
+                pos = i
+                break
+        redo_slot = _slot("redo", redo_set, REDO_GOAL,
+                          "2026 1회 재도전 (루틴 중 미응시)",
+                          spec=redo_set["name"])
+        redo_slot["counts_as_retry"] = True
+        mandatory.insert(pos, redo_slot)
+    attempted = [(s, lab) for s, lab in ordered if by_set.get(s["norm"])]
+
+    def recent(s):
+        last = max(_record_date(r) for r in by_set[s["norm"]])
+        return (today - last).days < 2
+
+    def retry_key(s):
+        b = _best(by_set[s["norm"]])
+        return (b if b is not None else -1, s["name"])
+
+    if seg["seg"] == 2:
+        redone = {s["norm"] for s, _l in attempted
+                  if any(_record_date(r) >= seg_start for r in by_set[s["norm"]])}
+        groups = ([s for s, _l in attempted if s["norm"] not in redone],
+                  [s for s, _l in attempted if s["norm"] in redone])
+    else:
+        groups = ([s for s, _l in attempted],)
+    retry_pool = []
+    for g in groups:
+        retry_pool.extend(sorted((s for s in g if not recent(s)), key=retry_key))
+        retry_pool.extend(sorted((s for s in g if recent(s)), key=retry_key))
+    retries_done = 0
+    redo_norm = None
+    if seg["seg"] == 1:
+        rs0, _h = match_slot(sets, REDO_SPEC)
+        redo_norm = rs0["norm"] if rs0 else None
+    for s, _l in attempted:
+        recs = by_set[s["norm"]]
+        if s["norm"] == redo_norm:              # 2026 1회: 루틴 중 응시 = 재도전 완료
+            if any(_record_date(r) >= seg_start for r in recs):
+                retries_done += 1
+            continue
+        for i, r in enumerate(recs):
+            if _record_date(r) >= seg_start and i > 0:
+                retries_done += 1
+
+    # 필요량 vs 용량 — 단계적 확장/축소
+    retry_target = RETRY_MIN_SEG1 if seg["seg"] == 1 else 0
+    demoted = []
+    boost_days = []
+    while True:
+        redo_in = any(sl.get("counts_as_retry") for sl in mandatory)
+        if seg["seg"] == 1:
+            extra = max(0, retry_target - retries_done - (1 if redo_in else 0))
+        else:
+            extra = 0
+        required = len(mandatory) + extra
+        total_cap = sum(cap.values())
+        if required <= total_cap:
+            break
+        nxt = next((dd for dd in boostable if dd not in boost_days), None)
+        if nxt is not None:                       # ① 평일 용량 2로
+            boost_days.append(nxt)
+            cap[nxt] += 1
+            continue
+        if retry_target > 1:                      # ② 재응시 축소 (최소 1)
+            retry_target -= 1
+            continue
+        if mandatory:                             # ③ 첫응시 뒤에서부터 강등
+            sl = mandatory.pop()
+            demoted.append(sl)
+            continue
+        break
+    if seg["seg"] == 2:
+        extra = max(0, sum(cap.values()) - len(mandatory))   # 목표: 전 세트 재응시
+    plan["retry_target"] = retry_target
+
+    # 재응시 슬롯 (목표 점수 순번 상승)
+    retry_slots = []
+    n_r = extra
+    cursor = 0
+    for k in range(n_r):
+        if seg["seg"] == 1:
+            level = min(3, (k * 4) // max(1, n_r))
+            goal = 70 + 5 * level
+        else:
+            level = min(2, (k * 3) // max(1, n_r))
+            goal = 75 + 5 * level
+        s = None
+        if retry_pool:
+            s = retry_pool[cursor % len(retry_pool)]
+            cursor += 1
+        why = ("재응시 · 최고점 " + (f"{_best(by_set[s['norm']]):g}점"
+                                  if _best(by_set[s["norm"]]) is not None
+                                  else "점수 없음")) if s else "재응시 · 자동 선택"
+        retry_slots.append(_slot("retry", s, goal, why))
+
+    # 배정: 첫응시(우선순위) → 재응시, 가장 이른 슬롯부터, 하루 안 중복 없음
+    queue = list(mandatory) + retry_slots
+    per_day = {dd: [] for dd in days}
+    for dd in days:
+        while len(per_day[dd]) < cap[dd] and queue:
+            pick = None
+            for i, sl in enumerate(queue):      # 같은 날 같은 세트 금지
+                if sl["set"] is None or all(
+                        x["set"] is None
+                        or x["set"]["norm"] != sl["set"]["norm"]
+                        for x in per_day[dd]):
+                    pick = queue.pop(i)
+                    break
+            if pick is None:
+                break
+            per_day[dd].append(dict(pick, date=dd))
+    for sl in queue:                            # 배정 못 한 것은 강등 처리
+        demoted.append(sl)
+    for k, sl in enumerate(demoted):
+        sl["kind"] = "optional"
+    plan["days"] = {dd: per_day[dd] for dd in days}
+    plan["boost_days"] = boost_days
+    plan["demoted"] = [sl["name"] for sl in demoted]
+    plan["remaining"] = sum(len(v) for v in per_day.values())
+
+    # 재배치 사유
+    missed = []
+    dd = seg_start
+    while dd < min(today, end + timedelta(days=1)):
+        if dd not in EXAM_DATES and not any(
+                _record_date(r) == dd for r in recs_all):
+            missed.append(dd)
+        dd += timedelta(days=1)
+    plan["missed_days"] = missed
+    n_days = len([dd for dd in days if cap[dd] > 0])
+    reason = ""
+    if missed or boost_days or demoted:
+        if missed:
+            reason = "·".join(f"{m.month}/{m.day}" for m in missed) + " 미완주 → "
+        reason += f"남은 세트 {plan['remaining']}개를 {n_days}일에 재배치"
+        if boost_days:
+            reason += "(평일도 2세트)"
+    plan["reason"] = reason
+    if demoted:
+        plan["warning"] = (f"용량 부족: {len(demoted)}세트는 '선택'으로 강등 — "
+                           + ", ".join(plan["demoted"])
+                           + " (남는 시간에 추가 응시하세요)")
+    return plan
+
+
+def adaptive_day_plan(adaptive, no):
+    """적응형 결과 -> 일정 번호 no의 카드/단계 창용 plan dict.
+
+    adaptive가 없거나 해당 날짜가 계산 범위 밖이면 v4 고정 일정으로 폴백.
+    """
+    base = plan_for_day(no)
+    if not adaptive or adaptive.get("kind") != "study":
+        return base
+    d = base.get("날짜")
+    if d is None or not (1 <= base["no"] <= 14):
+        return base
+    today = adaptive["today"]
+    plan = dict(base)
+    plan["적응형"] = True
+    plan["특별"] = []
+    if d < adaptive["start"]:                          # 지난 날: 기록 요약
+        recs = adaptive.get("_recs_by_date", {}).get(d, [])
+        plan.update({"종류": "지난", "세트": [], "세트객체": [], "스텝": [],
+                     "목표들": []})
+        if recs:
+            plan["제목"] = "완료"
+            plan["세트표시"] = [f"{r.get('세트명', '?')}"
+                            + (f"({r['점수']}점)" if r.get("점수") is not None
+                               else "") for r in recs]
+            plan["할일"] = "완주한 날입니다."
+        else:
+            plan["제목"] = "미완주"
+            plan["세트표시"] = []
+            plan["할일"] = "이 날 완주 기록이 없어 남은 세트를 오늘 이후로 재배치했습니다."
+        return plan
+    if d not in adaptive["days"]:                      # 다음 구간 등 범위 밖
+        plan.update({"종류": "안내", "세트": [], "세트객체": [], "스텝": [],
+                     "제목": "다음 구간", "세트표시": [],
+                     "할일": "시험 후 기록을 반영해 다시 계산됩니다."})
+        return plan
+    slots = adaptive["days"][d]
+    plan["세트"] = [sl["spec"] if sl["set"] else AUTO for sl in slots]
+    plan["세트객체"] = [sl["set"] for sl in slots]
+    plan["슬롯사유"] = [sl["why"] for sl in slots]
+    plan["목표들"] = [sl["goal"] for sl in slots]
+    plan["목표"] = next((g for g in plan["목표들"] if g), None)
+    plan["종류"] = "모의"
+    plan["제목"] = "오늘" if d == today else "예정"
+    plan["남은세트"] = adaptive["remaining"]
+    if d == adaptive["end"]:
+        plan["특별"].append("실수노트")
+    if d == EXAM_DATES[0] + timedelta(days=1):
+        plan["특별"].append("복기")
+    if d == today:
+        plan["사유"] = adaptive.get("reason") or ""
+        plan["경고"] = adaptive.get("warning")
+    names = [sl["name"] for sl in slots]
+    if not slots:
+        plan["제목"] = "오늘 완료" if d == today else "예정 없음"
+        plan["할일"] = ("오늘 몫을 완주했습니다 — 오답노트 모드로 복습하거나 "
+                      "쉬세요." if d == today else
+                      "이 날은 배정된 세트가 없습니다 (여유일).")
+        plan["스텝"] = []
+        return plan
+    goal_txt = " ".join(f"[{n} 목표 {g}점]" for n, g in zip(names, plan["목표들"])
+                        if g)
+    plan["할일"] = ("모의고사 " + " + ".join(names)
+                  + " 40분 완주 → 채점 → 오답노트 → 오답 재풀이 15분"
+                  + (f" (오늘은 {len(names)}세트)" if len(names) > 1 else "")
+                  + (" " + goal_txt if goal_txt else ""))
+    plan["스텝"] = build_day_steps(plan, names)
+    return plan
 
 
 STEP_DONE_MESSAGE = ("오늘 완료! 웹 루틴에 성적 붙여넣기"
@@ -3003,6 +3375,7 @@ if HAS_TK:
             self._update_prompted = False
             self._warned_dirty = set()   # 원본 오염 경고를 이미 띄운 세트
             self.plan_no = routine_day_no()   # 오늘의 학습 일정 번호
+            self.adaptive = None              # 적응형 일정 (recompute_plan)
             self._pending_plan = None
             self.step_guide = None            # 단계 가이드 창 (열려 있으면)
             self._build_ui()
@@ -3042,6 +3415,11 @@ if HAS_TK:
                 fg="white", activebackground=BRAND_DARK, relief="flat",
                 padx=16, pady=4, command=self.start_today_plan)
             self.plan_start_btn.pack(side="right")
+            self.recalc_btn = tk.Button(
+                row1, text="일정 다시 계산", font=UI_FONT, relief="groove",
+                bg=BRAND_SOFT, fg=BRAND_DARK, padx=8, pady=2,
+                command=self.recompute_plan)
+            self.recalc_btn.pack(side="right", padx=(0, 8))
             self.plan_todo_lbl = tk.Label(plan_card, text="", bg=BRAND_SOFT,
                                           fg=INK, font=("Malgun Gothic", 9),
                                           justify="left", anchor="w",
@@ -3166,10 +3544,12 @@ if HAS_TK:
                 self.listbox.selection_set(0)
                 self._show_info()
             if getattr(self, "plan_title_lbl", None) is not None:
-                self._render_plan_card()   # 세트 편입/자동 선택 반영
+                self.recompute_plan()      # 세트 편입/자동 선택/재배치 반영
 
         def refresh_records(self):
             records = load_records()
+            if getattr(self, "plan_title_lbl", None) is not None:
+                self.recompute_plan()      # 새 기록 반영 (밀린 세트 재배치)
             if not records:
                 self.records_lbl.configure(text="아직 응시 기록이 없습니다.")
                 return
@@ -3462,8 +3842,28 @@ if HAS_TK:
 
         # ---------------- 오늘의 학습 ----------------
 
+        def plan_for(self, no):
+            """일정 번호 -> 적응형 plan (계산 실패/범위 밖이면 v4 고정 일정)."""
+            try:
+                return adaptive_day_plan(self.adaptive, no)
+            except Exception as e:
+                log_error("적응형 일정 조회", e)
+                return plan_for_day(no)
+
+        def recompute_plan(self):
+            """[일정 다시 계산] — 기록·세트를 다시 읽어 적응형 일정 재계산."""
+            try:
+                self.adaptive = build_adaptive_plan(
+                    date.today(), load_records(), self.sets)
+            except Exception as e:
+                log_error("적응형 일정 계산", e)
+                self.adaptive = None
+            if getattr(self, "plan_title_lbl", None) is not None:
+                self._render_plan_card()
+            return self.adaptive
+
         def _render_plan_card(self):
-            plan = plan_for_day(self.plan_no)
+            plan = self.plan_for(self.plan_no)
             names = None
             reasons = []
             if plan.get("세트"):
@@ -3483,10 +3883,14 @@ if HAS_TK:
             self.plan_title_lbl.configure(
                 text=plan_title(plan, today=date.today(), set_names=names))
             todo = plan.get("할일", "")
-            if plan.get("목표"):
+            if plan.get("목표") and not plan.get("적응형"):
                 todo += f"  [목표 {plan['목표']}점]"
             if reasons:
                 todo += "\n자동 선택: " + " / ".join(reasons)
+            if plan.get("사유"):
+                todo += "\n재배치: " + plan["사유"]
+            if plan.get("경고"):
+                todo += "\n경고: " + plan["경고"]
             steps = plan.get("스텝")
             if steps:
                 tag = plan_day_tag(plan["no"])
@@ -3563,7 +3967,7 @@ if HAS_TK:
 
         def start_today_plan(self):
             """오늘(또는 미리보기 중인) 일정의 단계 가이드 창 열기."""
-            plan = plan_for_day(self.plan_no)
+            plan = self.plan_for(self.plan_no)
             if not plan.get("스텝"):
                 # 스텝이 없는 날(시험일/루틴 종료)은 안내만
                 messagebox.showinfo(f"{APP_TITLE} - {plan['제목']}",
@@ -3857,7 +4261,20 @@ def run_smoke():
     app.plan_no = 3
     app._render_plan_card()
     t3 = app.plan_title_lbl.cget("text")
-    assert "Day 3" in t3 and "9/5(토)" in t3 and "1차 완주 — " in t3, t3
+    assert "Day 3" in t3 and "9/5(토)" in t3, t3
+    assert any(k in t3 for k in ("오늘", "예정", "완료", "미완주", "1차 완주")), t3
+    assert app.recalc_btn.cget("text") == "일정 다시 계산"
+    ad = app.recompute_plan()
+    assert ad is None or ad.get("kind") in ("study", "exam", "after"), ad
+    if ad and ad.get("kind") == "study":
+        today_plan = app.plan_for(routine_day_no())
+        assert today_plan.get("적응형") is True
+        if today_plan.get("스텝"):
+            gA = StepGuideWindow(app, today_plan)   # 적응형 plan으로 단계 창
+            app.update_idletasks()
+            app.update()
+            assert gA.listbox.size() == len(today_plan["스텝"])
+            gA.destroy()
     assert "시험1 D" in t3 and "시험2 D" in t3, t3
     app._shift_plan(1)
     assert "Day 4" in app.plan_title_lbl.cget("text")
