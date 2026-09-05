@@ -12,7 +12,7 @@
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "2.1.0"
+__version__ = "2.1.1"
 
 import argparse
 import json
@@ -57,6 +57,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 RECORDS_DIR = os.path.join(BASE_DIR, "채점결과")
 RECORDS_PATH = os.path.join(RECORDS_DIR, "기록.json")
 _OLD_RECORDS_PATH = os.path.join(BASE_DIR, "기록.json")
+ERROR_LOG_PATH = os.path.join(RECORDS_DIR, "시험장_오류.log")
 
 
 def _ensure_records_home():
@@ -68,6 +69,33 @@ def _ensure_records_home():
             shutil.move(_OLD_RECORDS_PATH, RECORDS_PATH)
     except OSError:
         pass
+
+def log_error(context, exc=None, path=None):
+    """오류를 채점결과/시험장_오류.log에 append (pythonw에서도 흔적 보존).
+
+    exc: 예외 객체 또는 (type, value, tb). 반환: 기록한 텍스트.
+    """
+    import traceback
+    if isinstance(exc, tuple) and len(exc) == 3:
+        detail = "".join(traceback.format_exception(*exc))
+    elif isinstance(exc, BaseException):
+        detail = "".join(traceback.format_exception(
+            type(exc), exc, exc.__traceback__))
+    else:
+        detail = traceback.format_exc()
+        if detail.strip() == "NoneType: None":
+            detail = ""
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    text = f"[{stamp}] {__version__} {context}\n{detail}".rstrip() + "\n"
+    p = path or ERROR_LOG_PATH
+    try:
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "a", encoding="utf-8") as f:
+            f.write(text + "-" * 60 + "\n")
+    except Exception:
+        pass
+    return text
+
 
 UI_FONT = ("Malgun Gothic", 10)
 UI_FONT_BOLD = ("Malgun Gothic", 10, "bold")
@@ -146,8 +174,10 @@ def set_tokens(text):
         toks.add(f"{m.group(1)}형")
     for m in re.finditer(r"([1-9])\s*급", s):
         toks.add(f"{m.group(1)}급")
+    for m in re.finditer(r"(?<!\d)(2[0-9])(?!\d)", s):   # 2자리 연도 '24'
+        toks.add(m.group(1))
     for word in ("상시", "코코", "모의", "복원", "기출", "실기", "필기",
-                 "드릴", "계산"):
+                 "드릴", "계산", "컴활"):
         if word in s:
             toks.add(word)
     return toks
@@ -903,28 +933,196 @@ def plan_title(plan, today=None, set_names=None):
     return " · ".join(parts)
 
 
-def find_set_for_tokens(sets, text):
-    """일정의 세트 지정 문구를 스캔된 세트에 퍼지 매칭 (유일 최고점만).
+# 일정 슬롯별 식별 토큰: 전 토큰 일치가 없을 때 이 토큰만으로 유일 매칭 허용
+# (예: '컴활2급 A형 문제.xlsx'처럼 파일명에 '2024'가 없어도 A형 인식)
+SLOT_IDENTITY = {
+    "2024 상시 1회": ["상시", "1회"],
+    "2024 상시 2회": ["상시", "2회"],
+    "2024 A형": ["a형"],
+    "2024 B형": ["b형"],
+    "코코 1회": ["코코", "1회"],
+    "코코 2회": ["코코", "2회"],
+    "24 2급 상시": ["24", "2급", "상시"],
+    "컴활 2급 상시": ["컴활", "상시"],
+    "2026 1회": ["2026", "1회"],
+}
 
-    문구의 토큰(연도·회차·형·키워드)은 전부 세트에 있어야 합니다 —
-    '2024 B형'이 B형 파일이 없을 때 다른 2024 세트로 잘못 붙는 것 방지.
+
+def slot_identity_tokens(text):
+    """슬롯 문구의 식별 토큰 (표에 없으면 연도(20xx)를 뺀 나머지 토큰)."""
+    if text in SLOT_IDENTITY:
+        return set(SLOT_IDENTITY[text])
+    toks = set_tokens(text)
+    rest = {t for t in toks if not re.fullmatch(r"20\d{2}", t)}
+    return rest or toks
+
+
+def _set_tokens_of(s):
+    return set_tokens(s["name"]) | set_tokens(os.path.basename(s["dir"]))
+
+
+def match_slot(sets, text):
+    """슬롯 문구 -> (세트 or None, 판정 설명). GUI 없이 테스트 가능.
+
+    ① 문구의 전 토큰이 세트에 있고 유일 → '전체 토큰 일치'
+    ② 없으면 식별 토큰(SLOT_IDENTITY)만으로 유일 → '식별 토큰 일치'
+    ③ 그래도 0개/복수면 미발견 (설명에 후보 나열).
     """
     toks = set_tokens(text)
     scored = []
     for s in sets:
-        st = set_tokens(s["name"]) | set_tokens(os.path.basename(s["dir"]))
-        if _token_conflict(toks, st):
-            continue
-        if toks - st:          # 문구 토큰이 하나라도 빠지면 다른 세트
+        st = _set_tokens_of(s)
+        if _token_conflict(toks, st) or (toks - st):
             continue
         shared = len(toks & st)
         if shared >= 1:
             scored.append((shared, s))
-    if not scored:
+    if scored:
+        best = max(sc for sc, _s in scored)
+        matched = [s for sc, s in scored if sc == best]
+        if len(matched) == 1:
+            return matched[0], "전체 토큰 일치 (" + ", ".join(sorted(toks)) + ")"
+        return None, "복수 후보 (전체 토큰): " + ", ".join(
+            s["name"] for s in matched)
+    idt = slot_identity_tokens(text)
+    cands = [s for s in sets
+             if idt <= _set_tokens_of(s)
+             and not _token_conflict(idt, _set_tokens_of(s))]
+    if len(cands) == 1:
+        return cands[0], "식별 토큰 일치 (" + ", ".join(sorted(idt)) + ")"
+    if not cands:
+        return None, ("후보 없음 — 파일명에 " + "·".join(sorted(idt))
+                      + " 토큰을 가진 문제/정답 짝이 없음")
+    return None, "복수 후보 (식별 토큰 " + "·".join(sorted(idt)) + "): " + \
+        ", ".join(s["name"] for s in cands)
+
+
+def find_set_for_tokens(sets, text):
+    """일정의 세트 지정 문구를 스캔된 세트에 매칭 (match_slot의 세트만)."""
+    return match_slot(sets, text)[0]
+
+
+def load_slot_mapping(path=None):
+    """세트설정.json '_슬롯매핑': {슬롯 문구: {problem, answer, pdf}}."""
+    cfg = load_set_config(path or SET_CONFIG_PATH)
+    raw = cfg.get("_슬롯매핑") or {}
+    return {k: v for k, v in raw.items() if isinstance(v, dict)}
+
+
+def save_slot_mapping(spec, s, path=None):
+    """슬롯 문구 -> 직접 선택한 세트 파일 매핑 저장 (이후 자동 해석)."""
+    p = path or SET_CONFIG_PATH
+    cfg = load_set_config(p)
+    cfg.setdefault("_슬롯매핑", {})[str(spec)] = {
+        "name": s.get("name"),
+        "problem": os.path.abspath(s["problem"]),
+        "answer": os.path.abspath(s["answer"]),
+        "pdf": os.path.abspath(s["pdf"]) if s.get("pdf") else None,
+    }
+    return save_set_config(cfg, p)
+
+
+def set_from_mapping(ent):
+    """매핑 항목 -> 세트 dict (파일이 없으면 None)."""
+    try:
+        prob, ans = ent.get("problem"), ent.get("answer")
+        if not (prob and ans and os.path.isfile(prob) and os.path.isfile(ans)):
+            return None
+        pdf = ent.get("pdf")
+        s = build_direct_set(prob, ans, pdf=pdf if pdf and
+                             os.path.isfile(pdf) else None)
+        if ent.get("name"):
+            s["name"] = ent["name"]
+        s["direct"] = True
+        return s
+    except Exception:
         return None
-    best = max(sc for sc, _s in scored)
-    matched = [s for sc, s in scored if sc == best]
-    return matched[0] if len(matched) == 1 else None
+
+
+def scan_diagnosis_text(root, config=None, specs=None, sets=None):
+    """[세트 인식 진단] 텍스트: 파일 → 키 → 역할 → 세트 → 슬롯 매칭 결과."""
+    lines = [f"[코코 시험장 세트 인식 진단] {__version__} · "
+             f"{datetime.now().strftime('%Y-%m-%d %H:%M')}",
+             f"스캔 루트: {root}", ""]
+    if config is None:
+        config = load_set_config()
+    if sets is None:
+        sets = scan_sets(root, config) if root and os.path.isdir(root) else []
+    owner = {}
+    for s in sets:
+        for k in ("problem", "answer", "pdf", "key"):
+            if s.get(k):
+                owner[os.path.abspath(s[k])] = s["name"]
+    files = []
+    if root and os.path.isdir(root):
+        for dirpath, dirnames, filenames in os.walk(root):
+            dirnames[:] = [d for d in dirnames
+                           if not d.startswith((".", "__")) and d != "채점결과"]
+            for fn in sorted(filenames):
+                ext = os.path.splitext(fn)[1].lower()
+                if ext not in (".xlsx", ".xlsm", ".pdf"):
+                    continue
+                if fn.startswith(("풀이_", "부분연습_", "오답연습_", "오답재풀이_",
+                                  "채점결과", "~$", ".")):
+                    continue
+                files.append(os.path.join(dirpath, fn))
+    lines.append("== 파일 → 정규화 키 → 역할 → 소속 세트 ==")
+    lines.append("파일명 | 정규화 키 | 역할 | 소속 세트 | 폴더")
+    for p in files:
+        fn = os.path.basename(p)
+        ext = os.path.splitext(fn)[1].lower()
+        if ext == ".pdf":
+            role = "문제지(PDF)"
+        else:
+            role = {"problem": "문제", "answer": "정답"}.get(file_role(fn),
+                                                        "미상(문제/정답 표기 없음)")
+        own = owner.get(os.path.abspath(p), "미소속")
+        rel = os.path.relpath(os.path.dirname(p), root) if root else ""
+        lines.append(f"{fn} | {norm_set_key(fn)} | {role} | {own} | {rel}")
+    if not files:
+        lines.append("(xlsx/xlsm/pdf 파일 없음)")
+    lines.append("")
+    lines.append("== 인식된 세트 ==")
+    lines.append("세트명 | 토큰 | 문제 | 정답 | PDF | 기대값")
+    for s in sets:
+        lines.append(f"{s['name']} | {','.join(sorted(_set_tokens_of(s)))} | "
+                     f"{os.path.basename(s['problem'])} | "
+                     f"{os.path.basename(s['answer'])} | "
+                     f"{os.path.basename(s['pdf']) if s.get('pdf') else '-'} | "
+                     f"{os.path.basename(s['key']) if s.get('key') else '-'}")
+    if not sets:
+        lines.append("(인식된 세트 없음 — 같은 폴더에 '…문제.xlsx'와 '…정답.xlsm' "
+                     "짝이 있어야 합니다)")
+    lines.append("")
+    lines.append("== 일정 슬롯 매칭 ==")
+    if specs is None:
+        specs = []
+        for no in range(1, 15):
+            for spec in ROUTINE_PLAN.get(no, {}).get("세트") or []:
+                if spec != AUTO and spec not in specs:
+                    specs.append(spec)
+    mapping = {k: v for k, v in (config.get("_슬롯매핑") or {}).items()
+               if isinstance(v, dict)}
+    for spec in specs:
+        s, how = match_slot(sets, spec)
+        line = f"슬롯 '{spec}' → " + (f"세트 '{s['name']}' ({how})" if s
+                                     else f"미발견 ({how})")
+        m = mapping.get(spec)
+        if m:
+            ms = set_from_mapping(m)
+            line += (f" · 직접 선택 저장됨: {os.path.basename(m.get('problem') or '?')}"
+                     + ("" if ms else " (파일 없음 — 무시)"))
+        lines.append(line)
+    stray = [os.path.basename(p) for p in files
+             if os.path.abspath(p) not in owner
+             and os.path.splitext(p)[1].lower() != ".pdf"]
+    if stray:
+        lines.append("")
+        lines.append("== 미소속 Excel 파일 (문제/정답 짝을 못 찾음) ==")
+        lines.extend(stray)
+        lines.append("→ 같은 폴더에 같은 이름으로 '…_문제.xlsx'와 '…_정답.xlsm'"
+                     "(확장자 달라도 됨) 짝을 만들거나 [직접 선택]으로 지정하세요.")
+    return "\n".join(lines)
 
 
 # ---------------------------------------------------------------------------
@@ -1017,21 +1215,28 @@ def save_auto_picks(day_tag, picks, path=None):
     return save_set_config(cfg, p)
 
 
-def resolve_day_sets(plan, sets, records=None, today=None, saved=None):
+def resolve_day_sets(plan, sets, records=None, today=None, saved=None,
+                     mapping=None):
     """일정의 세트 슬롯 -> [(세트 or None, 이유)].
 
-    고정 슬롯은 퍼지 매칭, 자동 슬롯은 저장된 선택(saved)을 우선 복원하고
-    없으면 pick_set_for_retry로 고릅니다. 슬롯끼리는 서로 다른 세트.
+    고정 슬롯은 저장된 직접 선택(mapping) → 토큰 매칭(match_slot) 순,
+    자동 슬롯은 저장된 선택(saved)을 우선 복원하고 없으면
+    pick_set_for_retry로 고릅니다. 슬롯끼리는 서로 다른 세트.
     """
     slots = list(plan.get("세트") or [])
     out = [None] * len(slots)
     reasons = [""] * len(slots)
     taken = set()
+    mapping = mapping or {}
     for k, spec in enumerate(slots):          # ① 고정 세트
         if spec != AUTO:
-            s = find_set_for_tokens(sets, spec)
-            out[k], reasons[k] = s, ("일정 지정 세트" if s else
-                                    f"'{spec}' 세트를 찾지 못함")
+            s = set_from_mapping(mapping[spec]) if spec in mapping else None
+            if s:
+                how = "직접 선택 저장됨"
+            else:
+                s, how = match_slot(sets, spec)
+            out[k], reasons[k] = s, (f"일정 지정 세트 · {how}" if s else
+                                    f"세트를 찾지 못함 · {how}")
             if s:
                 taken.add(s["norm"])
     saved = list(saved or [])
@@ -1615,15 +1820,38 @@ if HAS_TK:
             self._text = None
             btns = tk.Frame(frm, bg=BG)
             btns.pack(fill="x", pady=(10, 0))
+            self._message = str(message)
             if self._detail:
                 self._toggle_btn = tk.Button(
                     btns, text="자세히 보기", command=self._toggle,
                     font=UI_FONT, relief="groove")
                 self._toggle_btn.pack(side="left")
+            self.copy_btn = tk.Button(btns, text="오류 내용 복사",
+                                      command=self.copy_error, font=UI_FONT,
+                                      relief="groove")
+            self.copy_btn.pack(side="left", padx=6)
             tk.Button(btns, text="닫기", command=self.destroy,
                       font=UI_FONT, relief="groove").pack(side="right")
             self._body = frm
-            self.grab_set()
+            try:
+                self.grab_set()
+            except Exception:
+                pass
+
+        def copy_text(self):
+            return (f"[{APP_TITLE} {__version__} 오류]\n{self._message}\n\n"
+                    + self._detail).strip()
+
+        def copy_error(self):
+            """메시지+상세를 클립보드로 (채팅에 붙여넣어 진단용)."""
+            try:
+                self.clipboard_clear()
+                self.clipboard_append(self.copy_text())
+                self.update_idletasks()
+                self.copy_btn.configure(text="복사됨")
+                return True
+            except Exception:
+                return False
 
         def _toggle(self):
             if self._text is None:
@@ -1637,6 +1865,32 @@ if HAS_TK:
                 self._text.destroy()
                 self._text = None
                 self._toggle_btn.configure(text="자세히 보기")
+
+
+    _LAST_ERROR_DIALOG = [None]   # 스모크/진단용: 마지막 오류 대화상자
+
+    def _tk_report_callback_exception(root, exc, val, tb):
+        """tkinter 콜백 예외 전역 처리: 로그 append + 접이식 오류 대화상자.
+
+        pythonw에서는 stderr가 없어 예외가 조용히 사라지므로 반드시 흔적을
+        남기고 사용자에게 보여 줍니다.
+        """
+        text = log_error("tk callback", (exc, val, tb))
+        try:
+            dlg = CollapsibleErrorDialog(
+                root, f"{APP_TITLE} - 오류",
+                f"작업 중 오류가 발생했습니다: {val}\n\n"
+                f"오류 내용은 {os.path.basename(ERROR_LOG_PATH)}에 기록되었습니다. "
+                "[오류 내용 복사]로 복사해 채팅에 붙여넣어 주세요.",
+                text)
+            _LAST_ERROR_DIALOG[0] = dlg
+        except Exception:
+            try:
+                messagebox.showerror(APP_TITLE, f"오류: {val}\n\n{text[-800:]}")
+            except Exception:
+                pass
+
+    tk.Tk.report_callback_exception = _tk_report_callback_exception
 
 
     class ResultWindow(tk.Toplevel):
@@ -2138,6 +2392,48 @@ if HAS_TK:
             self.destroy()
 
 
+    class DiagnosisWindow(tk.Toplevel):
+        """세트 인식 진단 결과 표시 + 클립보드 복사."""
+
+        def __init__(self, app, text):
+            super().__init__(app)
+            self.text_value = text
+            self.title(f"{APP_TITLE} - 세트 인식 진단")
+            self.configure(bg=BG)
+            self.geometry("760x520")
+            frm = tk.Frame(self, bg=BG, padx=14, pady=10)
+            frm.pack(fill="both", expand=True)
+            tk.Label(frm, text="파일명 → 정규화 키 → 역할 → 세트 → 일정 슬롯 "
+                     "매칭 결과입니다. [복사]해서 채팅에 붙여넣으면 진단해 "
+                     "드립니다.", bg=BG, fg=INK, font=("Malgun Gothic", 9),
+                     wraplength=720, justify="left").pack(anchor="w")
+            self.text = tk.Text(frm, font=("Consolas", 9), wrap="none",
+                                bg=CARD, fg=INK)
+            self.text.insert("1.0", text)
+            self.text.configure(state="disabled")
+            self.text.pack(fill="both", expand=True, pady=(6, 6))
+            bf = tk.Frame(frm, bg=BG)
+            bf.pack(fill="x")
+            self.copy_btn = tk.Button(
+                bf, text="클립보드 복사", font=UI_FONT_BOLD, bg=BRAND,
+                fg="white", activebackground=BRAND_DARK, relief="flat",
+                padx=12, pady=3, command=self.copy)
+            self.copy_btn.pack(side="left")
+            tk.Button(bf, text="닫기", font=UI_FONT, relief="groove",
+                      padx=12, pady=3, command=self.destroy).pack(side="right")
+            self.copy()
+
+        def copy(self):
+            try:
+                self.clipboard_clear()
+                self.clipboard_append(self.text_value)
+                self.update_idletasks()
+                self.copy_btn.configure(text="복사됨 — 채팅에 붙여넣으세요")
+                return True
+            except Exception:
+                return False
+
+
     class SetChooserDialog(tk.Toplevel):
         """[다른 세트로 바꾸기] — 슬롯을 고르고 목록에서 세트 선택."""
 
@@ -2234,6 +2530,10 @@ if HAS_TK:
                 relief="groove", padx=8, pady=2, command=self.change_set)
             if plan.get("세트"):
                 self.change_btn.pack(side="right")
+            # 미발견 슬롯: 빨간 안내 + [직접 선택] [파일명 안내] (항상 살아 있는 버튼)
+            self.missing_frame = tk.Frame(frm, bg=BG)
+            self.missing_frame.pack(fill="x")
+            self.missing_rows = []
             self.progress_lbl = tk.Label(frm, text="", bg=BG, fg=SUB,
                                          font=("Malgun Gothic", 9))
             self.progress_lbl.pack(anchor="w", pady=(2, 6))
@@ -2278,14 +2578,28 @@ if HAS_TK:
         # --- 세트 슬롯 ---
 
         def _resolve_slots(self, save=False):
-            """세트 슬롯 확정 (저장된 자동 선택 복원 → 새로 선택 → 저장)."""
+            """세트 슬롯 확정 (직접 선택 매핑/자동 선택 복원 → 매칭 → 저장).
+
+            해석 중 예외가 나도 창은 살아 있어야 하므로 실패 슬롯은
+            None + 사유로 두고 오류 로그에 남깁니다.
+            """
             plan = self.plan
             if plan.get("세트"):
-                saved = load_auto_picks(self.day_tag) if self.day_tag else []
-                self.slot_sets = resolve_day_sets(
-                    plan, self.app.sets, load_records(), saved=saved)
-                if save and self.day_tag and AUTO in plan["세트"]:
-                    self._save_picks()
+                try:
+                    saved = load_auto_picks(self.day_tag) if self.day_tag \
+                        else []
+                    self.slot_sets = resolve_day_sets(
+                        plan, self.app.sets, load_records(), saved=saved,
+                        mapping=load_slot_mapping())
+                    for s, _r in self.slot_sets:   # 매핑으로 만든 직접 세트 편입
+                        if s is not None:
+                            self.app.add_set_to_list(s)
+                    if save and self.day_tag and AUTO in plan["세트"]:
+                        self._save_picks()
+                except Exception as e:
+                    log_error("세트 슬롯 해석", e)
+                    self.slot_sets = [(None, f"세트 해석 오류: {e}")
+                                      for _ in plan["세트"]]
             else:
                 self.slot_sets = []
             self.slot_names = [
@@ -2322,7 +2636,103 @@ if HAS_TK:
             self.title_lbl.configure(
                 text=plan_title(self.plan, today=date.today(),
                                 set_names=self.slot_names or None))
-            self.pick_lbl.configure(text=self.pick_text())
+            missing = any(s is None for s, _r in self.slot_sets)
+            self.pick_lbl.configure(text=self.pick_text(),
+                                    fg=RED if missing else INK)
+            self._render_missing_rows()
+
+        def missing_slots(self):
+            """세트를 찾지 못한 슬롯 번호 목록."""
+            return [k for k, (s, _r) in enumerate(self.slot_sets) if s is None]
+
+        def _render_missing_rows(self):
+            for w in self.missing_frame.winfo_children():
+                w.destroy()
+            self.missing_rows = []
+            for k in self.missing_slots():
+                spec = self.plan["세트"][k]
+                row = tk.Frame(self.missing_frame, bg=BG)
+                row.pack(fill="x", pady=(2, 0))
+                head = f"세트 {k + 1} " if len(self.slot_sets) > 1 else ""
+                what = spec if spec != AUTO else "자동 선택"
+                tk.Label(row, text=f"{head}'{what}' 세트를 찾지 못함 —",
+                         bg=BG, fg=RED, font=("Malgun Gothic", 9, "bold")
+                         ).pack(side="left")
+                b1 = tk.Button(row, text="직접 선택", font=UI_FONT_BOLD,
+                               bg=RED, fg="white", activebackground="#8A2A22",
+                               relief="flat", padx=8, pady=1,
+                               command=lambda k=k: self.direct_select_slot(k))
+                b1.pack(side="left", padx=4)
+                b2 = tk.Button(row, text="파일명 안내", font=UI_FONT,
+                               relief="groove", padx=8, pady=1,
+                               command=lambda k=k: self.filename_guide(k))
+                b2.pack(side="left")
+                self.missing_rows.append((k, row, b1, b2))
+
+        def filename_guide(self, k):
+            spec = self.plan["세트"][k]
+            idt = "·".join(sorted(slot_identity_tokens(spec))) \
+                if spec != AUTO else "(자동 선택)"
+            ex = spec if spec != AUTO else "세트명"
+            messagebox.showinfo(
+                f"{APP_TITLE} - 파일명 안내",
+                f"'{spec}' 세트로 인식되려면:\n\n"
+                f"1) 문제와 정답 파일이 같은 폴더에 있고\n"
+                f"2) 파일명에 식별 토큰 [{idt}] 이 들어가며\n"
+                f"3) 이름 끝에 '문제'/'정답'이 붙어 짝을 이루면 됩니다.\n"
+                f"   예: '{ex}_문제.xlsx' + '{ex}_정답.xlsm' (확장자 달라도 됨)\n\n"
+                "지금 바로 하려면 [직접 선택]으로 문제/정답 파일을 고르세요 — "
+                "한 번 고르면 저장되어 다음부터 자동으로 잡힙니다.\n"
+                "인식 상태는 시작 화면의 [세트 인식 진단]으로 확인할 수 있습니다.",
+                parent=self)
+
+        def direct_select_slot(self, k):
+            """미발견 슬롯 -> 파일 선택 대화상자로 문제/정답 지정."""
+            spec = self.plan["세트"][k]
+            try:
+                problem = filedialog.askopenfilename(
+                    parent=self, title=f"'{spec}' 문제 파일 선택",
+                    filetypes=[("Excel 파일", "*.xlsx *.xlsm"),
+                               ("모든 파일", "*.*")])
+                if not problem:
+                    return
+                answer = filedialog.askopenfilename(
+                    parent=self, title=f"'{spec}' 정답 파일 선택",
+                    initialdir=os.path.dirname(problem),
+                    filetypes=[("Excel 파일", "*.xlsx *.xlsm"),
+                               ("모든 파일", "*.*")])
+                if not answer:
+                    return
+                s = build_direct_set(problem, answer)
+                s["direct"] = True
+                self.apply_direct_slot(k, s)
+            except Exception as e:
+                log_error(f"직접 선택 슬롯 {k}", e)
+                messagebox.showerror(
+                    APP_TITLE, f"'{spec}' 세트를 지정하지 못했습니다: {e}",
+                    parent=self)
+
+        def apply_direct_slot(self, k, s):
+            """직접 선택한 세트를 슬롯 k에 적용 + 매핑 저장 + 목록 편입."""
+            spec = self.plan["세트"][k]
+            if spec != AUTO:
+                try:
+                    save_slot_mapping(spec, s)
+                    remember_set(s)
+                except Exception as e:
+                    log_error("슬롯 매핑 저장", e)
+            self.app.add_set_to_list(s)
+            new = list(self.slot_sets)
+            new[k] = (s, "직접 선택")
+            self.slot_sets = new
+            self.slot_names = [
+                (x["name"] if x else (sp if sp != AUTO else "자동 선택(세트 없음)"))
+                for (x, _r), sp in zip(self.slot_sets, self.plan["세트"])]
+            self.steps = build_day_steps(self.plan, self.slot_names)
+            if spec == AUTO and self.day_tag:
+                self._save_picks()
+            self._render_header()
+            self.refresh(select=self.selected_index())
 
         def change_set(self):
             """[다른 세트로 바꾸기] 대화상자."""
@@ -2456,10 +2866,25 @@ if HAS_TK:
             return out
 
         def start_step(self):
+            """[이 단계 시작] — 어떤 예외도 조용히 죽지 않고 안내로 표시."""
             i = self.selected_index()
             if i is None:
                 return
             st = self.steps[i]
+            try:
+                self._start_step(i, st)
+            except Exception as e:
+                log_error(f"스텝 시작 실패: {st.get('이름')}", e)
+                k = st.get("슬롯")
+                name = (self.slot_names[k] if k is not None
+                        and k < len(self.slot_names) else st.get("세트") or "")
+                messagebox.showerror(
+                    APP_TITLE,
+                    f"'{name or st.get('이름')}' 세트를 시작하지 못했습니다: "
+                    f"{e}\n\n오류 내용은 {os.path.basename(ERROR_LOG_PATH)}에 "
+                    "기록되었습니다.", parent=self)
+
+        def _start_step(self, i, st):
             kind, payload = resolve_step_action(st, self.app.sets,
                                                 self.slot_sets)
             if kind == "info":
@@ -2696,6 +3121,10 @@ if HAS_TK:
             tk.Button(ctrl, text="문제지 연결", font=UI_FONT, relief="groove",
                       padx=10, pady=4, command=self.connect_pdf).pack(
                 side="left", padx=4)
+            self.diag_btn = tk.Button(
+                ctrl, text="세트 인식 진단", font=UI_FONT, relief="groove",
+                padx=10, pady=4, command=self.show_scan_diagnosis)
+            self.diag_btn.pack(side="left", padx=4)
             tk.Button(ctrl, text="업데이트 확인", font=UI_FONT, relief="groove",
                       padx=10, pady=4,
                       command=self.manual_update_check).pack(
@@ -2991,9 +3420,12 @@ if HAS_TK:
                                                  practice["label"])
                 else:
                     student = make_attempt_copy(s["problem"], s["name"])
-            except OSError as e:
+            except Exception as e:
+                log_error(f"풀이 사본 생성: {s.get('name')}", e)
                 CollapsibleErrorDialog(
-                    self, APP_TITLE, "풀이 사본을 만들 수 없습니다.", str(e))
+                    self, APP_TITLE,
+                    f"'{s.get('name')}' 세트를 시작하지 못했습니다: 풀이 사본을 "
+                    f"만들 수 없습니다 ({e})", log_error("", e))
                 return
             ok, err = open_file(student)
             if not ok:
@@ -3096,6 +3528,28 @@ if HAS_TK:
             i = order.index(self.plan_no) if self.plan_no in order else 0
             self.plan_no = order[max(0, min(len(order) - 1, i + delta))]
             self._render_plan_card()
+
+        def add_set_to_list(self, s):
+            """세트를 목록에 편입 (같은 norm이 있으면 무시). 직접 선택 세트용."""
+            if not s or not s.get("norm"):
+                return False
+            for x in self.sets:
+                if x.get("norm") == s.get("norm"):
+                    return False
+            self.sets.append(s)
+            mark = "[직접] " if s.get("direct") else ""
+            pdf_mark = "" if s.get("pdf") else "  (문제지 미연결)"
+            self.listbox.insert("end", f" {mark}{s['name']}{pdf_mark}")
+            return True
+
+        def show_scan_diagnosis(self):
+            """[세트 인식 진단] — 텍스트 표 + 클립보드 복사."""
+            try:
+                text = scan_diagnosis_text(self.scan_root, sets=self.sets)
+            except Exception as e:
+                log_error("세트 인식 진단", e)
+                text = f"진단 생성 중 오류: {e}"
+            DiagnosisWindow(self, text)
 
         def _select_set_in_list(self, s):
             for i, x in enumerate(self.sets):
@@ -3493,6 +3947,102 @@ def run_smoke():
     save_step_progress("d08", set())
     app.sets, app.start_exam = saved_sets, saved_start
     app._pending_plan = None
+    # v2.1.1: 2세트 날(Day 3) 한 슬롯만 미발견 -> 다른 슬롯 정상 시작 + 직접 선택 대체
+    fake_s2r = {"name": "2024년 상시2회 2급", "norm": "smoke상시2", "dir": BASE_DIR,
+                "problem": "p3", "answer": "a3", "key": None, "pdf": None}
+    fake_A = {"name": "컴활2급 A형", "norm": "smokeA", "dir": BASE_DIR,
+              "problem": os.path.join(BASE_DIR, "시험장.py"),
+              "answer": os.path.join(BASE_DIR, "시험장.py"), "key": None,
+              "pdf": None, "direct": True}
+    saved_sets, saved_start = app.sets, app.start_exam
+    calls = []
+    app.sets = [fake_s2r]
+    app.listbox.delete(0, "end")
+    app.listbox.insert("end", " " + fake_s2r["name"])
+    app.start_exam = lambda practice=None: calls.append(
+        (practice, app._pending_plan))
+    cfg_before = load_set_config()
+    cfg_before.pop("_슬롯매핑", None)
+    save_set_config(cfg_before)
+    save_step_progress("d03", set())
+    guide5 = StepGuideWindow(app, plan_for_day(3))
+    app.update_idletasks()
+    app.update()
+    assert guide5.missing_slots() == [0], guide5.pick_text()
+    assert guide5.slot_sets[1][0] is fake_s2r
+    assert len(guide5.missing_rows) == 1 and \
+        guide5.missing_rows[0][2].cget("text") == "직접 선택"
+    assert "찾지 못함" in guide5.pick_text() and \
+        guide5.pick_lbl.cget("fg") == RED
+    guide5.listbox.selection_clear(0, "end")
+    guide5.listbox.selection_set(0)          # 미발견 슬롯의 모의 스텝
+    _orig_info = messagebox.showinfo
+    infos = []
+    messagebox.showinfo = lambda *a, **k: infos.append(a)   # 모달 차단 방지
+    try:
+        guide5.start_step()                  # -> missing 안내, 예외 없음
+    finally:
+        messagebox.showinfo = _orig_info
+    assert calls == [], "미발견 슬롯은 시작되지 않음"
+    assert infos and "다른 세트로 바꾸기" in infos[0][1], infos
+    guide5.listbox.selection_clear(0, "end")
+    guide5.listbox.selection_set(4)          # 슬롯 2(상시 2회) 모의 스텝
+    guide5.start_step()
+    assert len(calls) == 1 and calls[0][1]["step"] == 4, "정상 슬롯은 시작"
+    assert app._selected_set() is fake_s2r
+    guide5.apply_direct_slot(0, fake_A)      # 미발견 슬롯 직접 선택 대체
+    assert guide5.missing_slots() == [] and not guide5.missing_rows
+    assert guide5.steps[0]["이름"].startswith("컴활2급 A형")
+    assert load_slot_mapping()["2024 A형"]["name"] == "컴활2급 A형", "매핑 저장"
+    assert any(x["norm"] == "smokeA" for x in app.sets), "목록 편입"
+    guide5.listbox.selection_clear(0, "end")
+    guide5.listbox.selection_set(0)
+    guide5.start_step()
+    assert len(calls) == 2 and app._selected_set() is fake_A
+    guide5.destroy()
+    # 스텝 시작 중 예외 -> 사용자 메시지 + 로그, 창 생존
+    guide6 = StepGuideWindow(app, plan_for_day(3))
+    _orig_msg = messagebox.showerror
+    shown = []
+    messagebox.showerror = lambda *a, **k: shown.append(a)
+    guide6._start_step = lambda i, st: (_ for _ in ()).throw(RuntimeError("주입"))
+    guide6.listbox.selection_set(0)
+    guide6.start_step()
+    messagebox.showerror = _orig_msg
+    assert shown and "시작하지 못했습니다: 주입" in shown[0][1], shown
+    assert guide6.winfo_exists()
+    guide6.destroy()
+    cfg_after = load_set_config()
+    cfg_after.pop("_슬롯매핑", None)
+    cfg_after.pop("smokeA", None)            # remember_set 잔여 제거
+    save_set_config(cfg_after)
+    save_step_progress("d03", set())
+    app.sets, app.start_exam = saved_sets, saved_start
+    app._pending_plan = None
+    # 전역 콜백 예외 처리: 로그 append + 오류 대화상자(복사 버튼)
+    log_before = os.path.getsize(ERROR_LOG_PATH) \
+        if os.path.isfile(ERROR_LOG_PATH) else 0
+    _LAST_ERROR_DIALOG[0] = None
+    boom = tk.Button(app, command=lambda: 1 / 0)
+    boom.invoke()
+    app.update_idletasks()
+    app.update()
+    assert _LAST_ERROR_DIALOG[0] is not None, "오류 대화상자 생성"
+    dlg = _LAST_ERROR_DIALOG[0]
+    assert "ZeroDivisionError" in dlg.copy_text()
+    assert dlg.copy_error() is True and dlg.copy_btn.cget("text") == "복사됨"
+    dlg.destroy()
+    boom.destroy()
+    with open(ERROR_LOG_PATH, encoding="utf-8") as f:
+        f.seek(log_before)
+        tail = f.read()
+    assert "ZeroDivisionError" in tail and "tk callback" in tail, tail[-200:]
+    # 세트 인식 진단 창
+    diag = DiagnosisWindow(app, scan_diagnosis_text(app.scan_root, sets=app.sets))
+    app.update_idletasks()
+    app.update()
+    assert "일정 슬롯 매칭" in diag.text_value and diag.copy() is True
+    diag.destroy()
     # 스텝 실행 매핑 (세트 없는 환경 -> 모의는 missing, 채점은 info)
     kind, _p = resolve_step_action(plan_for_day(1)["스텝"][0], saved_sets)
     assert kind in ("exam", "missing")
@@ -3510,7 +4060,8 @@ def run_smoke():
     timer.destroy()
     app.destroy()
     print("SMOKE OK: 창 생성/위젯 렌더/타이머/오답노트 패널/단계 가이드(세트 "
-          "자동 선택·바꾸기)/파괴 정상")
+          "자동 선택·바꾸기·미발견 직접 선택)/오류 대화상자·로그/진단 창/"
+          "파괴 정상")
 
 
 def _notify_no_tk():
