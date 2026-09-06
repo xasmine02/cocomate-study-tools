@@ -15,13 +15,18 @@ v2.2.1: Excel 실행 강화 — Windows에서 EXCEL.EXE를 직접 찾아 실행�
 (채점결과/시험장_시작로그.txt), 문제지 PDF 회차 검증, 시작·재시작 안정화.
 v2.2.2: 세트 기대값 JSON 퍼지 연결 — 파일명 키가 달라도 연도·회차 토큰이 같은
 '*기대값*.json'을 문제지 PDF와 같은 규칙(유일할 때만)으로 세트에 연결.
+v2.3.0: 완전 자동 업데이트 — 실행할 때마다 백그라운드로 version.json을 확인해
+새 버전이면 묻지 않고 내려받아 검증(sha256·py_compile·json)·백업·적용하고
+자동 재시작(시험 중이면 종료 후). 기대값 JSON(data_files)은 루트/기대값/에
+자동 배포·갱신되고 세트에 자동 연결. 세트설정 `_설정.자동업데이트` 토글.
 
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "2.2.3"
+__version__ = "2.3.0"
 
 import argparse
+import hashlib
 import json
 import os
 import platform
@@ -180,6 +185,38 @@ def find_grade_py(user_path=None):
 
 
 SET_CONFIG_PATH = os.path.join(BASE_DIR, "세트설정.json")
+EXPECTED_DIR_NAME = "기대값"      # 자동 배포되는 세트별 기대값 JSON 폴더
+
+
+def expected_values_dir(base_dir=None):
+    """자동 업데이트로 내려받는 기대값 JSON 폴더.
+
+    설치 구조가 <루트>/시험장/시험장.py + <루트>/채점/grade.py 이면
+    <루트>/기대값/, 한 폴더에 전부 있는 평면 구조면 <시험장 폴더>/기대값/.
+    """
+    base_dir = base_dir or BASE_DIR
+    root = os.path.dirname(base_dir)
+    if os.path.basename(base_dir) == "시험장" \
+            or os.path.isdir(os.path.join(root, "채점")):
+        return os.path.join(root, EXPECTED_DIR_NAME)
+    return os.path.join(base_dir, EXPECTED_DIR_NAME)
+
+
+def key_link_label(s):
+    """세트 정보 패널용 기대값 표시: '파일명', '파일명 (자동 연결)', '없음'.
+
+    세트 폴더 안의 정확 키(같은 정규화 키) 파일만 기본 연결로 보고, 그 밖의
+    위치(루트/기대값 폴더·다른 폴더)나 토큰 일치로 연결된 파일은 '(자동 연결)'.
+    """
+    key = s.get("key")
+    if not key:
+        return "없음"
+    own = (os.path.dirname(os.path.abspath(key)) ==
+           os.path.abspath(s.get("dir") or "")
+           and norm_set_key(key) == (s.get("norm") or ""))
+    return os.path.basename(key) + ("" if own else " (자동 연결)")
+
+
 _ROLE_TOKENS_STRIP = ("문제지", "기대값", "정답지", "답안지", "정답", "답안",
                       "문제")
 
@@ -386,8 +423,9 @@ def apply_set_config(sets, config):
             s = by_key[k]
             if pdf:
                 _attach_saved_pdf(s, pdf, confirmed, "세트설정")
-            if keyj and os.path.isfile(keyj):
+            if keyj and os.path.isfile(keyj) and keyj != s.get("key"):
                 s["key"] = keyj
+                s["key_origin"] = "세트설정"
             continue
         prob, ans = ent.get("problem"), ent.get("answer")
         if isinstance(prob, str) and isinstance(ans, str) and prob and ans \
@@ -406,46 +444,107 @@ def apply_set_config(sets, config):
     return sets
 
 
-def scan_sets(root, config=None):
+def _is_under(path, root):
+    """path가 root 폴더(또는 그 하위)에 있는가."""
+    try:
+        return os.path.commonpath([os.path.abspath(path),
+                                   os.path.abspath(root)]) == \
+            os.path.abspath(root)
+    except ValueError:
+        return False
+
+
+def _dedupe_keys_by_name(paths, set_dir, key_dirs):
+    """같은 파일명의 기대값이 여러 폴더에 있으면(세트 폴더 사본 + 루트/기대값
+    배포본 등) 우선순위가 높은 하나만 남깁니다 — 동점 후보로 취급되어
+    연결이 막히지 않도록. 우선순위: 세트 폴더 → 기대값 폴더 → 그 밖(경로순)."""
+    by_name = {}
+    for p in paths:
+        by_name.setdefault(os.path.basename(p), []).append(p)
+    out = []
+    for name, group in by_name.items():
+        if len(group) == 1:
+            out.append(group[0])
+        else:
+            out.append(_pick_exact_key(group, set_dir, key_dirs)[0])
+    return out
+
+
+def _pick_exact_key(cands, set_dir, key_dirs):
+    """같은 정규화 키의 기대값 후보 중 우선순위: 세트 폴더 → 루트/기대값
+    폴더 → 그 밖(경로순). 반환: (경로, 출처 문구) 또는 (None, None)."""
+    if not cands:
+        return None, None
+    own = [p for p in cands if os.path.dirname(p) == set_dir]
+    if own:
+        return sorted(own)[0], "세트 폴더"
+    kd = [os.path.abspath(d) for d in key_dirs]
+    in_kd = [p for p in cands if os.path.abspath(os.path.dirname(p)) in kd]
+    if in_kd:
+        return sorted(in_kd)[0], "기대값 폴더"
+    return sorted(cands)[0], "다른 폴더"
+
+
+def scan_sets(root, config=None, key_dirs=None):
     """느슨한 세트 그룹핑 스캔.
 
     xlsx/xlsm/pdf/기대값 json을 정규화 키로 묶고, 파일명 토큰으로
     문제/정답 역할을 판별합니다. 같은 키에 PDF가 없으면 토큰 퍼지
     매칭으로 문제지 PDF를 연결합니다. '풀이_' 파일과 '채점결과' 폴더
     제외. 반환: [{"name","norm","dir","problem","answer","key","pdf"}]
+
+    기대값 JSON 연결 우선순위(v2.3.0): ① 세트 폴더 안의 정확 키 파일
+    ② 루트/기대값/(key_dirs, 자동 업데이트로 배포됨)의 정확 키 파일
+    ③ 스캔 루트 어디든 정확 키 파일 ④ 연도·회차·형 토큰이 충돌 없이
+    유일하게 맞는 파일(문제지 PDF와 같은 규칙). 출처는 s["key_origin"].
+    key_dirs가 스캔 루트 밖이어도 그 폴더의 기대값 JSON은 후보에 넣습니다.
     """
     sets = []
     all_pdfs = []
     all_keys = []
     groups = {}
+    if key_dirs is None:
+        key_dirs = [expected_values_dir()]
+
+    def add_file(dirpath, fn):
+        ext = os.path.splitext(fn)[1].lower()
+        if ext not in (".xlsx", ".xlsm", ".pdf", ".json"):
+            return
+        if fn.startswith(("풀이_", "채점결과", "~$", ".")):
+            return
+        path = os.path.join(dirpath, fn)
+        if ext == ".json" and "기대값" not in fn:
+            return
+        if ext == ".pdf":
+            all_pdfs.append(path)
+        elif ext == ".json":
+            if path in all_keys:
+                return
+            all_keys.append(path)
+        k = norm_set_key(fn)
+        if not k:
+            return
+        g = groups.setdefault(k, {"excel": [], "pdf": [], "json": []})
+        if ext in (".xlsx", ".xlsm"):
+            g["excel"].append(path)
+        elif ext == ".pdf":
+            g["pdf"].append(path)
+        else:
+            g["json"].append(path)
+
     if root and os.path.isdir(root):
         for dirpath, dirnames, filenames in os.walk(root):
             dirnames[:] = [d for d in dirnames
                            if not d.startswith((".", "__"))
                            and d != "채점결과"]
             for fn in sorted(filenames):
-                ext = os.path.splitext(fn)[1].lower()
-                if ext not in (".xlsx", ".xlsm", ".pdf", ".json"):
-                    continue
-                if fn.startswith(("풀이_", "채점결과", "~$", ".")):
-                    continue
-                path = os.path.join(dirpath, fn)
-                if ext == ".json" and "기대값" not in fn:
-                    continue
-                if ext == ".pdf":
-                    all_pdfs.append(path)
-                elif ext == ".json":
-                    all_keys.append(path)
-                k = norm_set_key(fn)
-                if not k:
-                    continue
-                g = groups.setdefault(k, {"excel": [], "pdf": [], "json": []})
-                if ext in (".xlsx", ".xlsm"):
-                    g["excel"].append(path)
-                elif ext == ".pdf":
-                    g["pdf"].append(path)
-                else:
-                    g["json"].append(path)
+                add_file(dirpath, fn)
+    for kd in key_dirs:      # 스캔 루트 밖의 기대값 폴더도 후보에 포함
+        if not os.path.isdir(kd) or (root and _is_under(kd, root)):
+            continue
+        for fn in sorted(os.listdir(kd)):
+            if fn.lower().endswith(".json"):
+                add_file(kd, fn)
     for k, g in groups.items():
         answers = [p for p in g["excel"] if file_role(p) == "answer"]
         problems = [p for p in g["excel"] if file_role(p) == "problem"]
@@ -456,11 +555,13 @@ def scan_sets(root, config=None):
             problem = next(p for p in g["excel"] if p != answer)
         if not (problem and answer) or problem == answer:
             continue
+        key, origin = _pick_exact_key(g["json"], os.path.dirname(problem),
+                                      key_dirs)
         sets.append({
             "name": display_name(problem), "norm": k,
             "dir": os.path.dirname(problem),
             "problem": problem, "answer": answer,
-            "key": sorted(g["json"])[0] if g["json"] else None,
+            "key": key, "key_origin": origin,
             "pdf": sorted(g["pdf"])[0] if g["pdf"] else None,
         })
     # 같은 키 PDF가 없는 세트: 토큰 퍼지 매칭 (유일할 때만)
@@ -483,48 +584,73 @@ def scan_sets(root, config=None):
             continue
         toks = set_tokens(s["name"]) | set_tokens(os.path.basename(s["dir"]))
         others = [_set_tokens_of(o) for o in sets if o is not s]
-        cand = match_pdf_for_set(toks, [p for p in all_keys if p not in used_k],
-                                 others=others)
+        cands = _dedupe_keys_by_name([p for p in all_keys if p not in used_k],
+                                     s["dir"], key_dirs)
+        cand = match_pdf_for_set(toks, cands, others=others)
         if cand:
             s["key"] = cand
+            s["key_origin"] = "토큰 일치"
             used_k.add(cand)
     apply_set_config(sets, config if config is not None else load_set_config())
     sets.sort(key=lambda s: s["name"])
     return sets
 
 
-def build_direct_set(problem, answer, pdf=None):
-    """직접 선택한 문제/정답(+문제지)으로 세트 구성 (기대값/문제지 자동 감지)."""
+def build_direct_set(problem, answer, pdf=None, key_dirs=None):
+    """직접 선택한 문제/정답(+문제지)으로 세트 구성 (기대값/문제지 자동 감지).
+
+    기대값 JSON: 문제 파일 폴더의 정확 키 → 루트/기대값 폴더(key_dirs)의
+    정확 키 → 두 곳의 후보 중 토큰(연도·회차·형)이 2개 이상 겹치고 유일한
+    파일 순으로 연결합니다.
+    """
     d = os.path.dirname(os.path.abspath(problem))
     k = norm_set_key(problem)
     key = None
+    origin = None
     auto_pdf = None
     key_cands = []
+    if key_dirs is None:
+        key_dirs = [expected_values_dir()]
     try:
         for fn in os.listdir(d):
             if fn.startswith("풀이_"):
                 continue
             ext = os.path.splitext(fn)[1].lower()
             if ext == ".json" and "기대값" in fn and norm_set_key(fn) == k:
-                key = os.path.join(d, fn)
+                key, origin = os.path.join(d, fn), "세트 폴더"
             elif ext == ".json" and "기대값" in fn:
                 key_cands.append(os.path.join(d, fn))
             elif ext == ".pdf" and norm_set_key(fn) == k:
                 auto_pdf = os.path.join(d, fn)
     except OSError:
         pass
+    for kd in key_dirs:
+        if key or not os.path.isdir(kd) or os.path.abspath(kd) == d:
+            continue
+        try:
+            names = sorted(os.listdir(kd))
+        except OSError:
+            continue
+        have = {os.path.basename(p) for p in key_cands}
+        for fn in names:
+            if not (fn.lower().endswith(".json") and "기대값" in fn):
+                continue
+            if norm_set_key(fn) == k and key is None:
+                key, origin = os.path.join(kd, fn), "기대값 폴더"
+            elif fn not in have:      # 세트 폴더에 같은 이름이 있으면 그쪽 우선
+                key_cands.append(os.path.join(kd, fn))
     if key is None and key_cands:
         # 같은 키가 없으면 토큰(연도·회차·형) 퍼지 매칭 — 유일하고 토큰이
         # 2개 이상(예: 2026·1회) 겹칠 때만 (직접 선택은 다른 세트 정보가 없음)
         toks = set_tokens(display_name(problem)) | set_tokens(os.path.basename(d))
         cand = match_pdf_for_set(toks, key_cands)
         if cand and _pdf_score(toks, set_tokens(os.path.basename(cand))) >= 2:
-            key = cand
+            key, origin = cand, "토큰 일치"
     return {
         "name": display_name(problem), "norm": k, "dir": d,
         "problem": os.path.abspath(problem),
         "answer": os.path.abspath(answer),
-        "key": key,
+        "key": key, "key_origin": origin,
         "pdf": os.path.abspath(pdf) if pdf else auto_pdf,
     }
 
@@ -1649,11 +1775,15 @@ def scan_diagnosis_text(root, config=None, specs=None, sets=None):
             pdf_col += " ⚠회차불일치"
         elif s.get("pdf_warning"):
             pdf_col += f" (⚠ {s['pdf_warning']})"
+        key_col = "-"
+        if s.get("key"):
+            key_col = os.path.basename(s["key"])
+            if s.get("key_origin") and s["key_origin"] != "세트 폴더":
+                key_col += f" ({s['key_origin']})"
         lines.append(f"{s['name']} | {','.join(sorted(_set_tokens_of(s)))} | "
                      f"{os.path.basename(s['problem'])} | "
                      f"{os.path.basename(s['answer'])} | "
-                     f"{pdf_col} | "
-                     f"{os.path.basename(s['key']) if s.get('key') else '-'}")
+                     f"{pdf_col} | {key_col}")
     if not sets:
         lines.append("(인식된 세트 없음 — 같은 폴더에 '…문제.xlsx'와 '…정답.xlsm' "
                      "짝이 있어야 합니다)")
@@ -2588,12 +2718,37 @@ def record_review_state(norm_key, json_name, checks,
 
 
 # ---------------------------------------------------------------------------
-# 자동 업데이트 (공개 저장소)
+# 자동 업데이트 (공개 저장소) — v2.3.0 완전 자동
 # ---------------------------------------------------------------------------
+#
+# 흐름: 실행할 때마다(하루 1회 제한 없음, 같은 실행에서는 1회) 백그라운드
+# 스레드가 version.json(타임아웃 3초, 오프라인이면 조용히 건너뜀)을 확인하고
+#   - 새 버전이면 files(프로그램)+data_files(기대값 JSON)를 전부 .new로
+#     내려받아 검증(sha256 맵이 있으면 해시, .py/.pyw는 __version__ 표식 +
+#     py_compile, .json은 json.loads, 시험장.py의 __version__ == 새 버전)한 뒤
+#     메인 스레드에서 .bak 백업 → 교체(하나라도 실패하면 전체 롤백) →
+#     자동 재시작(새 프로세스를 먼저 띄우고 종료). 시험 진행 중이면 적용을
+#     미루고 시험 종료 후 적용합니다.
+#   - 버전이 같아도 data_files 중 로컬에 없거나 sha256이 다른 기대값은
+#     내려받아 갱신(재시작 없음). 원격에서 사라진 기대값은 지우지 않습니다.
+# 재시작된 새 인스턴스는 .update_applied.json을 읽어 "자동 업데이트됨" 띠를
+# 띄웁니다. 세트설정.json `_설정.자동업데이트`(기본 true)로 끌 수 있고,
+# [업데이트 확인] 버튼은 토글과 무관하게 즉시 확인·적용합니다.
+#
+# version.json 형식:
+#   {"version": "2.3.0", "notes": "...",
+#    "files":      {"시험장/시험장.py": "시험장.py", ...},      # 프로그램
+#    "data_files": {"기대값/코코모의고사1회_기대값.json": "기대값/..."},  # 기대값
+#    "sha256":     {"시험장.py": "<hex>", "기대값/...json": "<hex>"}}    # 선택
+# 2.2.3 이하의 apply_update는 files 항목에 __version__ 표식과 py_compile을
+# 요구하므로 JSON은 반드시 data_files에만 둡니다(구버전은 그 키를 무시).
 
 UPDATE_BASE_URL = ("https://raw.githubusercontent.com/"
                    "xasmine02/cocomate-study-tools/main/")
-UPDATE_STAMP = os.path.join(RECORDS_DIR, ".update_check")
+UPDATE_NOTICE_PATH = os.path.join(RECORDS_DIR, ".update_applied.json")
+AUTO_UPDATE_SETTING = "자동업데이트"
+_VERSION_MARK_RE = re.compile(r'^__version__\s*=\s*["\']([^"\']+)["\']',
+                              re.MULTILINE)
 
 
 def _version_tuple(v):
@@ -2601,16 +2756,27 @@ def _version_tuple(v):
     return tuple(int(x) for x in nums[:3]) if nums else (0,)
 
 
+def auto_update_enabled(path=None):
+    """세트설정.json `_설정.자동업데이트` (기본 true)."""
+    return bool(get_app_setting(AUTO_UPDATE_SETTING, True, path=path))
+
+
+def _http_get(url, timeout):
+    import urllib.request
+    req = urllib.request.Request(url, headers={"User-Agent": "cocomate-updater"})
+    with urllib.request.urlopen(req, timeout=timeout) as r:
+        return r.read()
+
+
 def fetch_update_info(base_url=UPDATE_BASE_URL, timeout=3):
     """version.json 조회. 실패/404/오프라인이면 None (조용히 스킵)."""
-    import urllib.request
     try:
-        req = urllib.request.Request(
-            base_url + "version.json",
-            headers={"User-Agent": "cocomate-updater"})
-        with urllib.request.urlopen(req, timeout=timeout) as r:
-            info = json.loads(r.read().decode("utf-8"))
+        info = json.loads(_http_get(base_url + "version.json", timeout)
+                          .decode("utf-8"))
         if isinstance(info, dict) and info.get("version"):
+            for k in ("files", "data_files", "sha256"):
+                if not isinstance(info.get(k), dict):
+                    info[k] = {}
             return info
     except Exception:
         pass
@@ -2622,21 +2788,22 @@ def update_available(info, current=None):
         _version_tuple(current if current is not None else __version__)
 
 
-def should_check_update(stamp_path=None):
-    """업데이트 확인 하루 1회 제한. 확인해도 될 때 True + 타임스탬프 갱신."""
-    stamp_path = stamp_path or UPDATE_STAMP
+def sha256_hex(data):
+    return hashlib.sha256(data).hexdigest()
+
+
+def file_sha256(path):
     try:
-        if time.time() - os.path.getmtime(stamp_path) < 86400:
-            return False
+        with open(path, "rb") as f:
+            return sha256_hex(f.read())
     except OSError:
-        pass
-    try:
-        os.makedirs(os.path.dirname(stamp_path), exist_ok=True)
-        with open(stamp_path, "w", encoding="utf-8") as f:
-            f.write(datetime.now().isoformat())
-    except OSError:
-        pass
-    return True
+        return None
+
+
+def version_marker(text):
+    """소스 텍스트의 `__version__ = "x.y.z"` 값 (없으면 None)."""
+    m = _VERSION_MARK_RE.search(text or "")
+    return m.group(1) if m else None
 
 
 def _update_target_path(rel_key, base_dir=None):
@@ -2653,64 +2820,342 @@ def _update_target_path(rel_key, base_dir=None):
     return cand if os.path.isdir(os.path.dirname(cand)) else flat
 
 
-def apply_update(info, base_url=UPDATE_BASE_URL, base_dir=None, timeout=15):
-    """모든 파일 다운로드 -> 검증(__version__ + 문법) -> 원자 교체(.bak 1개).
+def _data_target_path(rel_key, base_dir=None):
+    """기대값 상대 경로('기대값/x_기대값.json') -> 루트/기대값/x_기대값.json
+    (설치 구조에 따라 expected_values_dir 기준, 폴더는 적용 시 생성)."""
+    parts = [p for p in str(rel_key).split("/") if p not in ("", ".", "..")]
+    if parts and parts[0] == EXPECTED_DIR_NAME:
+        parts = parts[1:]
+    if not parts:
+        raise RuntimeError(f"잘못된 기대값 경로: {rel_key!r}")
+    return os.path.join(expected_values_dir(base_dir), *parts)
 
-    반환: (성공 여부, 메시지). 어느 단계든 실패하면 기존 파일로 롤백.
-    """
+
+def _verify_download(repo_rel, data, kind, info, expect_version=None):
+    """내려받은 내용 검증 (실패 시 RuntimeError). 반환: 디코드된 텍스트."""
+    expected = (info.get("sha256") or {}).get(repo_rel)
+    if expected:
+        got = sha256_hex(data)
+        if got.lower() != str(expected).lower():
+            raise RuntimeError(f"{repo_rel}: sha256 불일치 "
+                               f"(기대 {str(expected)[:12]}…, 실제 {got[:12]}…)")
+    try:
+        text = data.decode("utf-8")
+    except UnicodeDecodeError as e:
+        raise RuntimeError(f"{repo_rel}: UTF-8 텍스트가 아닙니다 ({e})")
+    if kind == "code":
+        ver = version_marker(text)
+        if ver is None:
+            raise RuntimeError(f"{repo_rel}: __version__ 표식이 없어 "
+                               "배포 파일이 아닌 것으로 판단")
+        if expect_version and _version_tuple(ver) != _version_tuple(expect_version):
+            raise RuntimeError(f"{repo_rel}: 파일 버전 {ver}이(가) version.json의 "
+                               f"{expect_version}와 다릅니다 (재시작 반복 방지)")
+    else:
+        try:
+            json.loads(text)
+        except ValueError as e:
+            raise RuntimeError(f"{repo_rel}: JSON 형식 오류 ({e})")
+    return text
+
+
+def _cleanup_staged(staged):
+    for it in staged:
+        for leftover in (it["tmp"], it["tmp"] + "c"):
+            try:
+                if os.path.isfile(leftover):
+                    os.remove(leftover)
+            except OSError:
+                pass
+
+
+def _stage_items(items, info, base_url, timeout):
+    """items: [(rel_key, repo_rel, target, kind)] 다운로드 → 검증 → target.new.
+    실패하면 만든 .new를 모두 지우고 예외."""
     import py_compile
     import urllib.parse
-    import urllib.request
-    files = (info or {}).get("files") or {}
-    if not files:
-        return False, "업데이트 파일 목록이 비어 있습니다."
-    staged = []      # (target, tmp)
-    replaced = []    # target
+    staged = []
     try:
-        for rel_key, repo_rel in files.items():
-            target = _update_target_path(rel_key, base_dir)
-            url = base_url + urllib.parse.quote(str(repo_rel))
-            req = urllib.request.Request(
-                url, headers={"User-Agent": "cocomate-updater"})
-            with urllib.request.urlopen(req, timeout=timeout) as r:
-                data = r.read()
-            text = data.decode("utf-8")
-            if "__version__" not in text:
-                raise RuntimeError(f"{repo_rel}: __version__ 표식이 없어 "
-                                   "배포 파일이 아닌 것으로 판단")
+        for rel_key, repo_rel, target, kind in items:
+            data = _http_get(base_url + urllib.parse.quote(str(repo_rel)),
+                             timeout)
+            expect = None
+            if kind == "code" and os.path.basename(target) == "시험장.py":
+                expect = info.get("version")
+            _verify_download(repo_rel, data, kind, info, expect_version=expect)
             tmp = target + ".new"
             os.makedirs(os.path.dirname(target) or ".", exist_ok=True)
             with open(tmp, "wb") as f:
                 f.write(data)
-            staged.append((target, tmp))  # 실패 시 정리 대상 등록 후 검증
-            py_compile.compile(tmp, cfile=tmp + "c", doraise=True)
-            try:
-                os.remove(tmp + "c")
-            except OSError:
-                pass
-        for target, tmp in staged:
-            if os.path.isfile(target):
-                shutil.copy2(target, target + ".bak")
-            os.replace(tmp, target)
-            replaced.append(target)
-        return True, (f"{len(replaced)}개 파일을 "
-                      f"v{info.get('version')}(으)로 업데이트했습니다.")
-    except Exception as e:
-        for _target, tmp in staged:
-            for leftover in (tmp, tmp + "c"):
+            staged.append({"target": target, "tmp": tmp, "kind": kind,
+                           "rel": repo_rel})   # 실패 시 정리 대상 등록 후 검증
+            if kind == "code":
+                py_compile.compile(tmp, cfile=tmp + "c", doraise=True)
                 try:
-                    if os.path.isfile(leftover):
-                        os.remove(leftover)
+                    os.remove(tmp + "c")
                 except OSError:
                     pass
-        for target in replaced:
-            bak = target + ".bak"
+        return staged
+    except Exception:
+        _cleanup_staged(staged)
+        raise
+
+
+def stage_update(info, base_url=UPDATE_BASE_URL, base_dir=None, timeout=15):
+    """새 버전의 files(프로그램)+data_files(기대값) 전부 다운로드·검증·스테이징.
+
+    반환: (성공 여부, 메시지, staged). 실패하면 .new를 정리하고 기존 파일은
+    건드리지 않습니다. 적용은 commit_staged().
+    """
+    info = info or {}
+    files = info.get("files") or {}
+    data_files = info.get("data_files") or {}
+    if not files and not data_files:
+        return False, "업데이트 파일 목록이 비어 있습니다.", []
+    items = [(k, v, _update_target_path(k, base_dir), "code")
+             for k, v in files.items()]
+    try:
+        items += [(k, v, _data_target_path(k, base_dir), "data")
+                  for k, v in data_files.items()]
+        staged = _stage_items(items, info, base_url, timeout)
+    except Exception as e:
+        return False, f"업데이트 실패(기존 버전 유지): {e}", []
+    return True, f"{len(staged)}개 파일 검증 완료 (v{info.get('version')})", staged
+
+
+def commit_staged(staged, version=None):
+    """스테이징된 .new를 .bak 백업 후 교체. 하나라도 실패하면 전체 롤백.
+    반환: (성공 여부, 메시지)."""
+    replaced = []     # (target, 기존 파일 있었는지)
+    try:
+        for it in staged:
+            target, tmp = it["target"], it["tmp"]
+            existed = os.path.isfile(target)
+            if existed:
+                shutil.copy2(target, target + ".bak")
+            os.replace(tmp, target)
+            replaced.append((target, existed))
+        n_code = sum(1 for it in staged if it["kind"] == "code")
+        n_data = len(staged) - n_code
+        what = (f"프로그램 {n_code}개" if n_code else "") + \
+            (" + " if n_code and n_data else "") + \
+            (f"기대값 {n_data}개" if n_data else "")
+        return True, (f"{what} 파일을 v{version}(으)로 업데이트했습니다."
+                      if version else f"{what} 파일을 갱신했습니다.")
+    except Exception as e:
+        _cleanup_staged(staged)
+        for target, existed in replaced:
             try:
-                if os.path.isfile(bak):
-                    shutil.copy2(bak, target)
+                if existed and os.path.isfile(target + ".bak"):
+                    shutil.copy2(target + ".bak", target)
+                elif not existed and os.path.isfile(target):
+                    os.remove(target)
             except OSError:
                 pass
         return False, f"업데이트 실패(기존 버전 유지): {e}"
+
+
+def apply_update(info, base_url=UPDATE_BASE_URL, base_dir=None, timeout=15):
+    """모든 파일 다운로드 -> 검증 -> 원자 교체(.bak 1개). (구버전 호환 API)
+
+    반환: (성공 여부, 메시지). 어느 단계든 실패하면 기존 파일로 롤백.
+    """
+    ok, msg, staged = stage_update(info, base_url, base_dir, timeout)
+    if not ok:
+        return False, msg
+    return commit_staged(staged, (info or {}).get("version"))
+
+
+def data_files_to_sync(info, base_dir=None):
+    """로컬에 없거나 sha256이 다른 기대값 항목 [(rel_key, repo_rel, target)].
+    sha256 맵에 없는 항목은 로컬 파일이 없을 때만 내려받습니다."""
+    out = []
+    sha = (info or {}).get("sha256") or {}
+    for rel_key, repo_rel in ((info or {}).get("data_files") or {}).items():
+        try:
+            target = _data_target_path(rel_key, base_dir)
+        except RuntimeError:
+            continue
+        expected = sha.get(repo_rel)
+        if not os.path.isfile(target):
+            out.append((rel_key, repo_rel, target))
+        elif expected and (file_sha256(target) or "").lower() != \
+                str(expected).lower():
+            out.append((rel_key, repo_rel, target))
+    return out
+
+
+def sync_data_files(info, base_url=UPDATE_BASE_URL, base_dir=None, timeout=15):
+    """버전이 같아도 기대값(data_files)만 갱신. 반환: (성공, 개수, 메시지)."""
+    todo = data_files_to_sync(info, base_dir)
+    if not todo:
+        return True, 0, "기대값 파일이 모두 최신입니다."
+    try:
+        staged = _stage_items([(k, v, t, "data") for k, v, t in todo],
+                              info or {}, base_url, timeout)
+    except Exception as e:
+        return False, 0, f"기대값 갱신 실패(기존 파일 유지): {e}"
+    ok, msg = commit_staged(staged)
+    return ok, (len(staged) if ok else 0), msg
+
+
+def write_update_notice(prev, new, notes="", path=None):
+    """적용 직후 기록 — 재시작된 새 인스턴스가 읽어 안내 띠를 띄웁니다."""
+    p = path or UPDATE_NOTICE_PATH
+    try:
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump({"from": prev, "to": new, "notes": notes or "",
+                       "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                       "shown": False}, f, ensure_ascii=False, indent=2)
+        return True
+    except OSError:
+        return False
+
+
+def read_update_notice(path=None):
+    try:
+        with open(path or UPDATE_NOTICE_PATH, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else None
+    except Exception:
+        return None
+
+
+def consume_update_notice(current=None, path=None):
+    """아직 안 보여 준 업데이트 안내가 있고 현재 버전이 그 버전이면 반환
+    (+ shown 표시). 없으면 None."""
+    p = path or UPDATE_NOTICE_PATH
+    d = read_update_notice(p)
+    if not d or d.get("shown"):
+        return None
+    cur = current if current is not None else __version__
+    if _version_tuple(d.get("to")) != _version_tuple(cur):
+        return None
+    d["shown"] = True
+    try:
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, indent=2)
+    except OSError:
+        pass
+    return d
+
+
+class UpdateCoordinator:
+    """자동 업데이트 상태 기계 (GUI 없이 테스트 가능).
+
+    check()는 워커 스레드에서: 토글·중복 확인 → version.json → 새 버전이면
+    stage_update(다운로드·검증)까지 하고 pending에 보관, 같은 버전이면
+    기대값(data_files)만 동기화. apply_pending()은 메인 스레드에서:
+    시험 중이면 미루고('deferred'), 아니면 commit_staged + 안내 기록.
+    """
+
+    def __init__(self, base_url=UPDATE_BASE_URL, base_dir=None, enabled=None,
+                 current=None, log=None, notice_path=None):
+        self.base_url = base_url
+        self.base_dir = base_dir or BASE_DIR
+        self._enabled = enabled if enabled is not None else auto_update_enabled
+        self.current = current or __version__
+        self.log = log or startup_log
+        self.notice_path = notice_path or UPDATE_NOTICE_PATH
+        self.checked = False        # 같은 실행에서 중복 확인 방지
+        self.checking = False       # 워커 실행 중
+        self.info = None
+        self.pending = None         # 검증 완료·적용 대기 staged 목록
+        self.state = None           # 마지막 check 결과
+        self.detail = ""            # 마지막 메시지(오류 상세 등)
+        self.data_synced = 0        # 마지막 check에서 갱신한 기대값 수
+        self.applied_version = None
+
+    def enabled(self):
+        try:
+            return bool(self._enabled())
+        except Exception:
+            return True
+
+    def check(self, force=False, timeout=3, dl_timeout=15):
+        """확인 + (새 버전이면) 다운로드·검증. 상태 문자열 반환:
+        disabled / already / offline / latest / staged / data / failed / stuck
+        force: 수동 [업데이트 확인] — 토글과 중복 확인 제한 무시."""
+        if not force:
+            if not self.enabled():
+                self.log("자동 업데이트 꺼짐(세트설정 _설정.자동업데이트=false) — "
+                         "확인 건너뜀")
+                return self._done("disabled", "자동 업데이트가 꺼져 있습니다.")
+            if self.checked:
+                return self._done("already", "이번 실행에서 이미 확인했습니다.")
+        self.checked = True
+        self.checking = True
+        self.data_synced = 0
+        try:
+            info = fetch_update_info(self.base_url, timeout=timeout)
+            if info is None:
+                self.log("업데이트 확인: 서버 응답 없음(오프라인/차단) — 건너뜀")
+                return self._done("offline", "업데이트 서버에 연결할 수 없습니다.")
+            self.info = info
+            remote = str(info.get("version"))
+            if update_available(info, self.current):
+                notice = read_update_notice(self.notice_path)
+                if notice and not force and _version_tuple(notice.get("to")) == \
+                        _version_tuple(remote):
+                    self.log(f"v{remote}을(를) 이미 적용했는데 실행 버전이 "
+                             f"v{self.current}에 머물러 자동 적용을 중단합니다 "
+                             "([업데이트 확인]으로 수동 재시도 가능)")
+                    return self._done("stuck", f"v{remote} 적용 후에도 버전이 "
+                                      "오르지 않았습니다.")
+                n_files = len(info.get("files") or {})
+                n_data = len(info.get("data_files") or {})
+                self.log(f"새 버전 v{remote} 발견 (현재 v{self.current}) — "
+                         f"내려받는 중: 프로그램 {n_files}개 + 기대값 {n_data}개")
+                ok, msg, staged = stage_update(info, self.base_url,
+                                               self.base_dir, timeout=dl_timeout)
+                if not ok:
+                    self.log(msg)
+                    return self._done("failed", msg)
+                self.pending = staged
+                self.log(f"검증 통과: {msg} — 적용 대기")
+                return self._done("staged", msg)
+            ok, n, msg = sync_data_files(info, self.base_url, self.base_dir,
+                                         timeout=dl_timeout)
+            if not ok:
+                self.log(msg)
+                return self._done("failed", msg)
+            if n:
+                self.data_synced = n
+                self.log(f"기대값 자동 갱신: {msg}")
+                return self._done("data", msg)
+            self.log(f"업데이트 확인: 최신 버전 (v{self.current}) · {msg}")
+            return self._done("latest", f"현재 최신 버전입니다 (v{self.current}).")
+        except Exception as e:
+            self.log(f"업데이트 확인 중 예외: {e}")
+            return self._done("failed", f"업데이트 확인 중 오류: {e}")
+        finally:
+            self.checking = False
+
+    def _done(self, state, detail):
+        self.state, self.detail = state, detail
+        return state
+
+    def apply_pending(self, exam_running=False):
+        """스테이징된 업데이트 적용. 반환: applied / deferred / none / failed."""
+        if not self.pending:
+            return "none"
+        if exam_running:
+            self.log("시험 진행 중 — 업데이트 적용을 시험 종료 후로 미룹니다")
+            return "deferred"
+        staged, self.pending = self.pending, None
+        new_ver = (self.info or {}).get("version")
+        ok, msg = commit_staged(staged, new_ver)
+        self.detail = msg
+        if not ok:
+            self.log(msg)
+            return "failed"
+        self.applied_version = new_ver
+        write_update_notice(self.current, new_ver,
+                            (self.info or {}).get("notes") or "",
+                            path=self.notice_path)
+        self.log(f"업데이트 적용: {msg}")
+        return "applied"
 
 
 def format_elapsed(seconds):
@@ -4029,7 +4474,7 @@ if HAS_TK:
     class ExamApp(tk.Tk):
         """시작 화면."""
 
-        def __init__(self, scan_root=None):
+        def __init__(self, scan_root=None, auto_update=True):
             super().__init__()
             self.title(APP_TITLE)
             self.configure(bg=BG)
@@ -4039,8 +4484,12 @@ if HAS_TK:
             self.grade_py = find_grade_py()
             self.exam_running = False
             self._grade_state = None
-            self._update_info = None
-            self._update_prompted = False
+            self.auto_update = auto_update      # False: 시작 시 확인 안 함(테스트)
+            self.updater = UpdateCoordinator()
+            self._update_state = None           # 워커 결과 (메인 스레드 폴링)
+            self._update_progress = None        # 수동 확인 진행 창
+            self._poll_token = 0                # 폴링 세대 (중복 폴링 방지)
+            self._toast_after = None
             self._warned_dirty = set()   # 원본 오염 경고를 이미 띄운 세트
             self.plan_no = routine_day_no()   # 오늘의 학습 일정 번호
             self.adaptive = None              # 적응형 일정 (recompute_plan)
@@ -4056,9 +4505,21 @@ if HAS_TK:
                         f"세트 {len(self.sets)}개 · "
                         f"grade.py={self.grade_py or '못 찾음'} · "
                         f"Excel 실행 파일={excel or '못 찾음(기본 프로그램으로 엶)'}")
-            threading.Thread(target=self._bg_update_check,
-                             daemon=True).start()
-            self.after(1200, self._update_poll)
+            notice = consume_update_notice()
+            if notice:
+                startup_log(f"자동 업데이트 완료 확인: v{notice.get('from')} → "
+                            f"v{notice.get('to')} · {notice.get('notes') or ''}")
+                self.after(300, lambda: self.show_toast(
+                    f"v{notice.get('to')}(으)로 자동 업데이트됨 — "
+                    f"{notice.get('notes') or '변경 사항 안내 없음'}",
+                    seconds=15))
+            if auto_update:
+                startup_log("업데이트 확인 시작 (백그라운드, 타임아웃 3초)")
+                self._poll_token += 1
+                tok = self._poll_token
+                threading.Thread(target=self._bg_update_check,
+                                 daemon=True).start()
+                self.after(1200, lambda: self._update_poll(tok))
 
         # ---------------- UI 구성 ----------------
 
@@ -4071,9 +4532,25 @@ if HAS_TK:
             tk.Label(header, text="컴활 2급 실기 모의고사 런처", bg=BRAND,
                      fg="#CFE9DA", font=UI_FONT).pack(side="left")
 
+            # 비모달 안내 띠 (자동 업데이트 결과 등) — show_toast()가 pack
+            self.toast = tk.Frame(self, bg="#FFF4D6", padx=12, pady=6,
+                                  highlightbackground="#E5C87A",
+                                  highlightthickness=1, cursor="hand2")
+            self.toast_lbl = tk.Label(
+                self.toast, text="", bg="#FFF4D6", fg="#5A4300",
+                font=("Malgun Gothic", 9), justify="left", anchor="w",
+                wraplength=600)
+            self.toast_lbl.pack(side="left", fill="x", expand=True)
+            tk.Button(self.toast, text="✕", bg="#FFF4D6", fg="#5A4300",
+                      relief="flat", font=("Malgun Gothic", 9), padx=4,
+                      command=self.hide_toast).pack(side="right")
+            self.toast_lbl.bind("<Button-1>", self.hide_toast)
+            self.toast.bind("<Button-1>", self.hide_toast)
+
             # 오늘의 학습 카드 (날짜 기반 루틴 일정)
             plan_card = tk.Frame(self, bg=BRAND_SOFT, padx=14, pady=8)
             plan_card.pack(fill="x", padx=16, pady=(10, 0))
+            self.plan_card = plan_card
             row1 = tk.Frame(plan_card, bg=BRAND_SOFT)
             row1.pack(fill="x")
             tk.Button(row1, text="◀", font=UI_FONT, relief="flat",
@@ -4192,6 +4669,12 @@ if HAS_TK:
                       padx=10, pady=4,
                       command=self.manual_update_check).pack(
                 side="right", padx=4)
+            self.auto_update_var = tk.BooleanVar(value=auto_update_enabled())
+            self.auto_update_chk = tk.Checkbutton(
+                ctrl, text="자동 업데이트", variable=self.auto_update_var,
+                bg=BG, fg=INK, activebackground=BG, font=UI_FONT,
+                command=self._toggle_auto_update)
+            self.auto_update_chk.pack(side="right", padx=(0, 2))
             tk.Button(ctrl, text="Excel 신뢰 위치로 등록", font=UI_FONT,
                       relief="groove", padx=10, pady=4,
                       command=self.on_register_trust).pack(
@@ -4275,7 +4758,7 @@ if HAS_TK:
                 f"세트: {s['name']}",
                 f"폴더: {s.get('dir', '')}",
                 f"정답 파일: 있음",
-                f"기대값 JSON: {'있음' if s.get('key') else '없음'}",
+                f"기대값: {key_link_label(s)}",
                 "문제지 PDF: " + (os.path.basename(pdf) if pdf
                                 else "미연결 ([문제지 연결]로 지정 가능)"),
                 "",
@@ -4301,48 +4784,163 @@ if HAS_TK:
 
         # ---------------- 자동 업데이트 ----------------
 
-        def _bg_update_check(self):
+        def show_toast(self, text, seconds=8):
+            """비모달 안내 띠(시작 화면 위쪽). seconds 뒤 자동으로 사라지고
+            (0이면 유지) 띠를 클릭하거나 ✕를 누르면 바로 닫힙니다."""
+            self.toast_lbl.configure(text=text)
+            if not self.toast.winfo_manager():
+                self.toast.pack(fill="x", padx=16, pady=(8, 0),
+                                before=self.plan_card)
+            if self._toast_after is not None:
+                try:
+                    self.after_cancel(self._toast_after)
+                except Exception:
+                    pass
+                self._toast_after = None
+            if seconds:
+                self._toast_after = self.after(int(seconds * 1000),
+                                               self.hide_toast)
+            return text
+
+        def hide_toast(self, _event=None):
+            self._toast_after = None
+            if self.toast.winfo_manager():
+                self.toast.pack_forget()
+
+        def _toggle_auto_update(self):
+            on = bool(self.auto_update_var.get())
+            set_app_setting(AUTO_UPDATE_SETTING, on)
+            startup_log(f"자동 업데이트 {'켬' if on else '끔'} "
+                        f"(세트설정 _설정.{AUTO_UPDATE_SETTING})")
+            self.show_toast(
+                "자동 업데이트를 켰습니다 — 실행할 때마다 새 버전을 자동으로 "
+                "적용합니다" if on else
+                "자동 업데이트를 껐습니다 — [업데이트 확인]으로 수동 적용할 수 "
+                "있습니다", seconds=5)
+            return on
+
+        def _bg_update_check(self, force=False):
+            """(워커 스레드) 확인·다운로드·검증. 결과는 _update_state로 전달."""
             try:
-                if should_check_update():
-                    info = fetch_update_info()
-                    if update_available(info):
-                        self._update_info = info
+                self._update_state = self.updater.check(force=force)
+            except Exception as e:
+                log_error("업데이트 확인", e)
+                self._update_state = "failed"
+
+        def _update_poll(self, token=None, tries=0, manual=False):
+            """(메인 스레드) 워커 결과 폴링 — 최대 5분(느린 회선 다운로드)."""
+            if token is None:
+                token = self._poll_token
+            if token != self._poll_token:
+                return                      # 새 확인이 시작되어 이 폴링은 종료
+            state = self._update_state
+            if state is None:
+                if tries < 600:
+                    self.after(500, lambda: self._update_poll(token, tries + 1,
+                                                              manual))
+                return
+            self._update_state = None
+            self._on_update_checked(state, manual=manual)
+
+        def _on_update_checked(self, state, manual=False):
+            prog = self._update_progress
+            self._update_progress = None
+            if prog is not None:
+                try:
+                    prog.destroy()
+                except Exception:
+                    pass
+            if state == "staged":
+                return self._apply_update_now(manual=manual)
+            if state == "data":
+                self.refresh_sets()
+                self.show_toast(f"기대값 파일 {self.updater.data_synced}개를 "
+                                f"자동으로 내려받았습니다 → "
+                                f"{expected_values_dir()}", seconds=10)
+            elif manual:
+                if state == "latest":
+                    messagebox.showinfo(
+                        APP_TITLE, f"현재 최신 버전입니다 (v{__version__}).",
+                        parent=self)
+                elif state == "offline":
+                    messagebox.showinfo(
+                        APP_TITLE, "업데이트 서버에 연결할 수 없습니다.\n"
+                        "인터넷 연결을 확인한 뒤 다시 시도해 주세요.",
+                        parent=self)
+                elif state == "stuck":
+                    messagebox.showwarning(APP_TITLE, self.updater.detail,
+                                           parent=self)
+                else:
+                    CollapsibleErrorDialog(
+                        self, APP_TITLE,
+                        "업데이트에 실패해 기존 버전을 유지합니다.",
+                        self.updater.detail)
+            elif state == "failed":
+                self.show_toast("자동 업데이트 실패 — 기존 버전을 유지합니다 "
+                                "([시작 로그 보기]에서 원인 확인)", seconds=10)
+            return state
+
+        def _apply_update_now(self, manual=False):
+            """스테이징된 새 버전 적용(시험 중이면 연기) → 재시작."""
+            r = self.updater.apply_pending(exam_running=self.exam_running)
+            ver = (self.updater.info or {}).get("version")
+            if r == "applied":
+                self.show_toast(f"v{ver}(으)로 업데이트했습니다 — 잠시 후 "
+                                "자동으로 다시 시작합니다", seconds=0)
+                self._restart_when_idle()
+            elif r == "deferred":
+                self.show_toast(f"새 버전 v{ver} 준비됨 — 시험이 끝나면 "
+                                "자동으로 적용하고 다시 시작합니다", seconds=0)
+                if manual:
+                    messagebox.showinfo(
+                        APP_TITLE, f"새 버전 v{ver}을(를) 내려받았습니다.\n"
+                        "시험이 끝나면 자동으로 적용하고 다시 시작합니다.",
+                        parent=self)
+            elif r == "failed":
+                if manual:
+                    CollapsibleErrorDialog(
+                        self, APP_TITLE,
+                        "업데이트에 실패해 기존 버전을 유지합니다.",
+                        self.updater.detail)
+                else:
+                    self.show_toast("자동 업데이트 실패 — 기존 버전을 유지합니다 "
+                                    "([시작 로그 보기]에서 원인 확인)",
+                                    seconds=10)
+            return r
+
+        def _busy_for_restart(self):
+            """재시작을 미뤄야 하는 상태: 시험 중, 모달 대화상자, 열려 있는
+            보조 창(결과·오답노트 등; 단계 가이드는 제외)."""
+            if self.exam_running:
+                return True
+            try:
+                if self.grab_current() is not None:
+                    return True
             except Exception:
                 pass
+            guide = getattr(self, "step_guide", None)
+            for w in self.winfo_children():
+                if not isinstance(w, tk.Toplevel) or w is guide:
+                    continue
+                try:
+                    if w.winfo_exists() and w.winfo_viewable():
+                        return True
+                except Exception:
+                    pass
+            return False
 
-        def _update_poll(self, tries=0):
-            if self._update_info and not self._update_prompted:
-                self._update_prompted = True
-                self._prompt_update(self._update_info)
-                return
-            if tries < 12:
-                self.after(1000, lambda: self._update_poll(tries + 1))
-
-        def _prompt_update(self, info):
-            notes = info.get("notes") or "-"
-            if not messagebox.askyesno(
-                    APP_TITLE,
-                    f"새 버전 v{info.get('version')}가 있습니다 — 지금 "
-                    f"업데이트할까요?\n변경: {notes}", parent=self):
-                return
-            prog = tk.Toplevel(self)
-            prog.title(APP_TITLE)
-            prog.attributes("-topmost", True)
-            tk.Label(prog, text="업데이트를 내려받는 중입니다...",
-                     padx=26, pady=18, font=UI_FONT).pack()
-            prog.update()
-            ok, msg = apply_update(info)
-            prog.destroy()
-            if ok:
-                startup_log(f"업데이트 적용: {msg}")
-                messagebox.showinfo(
-                    APP_TITLE, msg + "\n\n[확인]을 누르면 새 버전으로 다시 "
-                    "시작합니다.", parent=self)
-                self._try_restart()
-            else:
-                CollapsibleErrorDialog(
-                    self, APP_TITLE,
-                    "업데이트에 실패해 기존 버전을 유지합니다.", msg)
+        def _restart_when_idle(self, tries=0):
+            """열린 창이 없을 때 재시작 (결과 창을 보는 중이면 닫을 때까지
+            2초 간격으로 기다림). 파일은 이미 교체되어 있어 언제 다시 시작해도
+            새 버전이 뜹니다."""
+            if self.exam_running:
+                return False          # exam_closed → _apply_update_now 경유
+            if self._busy_for_restart():
+                if tries == 0:
+                    startup_log("재시작 대기: 열린 창·대화상자가 닫히면 재시작")
+                self.after(2000, lambda: self._restart_when_idle(tries + 1))
+                return False
+            return self._try_restart()
 
         def _try_restart(self):
             """새 프로세스를 먼저 띄운 뒤 현재 창 종료 (성공 여부 반환).
@@ -4372,14 +4970,28 @@ if HAS_TK:
             return True
 
         def manual_update_check(self):
-            info = fetch_update_info()
-            if update_available(info):
-                self._update_prompted = True
-                self._prompt_update(info)
-            else:
-                messagebox.showinfo(
-                    APP_TITLE, f"현재 최신 버전입니다 (v{__version__}).",
-                    parent=self)
+            """[업데이트 확인] — 자동 업데이트 토글과 무관하게 즉시 확인·적용."""
+            if self.updater.checking or self._update_progress is not None:
+                messagebox.showinfo(APP_TITLE, "이미 업데이트를 확인하는 중입니다.",
+                                    parent=self)
+                return None
+            if self.updater.pending:          # 시험 중이라 미뤄 둔 업데이트
+                return self._apply_update_now(manual=True)
+            prog = tk.Toplevel(self)
+            prog.title(APP_TITLE)
+            prog.attributes("-topmost", True)
+            prog.resizable(False, False)
+            tk.Label(prog, text="업데이트를 확인하는 중입니다...",
+                     padx=26, pady=18, font=UI_FONT).pack()
+            prog.update()
+            self._update_progress = prog
+            self._update_state = None
+            self._poll_token += 1
+            tok = self._poll_token
+            threading.Thread(target=self._bg_update_check,
+                             kwargs={"force": True}, daemon=True).start()
+            self.after(300, lambda: self._update_poll(tok, manual=True))
+            return prog
 
         # ---------------- 시험 흐름 ----------------
 
@@ -4652,6 +5264,8 @@ if HAS_TK:
             self.start_btn.configure(state="normal", text="시험 시작")
             self.refresh_records()
             self._show_info()
+            if self.updater.pending:      # 시험 중 미뤄 둔 업데이트 → 지금 적용
+                self.after(500, self._apply_update_now)
 
         # ---------------- 오늘의 학습 ----------------
 
@@ -5028,7 +5642,7 @@ if HAS_TK:
 
 def run_smoke():
     """GUI 스모크 테스트: 창 생성 -> 위젯 렌더 -> 타이머 창 -> destroy."""
-    app = ExamApp()
+    app = ExamApp(auto_update=False)     # 네트워크 확인 없이
     app.update_idletasks()
     app.update()
     exam = {"set": {"name": "스모크테스트", "dir": BASE_DIR,
@@ -5325,6 +5939,44 @@ def run_smoke():
     app.listbox.delete(0, "end")
     for s_ in app.sets:
         app.listbox.insert("end", " " + s_["name"])
+    # v2.3.0: 안내 띠 / 자동 업데이트 토글 / 확인 결과 처리 (네트워크 없이)
+    assert not app.toast.winfo_manager()
+    app.show_toast("스모크 안내", seconds=0)
+    app.update_idletasks()
+    app.update()
+    assert app.toast.winfo_manager() and \
+        app.toast_lbl.cget("text") == "스모크 안내"
+    app.hide_toast()
+    assert not app.toast.winfo_manager()
+    _au_before = auto_update_enabled()
+    app.auto_update_var.set(False)
+    assert app._toggle_auto_update() is False and auto_update_enabled() is False
+    app.auto_update_var.set(True)
+    assert app._toggle_auto_update() is True and auto_update_enabled() is True
+    set_app_setting(AUTO_UPDATE_SETTING, _au_before)
+    assert app._apply_update_now() == "none"          # 대기 중 업데이트 없음
+    assert app._on_update_checked("latest") == "latest"  # 자동 경로: 대화상자 없음
+    app._on_update_checked("failed")
+    assert "자동 업데이트 실패" in app.toast_lbl.cget("text")
+    app.hide_toast()
+    app.updater.data_synced = 2
+    app._on_update_checked("data")
+    assert "기대값 파일 2개" in app.toast_lbl.cget("text")
+    app.hide_toast()
+    assert app._busy_for_restart() is True            # 타이머 창 열림 → 대기
+    timer.withdraw()
+    app.update_idletasks()
+    app.update()
+    assert app._busy_for_restart() is False
+    _dw = DiagnosisWindow(app, "x")
+    app.update_idletasks()
+    app.update()
+    assert app._busy_for_restart() is True            # 보조 창 열림 → 재시작 대기
+    _dw.destroy()
+    app.update_idletasks()
+    app.update()
+    assert app._busy_for_restart() is False
+    timer.deiconify()                                 # (실제 재시작은 호출 안 함)
     # 재시작 명령은 만들기만 (실행하지 않음)
     r_args, r_kw = restart_command(argv=["시험장.py"])
     assert r_args[0] == sys.executable and r_args[1].endswith("시험장.py") \
@@ -5347,7 +5999,8 @@ def run_smoke():
     app.destroy()
     print("SMOKE OK: 창 생성/위젯 렌더/타이머/오답노트 패널/단계 가이드(세트 "
           "자동 선택·바꾸기·미발견 직접 선택)/오류 대화상자·로그/진단 창/"
-          "시작 로그 창/Excel 확인 안내 창/PDF 회차 경고/파괴 정상")
+          "시작 로그 창/Excel 확인 안내 창/PDF 회차 경고/안내 띠·자동 업데이트 "
+          "토글/파괴 정상")
 
 
 def _notify_no_tk():
