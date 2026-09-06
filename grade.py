@@ -11,9 +11,31 @@
     학생 파일이 정답과 일치하는지 검사합니다.
 
 의존성: Python 3.8+ / openpyxl (표준 라이브러리 외 유일한 의존성)
+
+변경 이력:
+    2.0.1  이의제기 3건 반영 (2024 상공회의소 샘플 A형 리포트)
+           - 기본작업-1: 정답 셀의 표시 형식으로 렌더한 결과가 같은 숫자
+             (예: 0.00% → 0.5714와 4/7 모두 57.14%)는 정답 처리. 자료 입력은
+             문제지에 보이는 대로 타이핑하는 것이 실제 시험 관례.
+           - 기본작업-3: 조건부 서식을 셀 단위 실효 규칙(적용 범위 + 상대참조
+             이동 + 적용 서식)으로 비교. '범위만 다르면 정답' 관대 처리 제거
+             ('행 전체' = 표 전체 범위 + $열 고정 혼합참조가 실제 시험 기준).
+             리포트에 정답 규칙/내 규칙을 나란히 표기하고 차이 항목(범위·참조
+             고정·서식·유형)을 명시.
+           - 리포트: 학생 셀 상태를 '빈 셀 / 수식만 있음(계산값 없음) / 값'으로
+             구분 표기하고 학생 수식 전문을 항상 표시. 이의제기 복사 텍스트에
+             셀별 정답·내 답을 나열 (첫 셀만 표기하던 문제 해결).
+           - 계산작업: 인식된 문제 수와 문제당 배점을 카드에 표기, 문제 파일
+             오염(정답 수식이 이미 포함) 경고, 문제 범위 전체가 빈 셀이면 저장
+             확인 안내, 계산값 없는 수식은 재저장 안내.
+           - 기본작업-2: 문제·정답 모두 값이 빈 셀의 맞춤(세로 맞춤 등) 차이는
+             화면에 보이지 않으므로 채점 제외 — '선택 영역의 가운데로'
+             (centerContinuous)처럼 빈 셀에도 보이는 맞춤만 유지. 병합·테두리·
+             채우기·값은 그대로 채점 (2024 상시 2회 정답 K4:K9 잔여 서식 오탐).
+    2.0.0  리포트 이의제기 기능(카드별 [이의제기] + 복사 텍스트) 및 학습 로그
 """
 
-__version__ = "2.0.0"
+__version__ = "2.0.1"
 
 import argparse
 import html as html_mod
@@ -199,6 +221,53 @@ def value_eq(a, b):
     if isinstance(a, str) and isinstance(b, str):
         return a.strip() == b.strip()
     return a == b
+
+
+_NF_DIGITS = re.compile(r"[0#?]")
+
+
+def display_precision(nf):
+    """표시 형식에서 (배율, 소수 자릿수)를 추출. 판별 불가면 None.
+
+    자료 입력 채점용: '0.00%' -> (100, 2), '#,##0' -> (1, 0), '0.0' -> (1, 1).
+    General·날짜/시간·지수·텍스트(@) 형식은 None.
+    """
+    if not nf or not isinstance(nf, str):
+        return None
+    s = nf.split(";")[0]
+    s = re.sub(r'"[^"]*"', "", s)        # 따옴표 문자열 제거
+    s = re.sub(r"\[[^\]]*\]", "", s)     # [$-412], [빨강] 등 제거
+    s = re.sub(r"\\.", "", s)            # \문자 이스케이프 제거
+    s = re.sub(r"_.", "", s)             # _-, _) 등 공백 자리 제거
+    s = re.sub(r"\*.", "", s)             # * 반복 문자 제거
+    if s.strip().lower() == "general" or "@" in s or not _NF_DIGITS.search(s):
+        return None
+    if re.search(r"[ymdhsaAeE]", s):    # 날짜/시간/지수 형식
+        return None
+    scale = 100 if "%" in s else 1
+    if "." in s:
+        dec = len(_NF_DIGITS.findall(s.split(".", 1)[1]))
+    else:
+        dec = 0
+    return scale, dec
+
+
+def value_eq_display(a, b, nf):
+    """정답 셀의 표시 형식으로 렌더한 숫자가 같은가 (0.5714 vs 4/7 -> 57.14%)."""
+    prec = display_precision(nf)
+    if prec is None or isinstance(a, bool) or isinstance(b, bool):
+        return False
+    na, nb = _as_number(a), _as_number(b)
+    if na is None or nb is None:
+        return False
+    scale, dec = prec
+    from decimal import Decimal, ROUND_HALF_UP
+    q = Decimal(1).scaleb(-dec)
+    try:
+        return (Decimal(str(na * scale)).quantize(q, rounding=ROUND_HALF_UP)
+                == Decimal(str(nb * scale)).quantize(q, rounding=ROUND_HALF_UP))
+    except Exception:
+        return False
 
 
 def fmt_value(v):
@@ -1008,6 +1077,234 @@ def norm_range_only(ref):
 # ---------------------------------------------------------------------------
 
 
+_CF_REF_RE = re.compile(
+    r"(?<![A-Za-z0-9_.\$])(\$?)([A-Za-z]{1,3})(\$?)(\d{1,7})(?![A-Za-z0-9_(])")
+
+CF_TYPE_KO = {
+    "expression": "수식을 사용하여 서식을 지정할 셀 결정",
+    "cellIs": "셀 값 기준", "containsText": "특정 텍스트 포함",
+    "notContainsText": "특정 텍스트 미포함", "beginsWith": "시작 문자",
+    "endsWith": "끝 문자", "duplicateValues": "중복 값",
+    "uniqueValues": "고유 값", "top10": "상위/하위", "aboveAverage": "평균 초과/미만",
+    "colorScale": "색조", "dataBar": "데이터 막대", "iconSet": "아이콘 집합",
+    "containsBlanks": "빈 셀", "notContainsBlanks": "빈 셀 아님",
+    "containsErrors": "오류", "timePeriod": "발생 날짜",
+}
+
+CF_ROW_PRINCIPLE = (
+    "'행 전체'에 서식을 적용하려면 ① 적용 범위는 표 전체(예: A4:H18)를 선택한 "
+    "뒤 규칙을 만들고 ② 수식은 열만 고정한 혼합참조(예: =LEFT($A4,4)=\"2019\")"
+    "로 씁니다. 그래야 B~H열의 셀도 각 행의 A열 값을 검사해 행 전체가 같은 "
+    "색이 됩니다. A열만 선택하거나(범위 오답) 상대참조 A4를 쓰면(참조 오답) "
+    "실제 시험에서는 오답입니다.")
+
+
+def shift_formula(formula, dr, dc):
+    """수식의 상대 참조를 (dr행, dc열)만큼 이동 — $ 고정 부분은 유지.
+
+    조건부 서식 규칙이 적용 범위의 각 셀에서 실제로 검사하는 수식을 얻기 위함.
+    (Excel은 규칙 수식을 적용 범위의 왼쪽 위 셀 기준 상대 위치로 해석)
+    """
+    if not formula or (dr == 0 and dc == 0):
+        return formula
+    from openpyxl.utils import column_index_from_string, get_column_letter
+    parts = re.split(r'("(?:[^"]|"")*")', str(formula))
+    out = []
+    for i, p in enumerate(parts):
+        if i % 2 == 1:
+            out.append(p)
+            continue
+
+        def _rep(m):
+            cabs, col, rabs, row = m.groups()
+            try:
+                ci = column_index_from_string(col.upper())
+                ri = int(row)
+            except Exception:
+                return m.group(0)
+            if not cabs:
+                ci += dc
+            if not rabs:
+                ri += dr
+            if ci < 1 or ri < 1 or ci > 16384 or ri > 1048576:
+                return "#REF!"
+            return f"{cabs}{get_column_letter(ci)}{rabs}{ri}"
+        out.append(_CF_REF_RE.sub(_rep, p))
+    return "".join(out)
+
+
+def _dxf_sig(dxf, wb=None):
+    """조건부 서식의 적용 서식(dxf) 요약 {'글꼴 색': 색키, '굵게': True, ...}."""
+    sig = {}
+    if dxf is None:
+        return sig
+    try:
+        f = dxf.font
+        if f is not None:
+            col = _color_key(f.color, wb)
+            if col:
+                sig["글꼴 색"] = col
+            if f.b:
+                sig["굵게"] = True
+            if f.i:
+                sig["기울임꼴"] = True
+            u = f.u
+            if u and u != "none":
+                sig["밑줄"] = str(u)
+            if f.strike:
+                sig["취소선"] = True
+    except Exception:
+        pass
+    try:
+        fl = dxf.fill
+        if fl is not None:
+            # dxf 단색 채우기는 Excel이 bgColor에 저장 (일반 셀과 반대)
+            col = _color_key(getattr(fl, "bgColor", None), wb) or \
+                _color_key(getattr(fl, "fgColor", None), wb)
+            if col:
+                sig["채우기 색"] = col
+    except Exception:
+        pass
+    return sig
+
+
+def _dxf_desc(sig):
+    if not sig:
+        return "(서식 없음)"
+    parts = []
+    for k, v in sig.items():
+        if isinstance(v, tuple) and v and v[0] == "rgb":
+            parts.append(f"{k} {color_name_ko(v[1])}")
+        elif isinstance(v, tuple):
+            parts.append(f"{k} 테마색{v[1:]}")
+        elif v is True:
+            parts.append(k)
+        else:
+            parts.append(f"{k} {v}")
+    return ", ".join(parts)
+
+
+def _dxf_compatible(exp, got):
+    """정답 dxf가 지정한 속성은 학생 dxf에도 같은 값으로 있어야 함."""
+    for k, v in (exp or {}).items():
+        if (got or {}).get(k) != v:
+            return False
+    return True
+
+
+def cf_rules_detail(ws, wb=None):
+    """시트의 조건부 서식 규칙 목록 (범위·유형·수식·서식·비교 키)."""
+    rules = []
+    try:
+        for cf in ws.conditional_formatting:
+            sq = str(cf.sqref)
+            sq_disp = sq.replace("$", "").upper().strip()
+            for r in cf.rules:
+                formulas = []
+                try:
+                    formulas = [str(f) for f in (r.formula or [])]
+                except Exception:
+                    pass
+                key = (norm_ref(sq), r.type, getattr(r, "operator", None),
+                       tuple(sorted(norm_formula("=" + f) for f in formulas)))
+                rules.append({
+                    "sqref": sq_disp, "ranges": sq_disp.split(),
+                    "type": r.type, "operator": getattr(r, "operator", None),
+                    "formulas": formulas,
+                    "dxf": _dxf_sig(getattr(r, "dxf", None), wb),
+                    "key": key})
+    except Exception:
+        pass
+    return rules
+
+
+def _cf_rule_cells(rule, limit=20000):
+    """규칙 적용 셀 목록 -> (앵커(r,c), [(r,c)...], 상한 초과 여부)."""
+    from openpyxl.utils import range_boundaries
+    cells = []
+    anchor = None
+    for rng in rule["ranges"]:
+        try:
+            c1, r1, c2, r2 = range_boundaries(rng if ":" in rng else f"{rng}:{rng}")
+        except Exception:
+            continue
+        if None in (c1, r1, c2, r2):
+            return anchor, cells, True   # 열/행 전체 참조: 폴백
+        if anchor is None:
+            anchor = (r1, c1)
+        for r in range(r1, r2 + 1):
+            for c in range(c1, c2 + 1):
+                cells.append((r, c))
+                if len(cells) > limit:
+                    return anchor, cells, True
+    return anchor, cells, False
+
+
+def _cf_effective(rule, r, c, anchor):
+    """규칙이 (r,c)에서 실제로 검사하는 정규화 수식 튜플."""
+    ar, ac = anchor
+    return tuple(sorted(norm_formula("=" + shift_formula(f, r - ar, c - ac))
+                        for f in rule["formulas"]))
+
+
+def cf_effective_map(rules):
+    """{(r,c): [(유형, 연산자, 실효수식, dxf, 규칙 idx), ...]}, 폴백 필요 여부."""
+    m = {}
+    overflow = False
+    for idx, rule in enumerate(rules):
+        anchor, cells, over = _cf_rule_cells(rule)
+        if over or anchor is None:
+            overflow = True
+            continue
+        for (r, c) in cells:
+            m.setdefault((r, c), []).append(
+                (rule["type"], rule["operator"] or None,
+                 _cf_effective(rule, r, c, anchor), rule["dxf"], idx))
+    return m, overflow
+
+
+def cf_compare_rule(rule, rules_s, map_s):
+    """정답 규칙 1개를 학생 규칙들과 셀 단위로 대조.
+
+    반환 dict: ok, missing(규칙 없는 셀), type_bad, formula_bad, dxf_bad,
+    fallback(셀 전개 불가로 집합 비교한 경우).
+    """
+    out = {"ok": False, "missing": [], "type_bad": [], "formula_bad": [],
+           "dxf_bad": [], "fallback": False}
+    anchor, cells, over = _cf_rule_cells(rule)
+    if over or anchor is None:
+        out["fallback"] = True
+        out["ok"] = any(s["key"] == rule["key"] for s in rules_s)
+        return out
+    for (r, c) in cells:
+        eff = _cf_effective(rule, r, c, anchor)
+        entries = map_s.get((r, c)) or []
+        if not entries:
+            out["missing"].append((r, c))
+            continue
+        same_type = [e for e in entries
+                     if e[0] == rule["type"]
+                     and (e[1] or None) == (rule["operator"] or None)]
+        if not same_type:
+            out["type_bad"].append((r, c))
+            continue
+        same_f = [e for e in same_type if e[2] == eff]
+        if not same_f:
+            out["formula_bad"].append((r, c))
+            continue
+        if not any(_dxf_compatible(rule["dxf"], e[3]) for e in same_f):
+            out["dxf_bad"].append((r, c))
+    out["ok"] = not (out["missing"] or out["type_bad"] or out["formula_bad"]
+                     or out["dxf_bad"])
+    return out
+
+
+def _cf_rule_text(rule):
+    f = ("=" + rule["formulas"][0]) if rule["formulas"] else \
+        f"({CF_TYPE_KO.get(rule['type'], rule['type'])})"
+    return f"{rule['sqref']}: {f} · {_dxf_desc(rule['dxf'])}"
+
+
 def cf_rule_set(ws):
     """시트의 조건부 서식 규칙을 정규화된 튜플 집합으로."""
     rules = set()
@@ -1077,6 +1374,18 @@ def _blank_answer_cell(sha, r, c):
 BLANK_SKIP_KINDS = ("font", "number_format")
 
 
+def _blank_align_sig(sig):
+    """값이 빈 셀의 맞춤 시그니처를 '화면에 보이는 부분'만 남긴다.
+
+    빈 셀은 세로 맞춤·줄 바꿈·회전·가운데/왼쪽 맞춤이 모두 화면에 영향이
+    없다. 유일한 예외는 '선택 영역의 가운데로'(centerContinuous) — 이웃
+    셀의 텍스트가 이 셀까지 걸쳐 표시되므로 유지한다.
+    """
+    if isinstance(sig, tuple) and sig and sig[0] == "centerContinuous":
+        return ("centerContinuous",)
+    return None
+
+
 def format_diff_items(book_p, book_a, psheet, asheet):
     """문제↔정답 서식 diff를 종류별 항목으로. {kind: [셀좌표...] 또는 데이터}
 
@@ -1099,6 +1408,9 @@ def format_diff_items(book_p, book_a, psheet, asheet):
                     continue
                 sp = fmt_signature_m(shp, r, c, kind, p_members, p_anchors)
                 sa = fmt_signature_m(sha, r, c, kind, a_members, a_anchors)
+                if blank_a and kind == "alignment":
+                    # 빈 셀의 맞춤은 보이는 부분(centerContinuous)만 비교
+                    sp, sa = _blank_align_sig(sp), _blank_align_sig(sa)
                 if sp != sa:
                     items.setdefault(kind, []).append(
                         sha.cell(r, c).coordinate)
@@ -1204,13 +1516,17 @@ class CellJudge:
     key_cells: {좌표: {"value": 기대값 or None, "formula": 기대수식 or None}}
     """
 
-    def __init__(self, book_a, book_s, asheet, ssheet, key_cells):
+    def __init__(self, book_a, book_s, asheet, ssheet, key_cells,
+                 display_tolerant=False):
         self.sha_raw = book_a.raw[asheet]
         self.sha_val = book_a.cached[asheet]
         self.shs_raw = book_s.raw[ssheet] if ssheet else None
         self.shs_val = book_s.cached[ssheet] if ssheet else None
         self.key_cells = key_cells or {}
         self.formula_only_used = False  # 캐시값 없어 수식 판정한 적 있음
+        # 자료 입력(기본작업-1): 정답 셀 표시 형식으로 같은 숫자면 정답
+        self.display_tolerant = display_tolerant
+        self.display_matched = []       # 표시 형식 기준으로 정답 처리한 셀
 
     def expected(self, r, c):
         """(기대값 or __MISSING__, 기대수식) 반환."""
@@ -1255,6 +1571,16 @@ class CellJudge:
             if not ok and ef and sf and norm_formula(ef) == norm_formula(sf):
                 # 수식이 정확히 같은데 캐시값만 다른 경우(재계산 안 됨) 관대 처리
                 ok = True
+            if not ok and self.display_tolerant:
+                try:
+                    nf = self.sha_raw.cell(r, c).number_format
+                except Exception:
+                    nf = None
+                if value_eq_display(exp, got, nf):
+                    ok = True
+                    coord = self.sha_raw.cell(r, c).coordinate
+                    if coord not in self.display_matched:
+                        self.display_matched.append(coord)
             return ok, exp, got, ef
         # 2) 값 판정 불가 -> 수식 판정
         if ef is not None or sf is not None:
@@ -1499,19 +1825,55 @@ def _fmt_expected(exp, ef):
     return fmt_value(exp)
 
 
+STATE_BLANK = "(빈 셀 — 값·수식 없음)"
+STATE_NOCACHE = "(수식만 있음 · 계산값 없음)"
+NOCACHE_GUIDE = ("수식은 있으나 계산된 값이 파일에 저장되지 않아 수식 문자열로만 "
+                 "비교했습니다 — Excel에서 열어 저장(Ctrl+S)한 뒤 다시 채점하면 "
+                 "값 기준으로 채점됩니다.")
+BLANK_GUIDE = ("채점한 파일에서 이 셀들은 값도 수식도 없는 빈 셀입니다 — 풀이를 "
+               "저장(Ctrl+S)한 파일이 맞는지, 다른 사본을 채점한 것은 아닌지 "
+               "확인하세요.")
+
+
+def student_cell_state(judge, r, c):
+    """학생 셀 상태 -> (상태, 표시 문자열, 학생 수식).
+
+    상태: 'nosheet'(시트 없음) / 'blank'(값·수식 없음) /
+          'nocache'(수식은 있으나 계산값 없음) / 'value'
+    """
+    if judge.shs_raw is None:
+        return "nosheet", "(시트 없음)", None
+    try:
+        got, sf = judge.student(r, c)
+    except Exception:
+        return "value", "?", None
+    if got == "__MISSING__":
+        return "nocache", STATE_NOCACHE, sf
+    if got is None and not sf:
+        return "blank", STATE_BLANK, None
+    return "value", fmt_value(got), sf
+
+
 def make_cell_entries(judge, wrong, limit=3):
-    """오답 셀들의 (좌표, 기대값, 학생값, 기대/학생 수식) 구조화 목록."""
+    """오답 셀들의 (좌표, 기대값, 학생값·상태, 기대/학생 수식) 구조화 목록."""
     out = []
     for (r, c, coord) in wrong[:limit]:
         ok, exp, got, ef = judge.judge(r, c)
-        try:
-            sf = judge.student(r, c)[1]
-        except Exception:
-            sf = None
+        state, got_txt, sf = student_cell_state(judge, r, c)
         out.append({"coord": coord, "expected": _fmt_expected(exp, ef),
-                    "got": fmt_value(got), "formula": ef,
-                    "got_formula": sf})
+                    "got": got_txt, "formula": ef,
+                    "got_formula": sf, "got_state": state})
     return out
+
+
+def cell_state_guide(judge, wrong):
+    """오답 셀 상태 요약 안내문 (전부 빈 셀 / 계산값 없는 수식 포함). 없으면 None."""
+    states = [student_cell_state(judge, r, c)[0] for (r, c, _co) in wrong]
+    if states and all(s == "blank" for s in states):
+        return BLANK_GUIDE
+    if any(s == "nocache" for s in states):
+        return NOCACHE_GUIDE
+    return None
 
 
 def add_card(res, label, lost, kind, cells=None, formula=None,
@@ -1528,8 +1890,11 @@ def add_card(res, label, lost, kind, cells=None, formula=None,
 def add_wrong_cells(res, judge, wrong, limit=30):
     for (r, c, coord) in wrong[:limit]:
         ok, exp, got, ef = judge.judge(r, c)
+        _state, got_txt, sf = student_cell_state(judge, r, c)
         line = (f"{coord}: 기대값 {_fmt_expected(exp, ef)} / "
-                f"학생값 {fmt_value(got)}")
+                f"학생값 {got_txt}")
+        if sf:
+            line += f" / 학생 수식 {sf}"
         if ef:
             line += f" / 기대 수식 {ef}"
         res.details.append(line)
@@ -1546,16 +1911,26 @@ def grade_basic1(res, ctx):
         return
     judge = ctx["judge"]
     wrong = [(r, c, co) for (r, c, co) in diffs if not judge.judge(r, c)[0]]
+    if judge.display_matched:
+        res.notes.append(
+            "표시 형식 기준으로 같은 값이라 정답 처리: "
+            + ", ".join(judge.display_matched[:8])
+            + (" 외" if len(judge.display_matched) > 8 else "")
+            + " (자료 입력은 문제지에 보이는 대로 입력하면 됩니다 — 예: "
+              "57.14%)")
     if wrong:
         res.earned = 0
         res.details.append(f"자료 입력 {len(diffs)}개 셀 중 {len(wrong)}개 불일치 "
                            "(부분점수 없음, 0점)")
         add_wrong_cells(res, judge, wrong)
+        guide = cell_state_guide(judge, wrong)
         add_card(res, "자료 입력", res.alloc, "cell",
                  cells=make_cell_entries(judge, wrong, 5),
-                 more=max(0, len(wrong) - 5),
+                 more=max(0, len(wrong) - 5), note=guide,
                  hint="기본작업-1은 부분점수가 없습니다. 입력을 마친 뒤 "
-                      "문제지와 셀 단위로 1:1 대조하는 습관을 들이세요.")
+                      "문제지와 셀 단위로 1:1 대조하는 습관을 들이세요. "
+                      "숫자는 문제지에 보이는 그대로(예: 57.14%) 입력하면 "
+                      "표시 형식 기준으로 같은 값은 정답입니다.")
     else:
         res.earned = res.alloc
 
@@ -1800,7 +2175,10 @@ def grade_basic2(res, ctx):
                 sig_a = fmt_signature_m(sha, r, c, k, a_members, a_anchors)
                 sig_s = fmt_signature_m(shs, r, c, k, s_members, s_anchors) \
                     if shs is not None else None
-                if sig_a != sig_s:
+                cmp_a, cmp_s = sig_a, sig_s
+                if k == "alignment" and _blank_answer_cell(sha, r, c):
+                    cmp_a, cmp_s = _blank_align_sig(sig_a), _blank_align_sig(sig_s)
+                if cmp_a != cmp_s:
                     u["sig_a"], u["sig_s"] = sig_a, sig_s
                     fails.append(u)
         if not fails:
@@ -2191,32 +2569,111 @@ def grade_basic3(res, ctx):
     """
     book_p, book_a, book_s = ctx["book_p"], ctx["book_a"], ctx["book_s"]
     psheet, asheet, ssheet = ctx["psheet"], ctx["asheet"], ctx["ssheet"]
-    cf_a = cf_rule_set(book_a.raw[asheet])
-    cf_p = cf_rule_set(book_p.raw[psheet])
-    target = cf_a - cf_p
+    rules_a = cf_rules_detail(book_a.raw[asheet], book_a.raw)
+    rules_p = cf_rules_detail(book_p.raw[psheet], book_p.raw)
+    p_keys = {r["key"] for r in rules_p}
+    target = [r for r in rules_a if r["key"] not in p_keys]
     if target:
-        cf_s = cf_rule_set(book_s.raw[ssheet]) if ssheet else set()
+        rules_s = [r for r in cf_rules_detail(book_s.raw[ssheet], book_s.raw)
+                   if r["key"] not in p_keys] if ssheet else []
+        map_s, _over = cf_effective_map(rules_s)
         matched = 0
+        from openpyxl.utils import get_column_letter
+
+        def _rng_txt(cells):
+            """셀 목록 -> 범위 표기. 직사각형을 꽉 채우면 'B4:H18' 한 덩어리."""
+            rs = [r for (r, _c) in cells]
+            cs = [c for (_r, c) in cells]
+            if cells and len(set(cells)) == \
+                    (max(rs) - min(rs) + 1) * (max(cs) - min(cs) + 1):
+                a = f"{get_column_letter(min(cs))}{min(rs)}"
+                b = f"{get_column_letter(max(cs))}{max(rs)}"
+                return a if a == b else f"{a}:{b}"
+            co = compress_coords([f"{get_column_letter(c)}{r}" for (r, c) in cells])
+            return ", ".join(co[:4]) + (" 외" if len(co) > 4 else "")
+
         for rule in target:
-            if rule in cf_s:
+            v = cf_compare_rule(rule, rules_s, map_s)
+            if v["ok"]:
                 matched += 1
-            elif any(r[1:] == rule[1:] for r in cf_s):  # 범위만 다르고 규칙 동일
-                matched += 1
-                res.notes.append("조건부 서식 적용 범위가 정답과 다르지만 규칙이 "
-                                 "같아 정답 처리")
-            else:
-                sq, typ, op, fs = rule
-                res.details.append(
-                    f"[조건부 서식] 누락/불일치: 범위 {sq}, 유형 {typ}"
-                    + (f", 수식 {'; '.join(fs)}" if fs else ""))
-                add_card(res, "조건부 서식", res.alloc / len(target), "cf",
-                         formula=("=" + fs[0]) if fs else None,
-                         note=f"적용 범위 {sq} / 규칙 유형 {typ}"
-                              + (f" / 연산자 {op}" if op else ""),
-                         hint="홈 탭 → 조건부 서식 → 새 규칙 → '수식을 사용하여 "
-                              "서식을 지정할 셀 결정'. 포인트: 행마다 검사하려면 "
-                              "열만 고정하는 혼합참조($E5)를 쓰고, 텍스트 비교는 "
-                              "큰따옴표(\"...\")로 감쌉니다.")
+                continue
+            sq, typ = rule["sqref"], rule["type"]
+            typ_ko = CF_TYPE_KO.get(typ, typ)
+            exp_f = ("=" + rule["formulas"][0]) if rule["formulas"] else None
+            stu_f = next((("=" + s["formulas"][0]) for s in rules_s
+                          if s["formulas"]), None)
+            diffs = []
+            if not rules_s:
+                diffs.append("내 시트에 조건부 서식 규칙이 없습니다 (문제 파일에 "
+                             "원래 있던 규칙 제외). 규칙을 만든 뒤 저장했는지 "
+                             "확인하세요.")
+            if v["fallback"]:
+                diffs.append("규칙 범위가 너무 커서 범위·유형·수식 문자열로만 "
+                             "비교했습니다.")
+            if v["missing"] and rules_s:
+                diffs.append(
+                    f"적용 범위 불일치: 정답은 {sq} 전체에 규칙이 있는데 내 답은 "
+                    f"{_rng_txt(v['missing'])}에 규칙이 없습니다 — '행 전체' "
+                    "서식은 표 전체 범위를 선택한 뒤 규칙을 만들어야 합니다.")
+            if v["type_bad"]:
+                got_types = sorted({CF_TYPE_KO.get(s["type"], s["type"])
+                                    for s in rules_s})
+                diffs.append(f"규칙 유형 불일치: 정답 '{typ_ko}' / 내 답 "
+                             f"'{', '.join(got_types)}'")
+            if v["formula_bad"]:
+                anchoring = stu_f is not None and exp_f is not None and \
+                    norm_formula(stu_f) == norm_formula(exp_f)
+                if anchoring:
+                    diffs.append(
+                        f"수식의 참조 고정($) 방식이 다릅니다: 내 답 {stu_f} → "
+                        f"정답 {exp_f}. 행마다 기준 열을 검사하려면 열만 고정한 "
+                        "혼합참조($A4)여야 합니다 — A4(상대)는 B열에서 B4를 "
+                        "검사하고, $A$4(절대)는 모든 행이 4행만 검사합니다.")
+                else:
+                    diffs.append(f"수식 불일치: 정답 {exp_f} / 내 답 "
+                                 f"{stu_f or '(수식 없음)'} "
+                                 f"({_rng_txt(v['formula_bad'])})")
+            if v["dxf_bad"]:
+                got_d = " / ".join(_dxf_desc(s["dxf"]) for s in rules_s)
+                diffs.append(f"적용 서식 불일치: 정답 {_dxf_desc(rule['dxf'])} "
+                             f"/ 내 답 {got_d}")
+            stu_txt = " / ".join(_cf_rule_text(s) for s in rules_s) or "(규칙 없음)"
+            res.details.append(
+                f"[조건부 서식] 누락/불일치: 범위 {sq}, 유형 {typ_ko}"
+                + (f", 수식 {exp_f}" if exp_f else "")
+                + f" / 내 규칙: {stu_txt}"
+                + (" — " + " ".join(diffs) if diffs else ""))
+            props = [
+                {"name": "적용 범위", "expected": sq,
+                 "got": " / ".join(s["sqref"] for s in rules_s) or "(규칙 없음)"},
+                {"name": "수식", "expected": exp_f or f"({typ_ko})",
+                 "got": " / ".join(
+                     (("=" + s["formulas"][0]) if s["formulas"]
+                      else f"({CF_TYPE_KO.get(s['type'], s['type'])})")
+                     for s in rules_s) or "(규칙 없음)"},
+                {"name": "적용 서식", "expected": _dxf_desc(rule["dxf"]),
+                 "got": " / ".join(_dxf_desc(s["dxf"]) for s in rules_s)
+                 or "(규칙 없음)"},
+            ]
+            if v["type_bad"]:
+                props.append({"name": "규칙 유형", "expected": typ_ko,
+                              "got": ", ".join(sorted(
+                                  {CF_TYPE_KO.get(s["type"], s["type"])
+                                   for s in rules_s})) or "(규칙 없음)"})
+            add_card(res, "조건부 서식", res.alloc / len(target), "cf",
+                     formula=exp_f, props=props,
+                     note=f"정답 규칙: 적용 범위 {sq} / 유형 {typ_ko}"
+                          + (f" / 수식 {exp_f}" if exp_f else "")
+                          + f" / {_dxf_desc(rule['dxf'])} ‖ 내 규칙: {stu_txt}",
+                     hint="홈 탭 → 조건부 서식 → 새 규칙 → '수식을 사용하여 "
+                          "서식을 지정할 셀 결정'. 포인트: 행 전체에 적용하려면 "
+                          "표 전체 범위를 먼저 선택하고, 수식은 열만 고정하는 "
+                          "혼합참조($A4)를 쓰며, 텍스트 비교는 큰따옴표"
+                          "(\"...\")로 감쌉니다.")
+            card = res.wrong[-1]
+            card["diff_notes"] = diffs
+            card["student_formula"] = stu_f
+            card["point"] = CF_ROW_PRINCIPLE
         res.earned = int(round(res.alloc * matched / len(target)))
         return
     diffs = ctx["vdiffs"]
@@ -2354,6 +2811,25 @@ def grade_calc(res, ctx):
         groups = [[(r, c, co[(r, c)]) for (r, c) in cl] for cl in clusters]
     n = len(groups)
     per = res.alloc / n
+    # 문제 파일 오염 감지: 정답 수식이 문제 파일에 이미 같은 수식으로 들어 있음
+    contaminated = []
+    if not key_groups and n < CALC_GROUP_TARGET:
+        try:
+            sha = ctx["book_a"].raw[ctx["asheet"]]
+            shp = ctx["book_p"].raw[ctx["psheet"]]
+            diff_set = {(r, c) for (r, c, _) in diffs}
+            for row in sha.iter_rows(max_row=min(sha.max_row or 1, MAX_SCAN_ROWS),
+                                     max_col=min(sha.max_column or 1,
+                                                 MAX_SCAN_COLS)):
+                for cell in row:
+                    fa = formula_text(cell.value)
+                    if fa is None or (cell.row, cell.column) in diff_set:
+                        continue
+                    fp = formula_text(shp.cell(cell.row, cell.column).value)
+                    if fp is not None and norm_formula(fp) == norm_formula(fa):
+                        contaminated.append(cell.coordinate)
+        except Exception:
+            contaminated = []
     passed = 0
     for gi, cells in enumerate(groups, 1):
         wrong = [(r, c, co) for (r, c, co) in cells if not judge.judge(r, c)[0]]
@@ -2374,14 +2850,35 @@ def grade_calc(res, ctx):
                     if ef:
                         rep_formula = ef
                         break
+            note = (f"대상 범위 {rng} · 인식된 문제 {n}개 중 {gi}번 "
+                    f"(문제당 {per:.0f}점)")
+            if n != CALC_GROUP_TARGET:
+                note += (f" — 표준 {CALC_GROUP_TARGET}문제와 달라 배점이 "
+                         "실제 시험과 다르게 배분됐습니다")
+            guide = cell_state_guide(judge, wrong)
+            if guide:
+                note += ". " + guide
             add_card(res, f"계산 문제 {gi}", per, "cell", cells=entries,
-                     formula=rep_formula, note=f"대상 범위 {rng}",
+                     formula=rep_formula, note=note,
                      more=max(0, len(wrong) - 3),
                      hint="한 셀이라도 틀리면 문제 전체가 0점입니다. 첫 셀에 "
                           "수식을 완성한 뒤 채우기 핸들로 복사하고, 결과가 "
                           "이상한 셀이 없는지 훑어보세요.")
     res.earned = int(round(per * passed))
-    res.notes.append(f"수식 문제를 {n}개 그룹으로 인식 (그룹당 {per:.0f}점)")
+    res.notes.append(f"수식 문제를 {n}개 그룹으로 인식 (그룹당 {per:.0f}점)"
+                     + ("" if n == CALC_GROUP_TARGET else
+                        f" — 표준은 {CALC_GROUP_TARGET}문제입니다. 배점 배분이 "
+                        "실제 시험과 다를 수 있으니 문제 파일이 원본인지 "
+                        "확인하세요"))
+    if contaminated:
+        cc = compress_coords(contaminated)
+        res.notes.append(
+            f"주의: 문제 파일의 계산작업에 정답과 같은 수식이 이미 "
+            f"{len(contaminated)}개 들어 있습니다 ({', '.join(cc[:4])}"
+            f"{' 외' if len(cc) > 4 else ''}). 원본 문제 파일이 이전 풀이로 "
+            "덮어써진 것(문제 파일 오염) 같습니다. 이 상태에서는 남은 부분만 "
+            f"문제로 인식돼 배점이 {n}개 문제에 몰립니다(문제당 {per:.0f}점). "
+            "원본 문제 파일을 다시 받아 채점하세요.")
 
 
 def grade_analysis(res, ctx):
@@ -2779,7 +3276,8 @@ def run_grading(problem_path, answer_path, student_path, key, sheets=None):
             if n in NEEDS_FMT_DIFF else {}
         key_cells = {k.upper(): v for k, v in
                      ((key.get("cells") or {}).get(n) or {}).items()}
-        judge = CellJudge(book_a, book_s, asheet, ssheet, key_cells)
+        judge = CellJudge(book_a, book_s, asheet, ssheet, key_cells,
+                          display_tolerant=(n == "기본작업-1"))
         ctxs[n] = {
             "book_p": book_p, "book_a": book_a, "book_s": book_s,
             "psheet": psheet, "asheet": asheet, "ssheet": ssheet,
@@ -3575,16 +4073,17 @@ def enrich_wrong_cards(results):
             else:
                 card["category"] = SHEET_CATEGORY.get(nname, "기타")
             card["expected_formula"] = card.get("formula")
-            card["student_formula"] = next(
+            card["student_formula"] = card.get("student_formula") or next(
                 (c.get("got_formula") for c in (card.get("cells") or [])
                  if c.get("got_formula")), None)
-            card["diff_notes"] = []
+            pre_notes = list(card.get("diff_notes") or [])
+            card["diff_notes"] = pre_notes
             if card.get("formula"):
                 steps, point = explain_formula(card["formula"])
                 card["explain"] = steps
-                if point:
+                if point and not card.get("point"):
                     card["point"] = point
-                if card["student_formula"]:
+                if card["student_formula"] and not pre_notes:
                     card["diff_notes"] = diagnose_formula_diff(
                         card["student_formula"], card["formula"])
 
@@ -3938,12 +4437,31 @@ def _appeal_payload(all_cards):
     for card in all_cards:
         cells = card.get("cells") or []
         props = card.get("props") or []
-        exp = cells[0].get("expected") if cells else None
-        got = cells[0].get("got") if cells else None
+        shown = [c for c in cells[:5]
+                 if c.get("expected") is not None or c.get("got") is not None]
+        multi = len(shown) > 1
+
+        def _pair(c, key):
+            v = c.get(key)
+            if v is None:
+                return None
+            txt = str(v)
+            if key == "got":
+                gf = c.get("got_formula")
+                if gf and str(gf) != txt:
+                    txt += f" [{gf}]"   # 학생 수식 전문
+            return f"{c['coord']}: {txt}" if multi and c.get("coord") else txt
+
+        exp_parts = [p for p in (_pair(c, "expected") for c in shown) if p]
+        got_parts = [p for p in (_pair(c, "got") for c in shown) if p]
+        exp = "; ".join(exp_parts) if exp_parts else None
+        got = "; ".join(got_parts) if got_parts else None
         if exp is None and props:
-            exp = f"{props[0].get('name', '?')}: {props[0].get('expected')}"
+            exp = "; ".join(f"{p.get('name', '?')}: {p.get('expected')}"
+                            for p in props[:4])
         if got is None and props:
-            got = f"{props[0].get('name', '?')}: {props[0].get('got')}"
+            got = "; ".join(f"{p.get('name', '?')}: {p.get('got')}"
+                            for p in props[:4])
         summary = ""
         for cand in (card.get("point"), card.get("note"),
                      (card.get("explain") or [None])[0], card.get("hint")):
@@ -3959,8 +4477,10 @@ def _appeal_payload(all_cards):
                 return "-"
             return str(v).replace("\n", " ").replace(" / ", " · ") or "-"
 
-        loc = ", ".join(str(c.get("coord")) for c in cells[:4]
+        loc = ", ".join(str(c.get("coord")) for c in cells[:5]
                         if c.get("coord"))
+        if card.get("more"):
+            loc += f" 외 {card['more']}개"
         items.append({
             "sheet": card.get("sheet") or "?",
             "label": card.get("label") or "?",
