@@ -24,23 +24,33 @@ v2.3.1: 세트 인식 전면 수정 — 일정 슬롯↔세트를 전역 유일 
 문제 파일 내용(SHA-256)이 같은 세트 병합, 문제지 PDF·기대값 JSON 전역 유일 연결,
 세트 토큰 없는 PDF는 진단에서 '무관'으로 접음. 코코 모의고사 1·2회 세트 파일
 (xlsx·pdf)을 version.json `set_files`로 루트/모의고사/에 자동 배포.
+v2.4.0: 루틴 웹 연동 — 프로그램 안에 로컬 HTTP 서버(127.0.0.1:8765, 사용 중이면
+빈 포트)를 띄워 「2주 루틴」 페이지(시험장/루틴.html, 자동 업데이트로 갱신)를
+서빙하고, 규약(문서/연동_API.md v2.4.1)대로 일정·세트·기록·오답노트·체크 상태를
+/api/state 로 내보내며 체크·수동 점수·오답노트 완료·시험 시작 등 쓰기 요청을
+받습니다(세션 토큰). [루틴 열기] 버튼·`_설정.루틴자동열기`·단계 가이드
+[웹에서 퀴즈 풀기]. 채점 결과는 클립보드 복사 대신 루틴 페이지에 자동 반영.
 
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "2.3.1"
+__version__ = "2.4.0"
 
 import argparse
 import hashlib
+import http.server
 import json
 import os
 import platform
+import queue
 import re
+import secrets
 import shutil
 import subprocess
 import sys
 import threading
 import time
+import urllib.parse
 import webbrowser
 from datetime import date, datetime, timedelta
 
@@ -191,6 +201,15 @@ def find_grade_py(user_path=None):
 
 SET_CONFIG_PATH = os.path.join(BASE_DIR, "세트설정.json")
 EXPECTED_DIR_NAME = "기대값"      # 자동 배포되는 세트별 기대값 JSON 폴더
+
+# 루틴 웹 연동 서버 (v2.4.0, 규약: 문서/연동_API.md v2.4.1)
+ROUTINE_API_VERSION = "2.4.1"          # /api/state 의 version (규약 버전)
+ROUTINE_HTML_NAME = "루틴.html"        # 시험장 폴더의 루틴 페이지 파일
+ROUTINE_DATA_KEY = "시험장/루틴.html"   # version.json set_files 키 (자동 업데이트)
+ROUTINE_PORT_DEFAULT = 8765
+ROUTINE_PORT_SETTING = "루틴포트"        # 세트설정 _설정: 실제로 쓴 포트
+ROUTINE_AUTO_OPEN_SETTING = "루틴자동열기"   # 세트설정 _설정: 시작 시 브라우저 열기
+WEB_CHECKS_KEY = "_웹체크"              # 세트설정: 웹 체크 상태 {키: true}
 
 
 def expected_values_dir(base_dir=None):
@@ -458,7 +477,7 @@ def link_files_globally(sets, paths, field, origin=None, tokens_of=None,
         taken_paths.add(p)
 
 
-_CFG_DICT_KEYS = ("_슬롯매핑", "_진행", "_자동선택", "_설정")
+_CFG_DICT_KEYS = ("_슬롯매핑", "_진행", "_자동선택", "_설정", WEB_CHECKS_KEY)
 
 
 def normalize_set_config(data):
@@ -483,9 +502,12 @@ def _cfg_section(cfg, key):
     return v if isinstance(v, dict) else {}
 
 
+_FILE_LOCK = threading.RLock()   # 세트설정·기록 파일 읽기/쓰기 (루틴 서버 스레드와 공유)
+
+
 def load_set_config(path=SET_CONFIG_PATH):
     try:
-        with open(path, encoding="utf-8-sig") as f:
+        with _FILE_LOCK, open(path, encoding="utf-8-sig") as f:
             data = json.load(f)
     except Exception:
         return {}
@@ -494,11 +516,41 @@ def load_set_config(path=SET_CONFIG_PATH):
 
 def save_set_config(config, path=SET_CONFIG_PATH):
     try:
-        with open(path, "w", encoding="utf-8") as f:
+        with _FILE_LOCK, open(path, "w", encoding="utf-8") as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
+        routine_touch()          # 루틴 페이지가 다시 그리도록 상태 표식 갱신
         return True
     except OSError:
         return False
+
+
+# --- 상태 변경 표식 (루틴 웹 연동 /api/state 의 generated) ---
+_ROUTINE_GEN = {"value": None, "lock": threading.Lock()}
+
+
+def routine_touch():
+    """상태가 바뀔 때마다 호출 — /api/state 의 `generated` 를 반드시 다른 값으로
+    갱신합니다(마이크로초 ISO 일시, 같은 마이크로초면 1µs 올림). 세트설정·기록
+    저장 함수와 시험 시작/종료에서 호출합니다. 반환: 새 표식."""
+    with _ROUTINE_GEN["lock"]:
+        now = datetime.now()
+        prev = _ROUTINE_GEN["value"]
+        if prev is not None:
+            try:
+                prev_dt = datetime.fromisoformat(prev)
+                if now <= prev_dt:
+                    now = prev_dt + timedelta(microseconds=1)
+            except ValueError:
+                pass
+        _ROUTINE_GEN["value"] = now.isoformat(timespec="microseconds")
+        return _ROUTINE_GEN["value"]
+
+
+def routine_generated():
+    """현재 상태 표식 (없으면 지금 만들어 반환)."""
+    with _ROUTINE_GEN["lock"]:
+        v = _ROUTINE_GEN["value"]
+    return v if v is not None else routine_touch()
 
 
 def remember_set(s, path=SET_CONFIG_PATH):
@@ -963,7 +1015,7 @@ def load_records(path=RECORDS_PATH):
     if path == RECORDS_PATH:
         _ensure_records_home()
     try:
-        with open(path, encoding="utf-8-sig") as f:
+        with _FILE_LOCK, open(path, encoding="utf-8-sig") as f:
             data = json.load(f)
     except Exception:
         return []
@@ -993,11 +1045,13 @@ def append_record(record, path=RECORDS_PATH):
     """기록.json에 응시 기록 1건 추가. 전체 목록 반환."""
     if path == RECORDS_PATH:
         _ensure_records_home()
-    _backup_corrupt_json(path)
-    records = load_records(path)
-    records.append(record)
-    with open(path, "w", encoding="utf-8") as f:
-        json.dump(records, f, ensure_ascii=False, indent=2)
+    with _FILE_LOCK:
+        _backup_corrupt_json(path)
+        records = load_records(path)
+        records.append(record)
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(records, f, ensure_ascii=False, indent=2)
+    routine_touch()
     return records
 
 
@@ -1755,8 +1809,9 @@ def build_day_steps(plan, slot_names=None):
                     "체크됩니다." + auto_txt},
             {"이름": f"채점·성적 복사{n_txt}", "형": "채점", "세트": spec,
              "슬롯": k, "분": 5,
-             "설명": "채점이 끝나면 자동 체크됩니다. 성적 JSON은 클립보드에 "
-                    "복사되어 있으니 웹 루틴에 [성적 붙여넣기]하세요."},
+             "설명": "채점이 끝나면 자동 체크되고, 결과는 루틴 페이지"
+                    "([루틴 열기])에 자동으로 반영됩니다. 성적 JSON은 "
+                    "클립보드에도 복사됩니다(아티팩트 페이지용)."},
             {"이름": f"오답노트 모드{n_txt}", "형": "오답노트", "세트": spec,
              "슬롯": k, "분": 15,
              "설명": "틀린 항목의 해설을 하나씩 읽고 '이해했음'을 체크하세요. "
@@ -1772,9 +1827,11 @@ def build_day_steps(plan, slot_names=None):
                              "노트에 정리하세요. 시험장에서 볼 마지막 "
                              "체크리스트입니다."})
     steps.append({"이름": "(선택) 함수 퀴즈", "형": "안내", "분": 10,
-                  "선택": True,
-                  "설명": "(선택) 웹 루틴 함수 퀴즈 10문제 — 오늘 틀린 함수가 "
-                         "있으면 그 함수부터. 건너뛰어도 됩니다."})
+                  "선택": True, "웹탭": "quiz",
+                  "설명": "(선택) 루틴 페이지 함수 퀴즈 10문제 — 오늘 틀린 "
+                         "함수가 있으면 그 함수부터. [웹에서 퀴즈 풀기]로 "
+                         "퀴즈 탭이 열리고, 페이지에서 ⑤ 체크하면 이 단계도 "
+                         "자동 체크됩니다. 건너뛰어도 됩니다."})
     return steps
 
 
@@ -2421,12 +2478,14 @@ def make_retry_copy(problem, set_name, when=None):
         problem, _unique_stem(d, f"오답재풀이_{set_name}_{stamp}"))
 
 
-def retry_payload_for_set(s, minutes=15):
-    """세트의 최신 전체 채점 JSON에서 오답 시트를 뽑아 재풀이 실행 정보로.
+def retry_payload_for_set(s, minutes=15, json_path=None):
+    """세트의 최신 전체 채점 JSON(또는 json_path 로 지정한 채점 JSON)에서
+    오답 시트를 뽑아 재풀이 실행 정보로.
 
     반환 ('retry', payload) / ('missing', {이유}) / ('info', {메시지, 자동완료}).
     """
-    jp = find_latest_result_json(s, full_only=True)
+    jp = json_path if json_path and os.path.isfile(json_path) \
+        else find_latest_result_json(s, full_only=True)
     if not jp:
         return "missing", {"이유": f"'{s['name']}'의 채점 기록(채점결과 JSON)"
                                  "이 없습니다. 먼저 시험 모드로 응시해 "
@@ -2796,8 +2855,8 @@ def adaptive_day_plan(adaptive, no):
     return plan
 
 
-STEP_DONE_MESSAGE = ("오늘 완료! 웹 루틴에 성적 붙여넣기"
-                     "(클립보드에 이미 복사됨)")
+STEP_DONE_MESSAGE = ("오늘 완료! 채점 결과는 루틴 페이지([루틴 열기])에 "
+                     "자동 반영되어 있습니다.")
 
 
 def sheet_names_of(path):
@@ -2931,7 +2990,10 @@ def resolve_step_action(step, sets, slot_sets=None):
             return "missing", {"이유": "재풀이할 세트를 찾지 못했습니다. 먼저 "
                                      "같은 슬롯의 시험 모드 단계를 진행하세요."}
         return retry_payload_for_set(s, int(step.get("분", 15)))
-    return "info", {"메시지": step.get("설명") or step.get("이름") or ""}
+    payload = {"메시지": step.get("설명") or step.get("이름") or ""}
+    if step.get("웹탭"):
+        payload["웹탭"] = str(step["웹탭"])     # 루틴 페이지의 탭(#quiz 등)
+    return "info", payload
 
 
 # ---------------------------------------------------------------------------
@@ -3128,9 +3190,14 @@ def load_review_state(norm_key, json_name, path=SET_CONFIG_PATH):
 
 
 def record_review_state(norm_key, json_name, checks,
-                        path=SET_CONFIG_PATH, count_up=False):
+                        path=SET_CONFIG_PATH, count_up=False, total=None,
+                        done=None):
     """오답연습 체크 상태(+횟수)를 세트설정.json에 저장.
-    점수 기록(기록.json)에는 아무것도 남기지 않습니다."""
+    점수 기록(기록.json)에는 아무것도 남기지 않습니다.
+
+    total(오답 항목 수)을 주면 전부 체크됐을 때 '완료'[json_name]에 완료 일시를
+    남기고, 하나라도 풀리면 지웁니다(루틴 웹 ③ 오답노트 판정과 같은 저장소).
+    done=True/False 는 웹 토글처럼 완료 표식을 직접 켜고 끕니다."""
     cfg = load_set_config(path)
     ent = cfg.setdefault(norm_key, {})
     if not isinstance(ent.get("오답연습"), dict):
@@ -3144,7 +3211,36 @@ def record_review_state(norm_key, json_name, checks,
     if not isinstance(rv.get("이해체크"), dict):
         rv["이해체크"] = {}
     rv["이해체크"][str(json_name)] = sorted(int(i) for i in checks)
+    if not isinstance(rv.get("완료"), dict):
+        rv["완료"] = {}
+    if done is None and total is not None:
+        done = int(total) > 0 and len(set(int(i) for i in checks)) >= int(total)
+    if done is True:
+        rv["완료"].setdefault(str(json_name),
+                            datetime.now().isoformat(timespec="minutes"))
+    elif done is False:
+        rv["완료"].pop(str(json_name), None)
     return save_set_config(cfg, path)
+
+
+def review_done_state(norm_key, json_name, total=None, cfg=None,
+                      path=SET_CONFIG_PATH):
+    """오답노트 완료 여부 → (done, when). 완료 표식이 있거나(웹 토글·전체 체크)
+    total 개 항목이 모두 체크되어 있으면 완료."""
+    if cfg is None:
+        cfg = load_set_config(path)
+    rv = (cfg.get(norm_key) or {}).get("오답연습") or {}
+    when = (rv.get("완료") or {}).get(str(json_name)) if isinstance(
+        rv.get("완료"), dict) else None
+    if when:
+        return True, str(when)
+    try:
+        checks = {int(i) for i in (rv.get("이해체크") or {}).get(str(json_name), [])}
+    except Exception:
+        checks = set()
+    if total and len(checks & set(range(int(total)))) >= int(total):
+        return True, None
+    return False, None
 
 
 # ---------------------------------------------------------------------------
@@ -3169,8 +3265,13 @@ def record_review_state(norm_key, json_name, checks,
 #   {"version": "2.3.1", "notes": "...",
 #    "files":      {"시험장/시험장.py": "시험장.py", ...},      # 프로그램
 #    "data_files": {"기대값/코코모의고사1회_기대값.json": "기대값/..."},  # 기대값 JSON
-#    "set_files":  {"모의고사/코코모의고사1회_문제.xlsx": "모의고사/..."},  # 세트(xlsx·pdf)
+#    "set_files":  {"모의고사/코코모의고사1회_문제.xlsx": "모의고사/...",  # 세트(xlsx·pdf)
+#                   "시험장/루틴.html": "루틴.html"},                  # 루틴 페이지(2.4.0)
 #    "sha256":     {"시험장.py": "<hex>", "기대값/...json": "<hex>", ...}}
+# 루틴 페이지(HTML)도 set_files에 둡니다 — 2.3.0의 data_files 검증은 json.loads를
+# 요구해 HTML이 섞이면 2.3.0 사용자의 업데이트가 실패하지만, set_files는 2.3.0
+# 이하가 무시하고 2.3.1+는 sha256(+UTF-8 텍스트)만 검사해 <루트>/시험장/루틴.html
+# 에 내려받습니다(서버가 매 요청마다 파일을 읽어 재시작 없이 반영).
 # 2.2.3 이하의 apply_update는 files 항목에 __version__ 표식과 py_compile을
 # 요구하므로 JSON은 반드시 data_files에만 둡니다(구버전은 그 키를 무시).
 # 2.3.0의 data_files 검증은 UTF-8 디코드 + json.loads를 요구해 xlsx·pdf가
@@ -3289,7 +3390,7 @@ def _verify_download(repo_rel, data, kind, info, expect_version=None):
             raise RuntimeError(f"{repo_rel}: sha256 불일치 "
                                f"(기대 {str(expected)[:12]}…, 실제 {got[:12]}…)")
     ext = os.path.splitext(str(repo_rel))[1].lower()
-    if kind != "code" and ext != ".json":
+    if kind != "code" and ext not in (".json", ".html", ".htm"):
         if not expected:
             raise RuntimeError(f"{repo_rel}: sha256 항목이 없어 바이너리 파일을 "
                                "검증할 수 없습니다")
@@ -3301,6 +3402,12 @@ def _verify_download(repo_rel, data, kind, info, expect_version=None):
         text = data.decode("utf-8")
     except UnicodeDecodeError as e:
         raise RuntimeError(f"{repo_rel}: UTF-8 텍스트가 아닙니다 ({e})")
+    if kind != "code" and ext in (".html", ".htm"):
+        # 루틴 페이지(v2.4.0, set_files): sha256 필수 + UTF-8 텍스트면 통과
+        if not expected:
+            raise RuntimeError(f"{repo_rel}: sha256 항목이 없어 페이지 파일을 "
+                               "검증할 수 없습니다")
+        return text
     if kind == "code":
         ver = version_marker(text)
         if ver is None:
@@ -3395,13 +3502,17 @@ def commit_staged(staged, version=None):
             os.replace(tmp, target)
             replaced.append((target, existed))
         n_code = sum(1 for it in staged if it["kind"] == "code")
+        n_web = sum(1 for it in staged if it["kind"] != "code"
+                    and str(it["rel"]).lower().endswith((".html", ".htm")))
         n_set = sum(1 for it in staged if it["kind"] != "code"
-                    and not str(it["rel"]).lower().endswith(".json"))
-        n_data = len(staged) - n_code - n_set
+                    and not str(it["rel"]).lower().endswith(
+                        (".json", ".html", ".htm")))
+        n_data = len(staged) - n_code - n_set - n_web
         what = " + ".join(x for x in (
             f"프로그램 {n_code}개" if n_code else "",
             f"기대값 {n_data}개" if n_data else "",
-            f"세트 파일 {n_set}개" if n_set else "") if x)
+            f"세트 파일 {n_set}개" if n_set else "",
+            f"루틴 페이지 {n_web}개" if n_web else "") if x)
         return True, (f"{what} 파일을 v{version}(으)로 업데이트했습니다."
                       if version else f"{what} 파일을 갱신했습니다.")
     except Exception as e:
@@ -3634,6 +3745,938 @@ class UpdateCoordinator:
         return "applied"
 
 
+# ---------------------------------------------------------------------------
+# 루틴 웹 연동 서버 (v2.4.0) — 규약: 문서/연동_API.md v2.4.1
+# ---------------------------------------------------------------------------
+#
+# 시험장이 시작될 때 127.0.0.1:<port>(기본 8765, 사용 중이면 빈 포트)에
+# ThreadingHTTPServer 를 데몬 스레드로 띄우고 시험장 폴더의 루틴.html 을
+# 서빙합니다. 프로그램이 상태의 유일한 원본이며, 루틴 페이지는 /api/state 를
+# 5초마다 읽어 그립니다(`generated` 가 바뀔 때만 다시 그림).
+#   - 서버 스레드는 파일(기록.json·세트설정.json·채점결과 JSON)과 메모리
+#     스냅샷(세트 목록·시험 진행 여부)만 읽습니다.
+#   - 쓰기(POST)와 프로그램 동작(시험 시작 등)은 큐를 통해 Tk 스레드에서
+#     실행되고, 핸들러는 결과를 짧게 기다렸다가 최신 상태로 응답합니다.
+#   - POST 는 세션 토큰(X-Coco-Token 헤더 또는 ?t=) 필수, GET 은 자유.
+#     Host 가 루프백이 아니면 거부(DNS 리바인딩 방지). 외부 접속 불가.
+#
+#   GET  /                    루틴 페이지 (doctype/html/head/body 골격으로 감쌈)
+#   GET  /api/state           전체 상태 JSON (5초 폴링)
+#   GET  /api/report/<id>     채점결과 HTML
+#   POST /api/check           {"key","value"}              → _웹체크 저장
+#   POST /api/score           {"date","set","total"}       → mode=수동 기록 추가
+#   POST /api/review          {"record_id","done"}         → 오답노트 완료 상태
+#   POST /api/action          {"action","set","record_id"} → 시험 시작·오답노트 등
+# 응답: 성공 200 {"ok": true, ...최신 state} / 논리 오류 200 {"ok": false,
+# "error"} / 토큰 401 / 본문·필드 400. JSON 은 ensure_ascii=False,
+# Cache-Control: no-store. 시작 로그에는 쓰기·페이지 요청 요약만 남깁니다
+# (/api/state 폴링은 건수만 셈).
+
+ROUTINE_PAGE_HEAD = ('<!doctype html><html lang="ko"><head><meta charset="utf-8">'
+                     '<meta name="viewport" content="width=device-width, '
+                     'initial-scale=1"></head><body>')
+# 골격 끝에 넣는 1줄 스크립트: URL 해시(#quiz 등)가 탭 id(tab-quiz)와 맞으면
+# 그 탭을 연다 — 단계 가이드 [웹에서 퀴즈 풀기]가 /?t=…#quiz 로 열기 위함.
+# 페이지가 자체 해시 처리를 갖춰도 같은 탭을 한 번 더 클릭할 뿐 무해.
+ROUTINE_PAGE_TAIL = ('<script>(function(){try{var h=(location.hash||"")'
+                     '.replace(/^#/,"");if(!h){return;}var t=document.'
+                     'getElementById("tab-"+h);if(t&&t.getAttribute("role")'
+                     '==="tab"){t.click();}}catch(e){}})();</script>'
+                     '</body></html>')
+ROUTINE_ACTIONS = ("start_exam", "open_review", "start_retry", "open_report",
+                   "open_pdf", "show")
+ROUTINE_BODY_LIMIT = 1024 * 1024        # POST 본문 상한 (1MB)
+ROUTINE_UI_TIMEOUT = 8.0                # 쓰기 작업의 Tk 스레드 응답 대기(초)
+ROUTINE_ACTION_TIMEOUT = 1.5            # 동작 요청 대기(초) — 대화상자가 뜨면 먼저 응답
+_RECORD_STAMP_RE = re.compile(
+    r"(\d{4})-?(\d{2})-?(\d{2})[ T]?(\d{2}):?(\d{2})(?::?(\d{2}))?")
+
+
+def routine_html_path(base_dir=None):
+    """루틴 페이지 파일 경로: <시험장 폴더>/루틴.html → 자동 업데이트 설치 위치
+    (_data_target_path('시험장/루틴.html')) 순으로 있는 것. 없으면 첫 후보."""
+    base_dir = base_dir or BASE_DIR
+    cands = [os.path.join(base_dir, ROUTINE_HTML_NAME)]
+    try:
+        alt = _data_target_path(ROUTINE_DATA_KEY, base_dir)
+        if os.path.abspath(alt) != os.path.abspath(cands[0]):
+            cands.append(alt)
+    except Exception:
+        pass
+    for c in cands:
+        if os.path.isfile(c):
+            return c
+    return cands[0]
+
+
+def render_routine_page(text):
+    """루틴.html 내용 → 브라우저에 보낼 HTML. 아티팩트 규격 파일(doctype 없음)은
+    골격으로 감싸고, 이미 <!doctype 으로 시작하면 그대로."""
+    if text.lstrip()[:9].lower().startswith("<!doctype"):
+        return text
+    return ROUTINE_PAGE_HEAD + text + ROUTINE_PAGE_TAIL
+
+
+def routine_missing_page(path):
+    """루틴.html 이 없을 때의 안내 페이지 (15초마다 다시 확인)."""
+    import html as _html
+    return (ROUTINE_PAGE_HEAD
+            + '<meta http-equiv="refresh" content="15">'
+            '<div style="font-family:sans-serif;max-width:640px;margin:60px '
+            'auto;line-height:1.7"><h1>루틴 페이지 파일이 아직 없습니다</h1>'
+            '<p>시험장 폴더에 <code>루틴.html</code> 이 없습니다. 자동 업데이트가 '
+            '켜져 있으면 곧 내려받고, 시험장 화면의 [업데이트 확인]을 누르면 '
+            '바로 받습니다. 이 페이지는 15초마다 다시 확인합니다.</p>'
+            f'<p>찾는 위치: <code>{_html.escape(str(path))}</code></p></div>'
+            '</body></html>')
+
+
+# --- 기록 → 규약 records[] ---
+
+def record_stamp_id(when):
+    """'2026-09-06 16:12(:36)' → '20260906161236' (초가 없으면 '00'). 실패 None."""
+    m = _RECORD_STAMP_RE.search(str(when or ""))
+    if not m:
+        return None
+    y, mo, d, h, mi, sec = m.groups()
+    return f"{y}{mo}{d}{h}{mi}{sec or '00'}"
+
+
+def records_with_ids(records):
+    """[(id, 기록)] — 같은 기록은 항상 같은 id(일시 14자리). 같은 분의 두 번째
+    기록부터는 초 자리에 순번(01, 02…)을 넣어 유일하게 만듭니다."""
+    used = set()
+    out = []
+    for i, r in enumerate(records or []):
+        base = record_stamp_id((r or {}).get("일시")) or f"00000000{i:06d}"
+        rid, n = base, 0
+        while rid in used:
+            n += 1
+            rid = f"{base[:12]}{n:02d}" if len(base) == 14 else f"{base}-{n}"
+        used.add(rid)
+        out.append((rid, r))
+    return out
+
+
+def _record_datetime(r):
+    try:
+        return datetime.strptime(str(r.get("일시"))[:16], "%Y-%m-%d %H:%M")
+    except Exception:
+        return None
+
+
+def record_set_name(r):
+    """기록의 세트명 (타이머 일시정지 표시 ' (연습)' 접미 제거)."""
+    name = str((r or {}).get("세트명") or "?")
+    return name[:-5] if name.endswith(" (연습)") else name
+
+
+def record_report_paths(r):
+    """기록의 리포트 경로 → (존재하는 HTML 경로 or None, 존재하는 JSON 경로 or None)."""
+    html_p = (r or {}).get("리포트")
+    if not html_p or not isinstance(html_p, str):
+        return None, None
+    json_p = os.path.splitext(html_p)[0] + ".json"
+    return (html_p if os.path.isfile(html_p) else None,
+            json_p if os.path.isfile(json_p) else None)
+
+
+def _num(v, default=0):
+    if isinstance(v, bool) or not isinstance(v, (int, float)):
+        return default
+    return int(v) if float(v).is_integer() else v
+
+
+def _category_of_sheet(sheet):
+    head = str(sheet or "").split("-")[0].strip()
+    if head in ("매크로작업", "차트작업"):
+        return "기타작업"
+    return head or "기타작업"
+
+
+_RESULT_CACHE = {}      # 채점결과 JSON 경로 → ((mtime, size), 요약)
+
+
+def load_result_summary(json_path):
+    """채점결과 JSON → {"sheets", "wrong_items", "count", "total"} (mtime 캐시).
+    sheets 는 {name, alloc, earned}, wrong_items 는 {label, category, lost, sheet}
+    만 남깁니다(웹은 category 문자열·lost 숫자가 있어야 오답으로 셈)."""
+    try:
+        st = os.stat(json_path)
+    except OSError:
+        return None
+    key = (st.st_mtime, st.st_size)
+    hit = _RESULT_CACHE.get(json_path)
+    if hit and hit[0] == key:
+        return hit[1]
+    data, items = load_wrong_items(json_path)
+    if data is None:
+        return None
+    sheets = [{"name": str(sh.get("name", "?")), "alloc": _num(sh.get("alloc")),
+               "earned": _num(sh.get("earned"))}
+              for sh in (data.get("sheets") or []) if isinstance(sh, dict)]
+    wrong = [{"label": str(it.get("label") or "?"),
+              "category": str(it.get("category") or
+                              _category_of_sheet(it.get("sheet"))),
+              "lost": _num(it.get("lost")), "sheet": str(it.get("sheet") or "")}
+             for it in items]
+    summ = {"sheets": sheets, "wrong_items": wrong, "count": len(items),
+            "total": data.get("total")}
+    _RESULT_CACHE[json_path] = (key, summ)
+    return summ
+
+
+def serialize_records(records, sets, cfg=None):
+    """기록.json → (규약 records[], review{}, 색인{id: 정보}).
+
+    색인 정보: record(원본)·set(세트 dict or None)·norm·name·html·json·count(오답
+    수)·date·time·mode — 쓰기 요청(review/action)이 id 로 기록을 찾는 데 씁니다.
+    """
+    by_name = {s.get("name"): s for s in sets or []}
+    out, review, index = [], {}, {}
+    for rid, r in records_with_ids(records):
+        name = record_set_name(r)
+        s = by_name.get(name)
+        norm = s["norm"] if s else (norm_set_key(name) if name != "?" else "")
+        dt = _record_datetime(r)
+        html_p, json_p = record_report_paths(r)
+        summ = load_result_summary(json_p) if json_p else None
+        if summ is None:
+            json_p = None
+        mode = str(r.get("mode") or "시험")
+        total = r.get("점수")
+        if isinstance(total, bool) or not isinstance(total, (int, float)):
+            total = None
+        rec = {
+            "id": rid,
+            "date": dt.strftime("%Y-%m-%d") if dt else str(r.get("일시"))[:10],
+            "time": dt.strftime("%H:%M") if dt else "",
+            "set": {"name": name, "norm": norm},
+            "mode": mode,
+            "total": _num(total, None) if total is not None else None,
+            "pass_line": PASS_LINE,
+            "passed": total is not None and total >= PASS_LINE,
+            "report_html": os.path.basename(html_p) if html_p else None,
+            "report_json": os.path.basename(json_p) if json_p else None,
+            "sheets": summ["sheets"] if summ else [],
+            "wrong_items": summ["wrong_items"] if summ else [],
+        }
+        out.append(rec)
+        index[rid] = {"record": r, "set": s, "norm": norm, "name": name,
+                      "html": html_p, "json": json_p,
+                      "count": summ["count"] if summ else 0,
+                      "date": rec["date"], "time": rec["time"], "mode": mode}
+        if json_p:
+            done, when = review_done_state(norm, os.path.basename(json_p),
+                                           total=index[rid]["count"], cfg=cfg)
+            review[rid] = {"done": done, "when": when}
+    return out, review, index
+
+
+def serialize_sets(sets, records, index, review):
+    """세트 목록 → 규약 sets[] (attempts·best 는 시험·수동 기록, review_done·
+    retry_done 은 최근 시험 기록 기준)."""
+    out = []
+    for s in sets or []:
+        recs = set_exam_records(s["name"], records or [])
+        mine = [(k, v) for k, v in index.items() if v["norm"] == s.get("norm")]
+        exams = [(k, v) for k, v in mine if v["mode"] not in ("부분연습",
+                                                              "오답재풀이")]
+        review_done = retry_done = False
+        if exams:
+            lk, lv = max(exams, key=lambda kv: (kv[1]["date"], kv[1]["time"],
+                                               kv[0]))
+            review_done = bool(review.get(lk, {}).get("done")) or (
+                lv["json"] is not None and lv["count"] == 0)
+            retry_done = any(
+                v["mode"] == "오답재풀이"
+                and (v["date"], v["time"], k) > (lv["date"], lv["time"], lk)
+                for k, v in mine)
+        out.append({
+            "name": s["name"], "norm": s.get("norm") or "",
+            "pdf": bool(s.get("pdf")) and os.path.isfile(str(s.get("pdf"))),
+            "key": bool(s.get("key")),
+            "attempts": len(recs), "best": _best(recs),
+            "review_done": review_done, "retry_done": retry_done,
+        })
+    return out
+
+
+# --- 적응형 일정 → 규약 plan ---
+
+def _iso(d):
+    return d.isoformat() if isinstance(d, date) else None
+
+
+def _seg_end_for(d):
+    """날짜가 속한 구간의 마감일 (9/10 또는 9/17)."""
+    if d < EXAM_DATES[0]:
+        return EXAM_DATES[0] - timedelta(days=1)
+    return EXAM_DATES[1] - timedelta(days=1)
+
+
+def serialize_slot(sl, by_set):
+    """엔진 슬롯 → {kind, set{name,norm,pdf}|null, goal, why, best, counts_as_retry}."""
+    s = sl.get("set")
+    kind = sl.get("kind") or "first"
+    if kind not in ("first", "redo", "retry"):
+        kind = "retry" if s is None else "first"
+    return {
+        "kind": kind,
+        "set": ({"name": s["name"], "norm": s.get("norm") or "",
+                 "pdf": bool(s.get("pdf")) and os.path.isfile(str(s.get("pdf")))}
+                if s else None),
+        "goal": sl.get("goal"),
+        "why": str(sl.get("why") or ""),
+        "best": _best(by_set.get(s["norm"], [])) if s else None,
+        "counts_as_retry": bool(sl.get("counts_as_retry")),
+        "done": False, "record_id": None,          # (선택 — 웹은 무시)
+    }
+
+
+def _day_title(d, today, kind, slots, promoted, deadline, review_day,
+               recs_by_date):
+    if kind == "exam":
+        return f"시험 {EXAM_DATES.index(d) + 1}"
+    if kind == "next":
+        return "다음 구간"
+    if kind == "past":
+        recs = recs_by_date.get(d) or []
+        return "완료" if recs else "미완주"
+    parts = []
+    if review_day:
+        parts.append("복기")
+    if slots:
+        parts.append(f"{len(slots)}세트" + (" (승격)" if promoted else ""))
+    elif d == today and recs_by_date.get(d):
+        parts.append("오늘 완료")
+    else:
+        parts.append("여유일")
+    if deadline:
+        parts.append("실수 노트")
+    return " + ".join(parts)
+
+
+def serialize_days(adaptive, today, recs_by_date, by_set, dates=None):
+    """9/3~9/18 모든 날짜를 규약 days[] 로 (dates 를 주면 그 날짜만).
+
+    kind: exam(시험일) > next(현재 구간 end 이후 학습일) > past(오늘 이전) >
+    review(9/12) > mock(슬롯 있음) / rest(슬롯 없음). past·exam·next 의 slots 는
+    []이고 오늘·예정일은 엔진의 남은 배정만 담습니다.
+    """
+    study = bool(adaptive) and adaptive.get("kind") == "study"
+    end = adaptive.get("end") if study else None
+    boost = set(adaptive.get("boost_days") or []) if study else set()
+    days_map = (adaptive.get("days") or {}) if study else {}
+    review_day = EXAM_DATES[0] + timedelta(days=1)
+    deadlines = {ex - timedelta(days=1) for ex in EXAM_DATES}
+    if dates is None:
+        dates = []
+        d = ROUTINE_START
+        while d <= EXAM_DATES[-1]:
+            dates.append(d)
+            d += timedelta(days=1)
+    out = []
+    for d in dates:
+        slots = []
+        if d in EXAM_DATES:
+            kind, capacity = "exam", 0
+        elif study and d > end:
+            kind, capacity = "next", base_capacity(d, _seg_end_for(d))
+        elif d < today:
+            kind, capacity = "past", base_capacity(d, _seg_end_for(d))
+        elif not study:
+            kind, capacity = "next", base_capacity(d, _seg_end_for(d))
+        else:
+            slots = [serialize_slot(sl, by_set) for sl in days_map.get(d, [])]
+            kind = "review" if d == review_day else ("mock" if slots else "rest")
+            capacity = base_capacity(d, end) + (1 if d in boost else 0)
+        promoted = d in boost
+        out.append({
+            "date": d.isoformat(), "no": routine_day_no(d), "kind": kind,
+            "title": _day_title(d, today, kind, slots, promoted, d in deadlines,
+                                d == review_day, recs_by_date),
+            "capacity": capacity, "promoted": promoted,
+            "deadline": d in deadlines, "review_day": d == review_day,
+            "slots": slots,
+        })
+    return out
+
+
+def _recs_by_date(records):
+    out = {}
+    for r in records or []:
+        if r.get("mode") in ("부분연습", "오답재풀이"):
+            continue
+        d = _record_date(r)
+        if d:
+            out.setdefault(d, []).append(r)
+    return out
+
+
+def serialize_plan(adaptive, today, records, sets, preview=None):
+    """build_adaptive_plan 결과 → 규약 plan (date → ISO, 내부 키 제거, days[] 전체,
+    seg 1 이면 preview{days, boost_days})."""
+    study = adaptive.get("kind") == "study"
+    by_set = exam_records_by_set(sets or [], records or [])
+    recs_by_date = adaptive.get("_recs_by_date") if study else None
+    if not recs_by_date:
+        recs_by_date = _recs_by_date(records)
+    plan = {
+        "kind": adaptive.get("kind"),
+        "seg": adaptive.get("seg") if study else None,
+        "today": today.isoformat(),
+        "start": _iso(adaptive.get("start")) if study else None,
+        "end": _iso(adaptive.get("end")) if study else None,
+        "seg_start": _iso(adaptive.get("seg_start")) if study else None,
+        "reason": str(adaptive.get("reason") or ""),
+        "warning": adaptive.get("warning"),
+        "remaining": int(adaptive.get("remaining") or 0),
+        "retry_target": int(adaptive.get("retry_target") or 0),
+        "missed_days": [_iso(x) for x in adaptive.get("missed_days") or []],
+        "boost_days": [_iso(x) for x in adaptive.get("boost_days") or []],
+        "demoted": [str(x) for x in adaptive.get("demoted") or []],
+        "days": serialize_days(adaptive, today, recs_by_date, by_set),
+        "preview": None,
+    }
+    if study and adaptive.get("seg") == 1 and preview \
+            and preview.get("kind") == "study":
+        p_today = preview.get("today") or EXAM_DATES[0] + timedelta(days=1)
+        dates = []
+        d = preview["start"]
+        while d <= preview["end"]:
+            dates.append(d)
+            d += timedelta(days=1)
+        plan["preview"] = {
+            "days": serialize_days(preview, p_today, recs_by_date, by_set,
+                                   dates=dates),
+            "boost_days": [_iso(x) for x in preview.get("boost_days") or []],
+        }
+    return plan
+
+
+def build_state(sets, records=None, cfg=None, today=None, exam_running=False,
+                generated=None):
+    """규약 GET /api/state 전체 (순수 함수 — 파일은 인자로 안 주면 읽음).
+
+    sets: 스캔된 세트 목록(스냅샷). records/cfg 를 생략하면 기록.json·세트설정.json
+    을 읽습니다. today 를 주면 그 날짜 기준(테스트용)."""
+    today = today or date.today()
+    if records is None:
+        records = load_records(RECORDS_PATH)
+    if cfg is None:
+        cfg = load_set_config(SET_CONFIG_PATH)
+    sets = list(sets or [])
+    try:
+        adaptive = build_adaptive_plan(today, records, sets)
+    except Exception as e:
+        log_error("루틴 연동 일정 계산", e)
+        adaptive = {"kind": segment_for(today)["kind"], "today": today,
+                    "days": {}, "reason": "", "warning": f"일정 계산 오류: {e}"}
+    preview = None
+    if adaptive.get("kind") == "study" and adaptive.get("seg") == 1:
+        try:
+            preview = build_adaptive_plan(EXAM_DATES[0] + timedelta(days=1),
+                                          records, sets)
+        except Exception as e:
+            log_error("루틴 연동 2구간 미리보기", e)
+    recs, review, index = serialize_records(records, sets, cfg)
+    checks = {str(k): bool(v) for k, v in
+              _cfg_section(cfg, WEB_CHECKS_KEY).items()}
+    return {
+        "version": ROUTINE_API_VERSION,
+        "app_version": __version__,
+        "today": today.isoformat(),
+        "generated": generated or routine_generated(),
+        "exam_running": bool(exam_running),
+        "plan": serialize_plan(adaptive, today, records, sets, preview),
+        "sets": serialize_sets(sets, records, index, review),
+        "records": recs,
+        "review": review,
+        "checks": checks,
+        "settings": {"auto_open_routine": bool(
+            _cfg_section(cfg, "_설정").get(ROUTINE_AUTO_OPEN_SETTING, False))},
+    }
+
+
+def record_index(sets, records=None, cfg=None):
+    """{id: 정보} 색인만 (쓰기 요청이 record_id 로 기록을 찾을 때)."""
+    if records is None:
+        records = load_records(RECORDS_PATH)
+    if cfg is None:
+        cfg = load_set_config(SET_CONFIG_PATH)
+    return serialize_records(records, sets, cfg)[2]
+
+
+class RoutineRequestError(Exception):
+    """규약의 오류 응답: status(200 논리 오류 / 400 본문·필드 / 401 토큰)."""
+
+    def __init__(self, status, message):
+        super().__init__(message)
+        self.status = status
+        self.message = message
+
+
+class _RoutineHTTPServer(http.server.ThreadingHTTPServer):
+    daemon_threads = True
+    # Windows 의 SO_REUSEADDR 는 다른 프로세스가 듣고 있는 포트에도 bind 를 허용해
+    # '사용 중 → 대체 포트' 판정이 깨지므로 끕니다(리눅스는 TIME_WAIT 재사용용으로 켬).
+    allow_reuse_address = sys.platform != "win32"
+    routine = None
+
+
+class _RoutineHandler(http.server.BaseHTTPRequestHandler):
+    """경로 → RoutineServer 메서드 연결. 응답은 항상 JSON(페이지·리포트 제외)."""
+    server_version = "CocoRoutine/" + __version__
+    sys_version = ""
+
+    def log_message(self, fmt, *args):      # stderr 없는 pythonw 에서도 안전
+        pass
+
+    # --- 응답 도우미 ---
+    def _send(self, status, body, ctype):
+        data = body if isinstance(body, bytes) else body.encode("utf-8")
+        self.send_response(status)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        if self.command != "HEAD":
+            self.wfile.write(data)
+
+    def _json(self, status, obj):
+        self._send(status, json.dumps(obj, ensure_ascii=False),
+                   "application/json; charset=utf-8")
+
+    def _html(self, status, text):
+        self._send(status, text, "text/html; charset=utf-8")
+
+    def _host_ok(self):
+        host = (self.headers.get("Host") or "").strip().lower()
+        if host.startswith("["):
+            host = host.split("]")[0] + "]"
+        else:
+            host = host.split(":")[0]
+        return host in ("127.0.0.1", "localhost", "[::1]", "")
+
+    def _token_ok(self, query):
+        srv = self.server.routine
+        given = self.headers.get("X-Coco-Token") or ""
+        if not given:
+            given = (query.get("t") or [""])[0]
+        return bool(given) and secrets.compare_digest(str(given), srv.token)
+
+    def _read_body(self):
+        try:
+            n = int(self.headers.get("Content-Length") or 0)
+        except ValueError:
+            raise RoutineRequestError(400, "Content-Length 오류")
+        if n < 0 or n > ROUTINE_BODY_LIMIT:
+            raise RoutineRequestError(400, "본문이 너무 큽니다")
+        raw = self.rfile.read(n) if n else b""
+        try:
+            body = json.loads(raw.decode("utf-8") or "{}")
+        except (UnicodeDecodeError, ValueError):
+            raise RoutineRequestError(400, "JSON 파싱 실패")
+        if not isinstance(body, dict):
+            raise RoutineRequestError(400, "JSON 객체가 아닙니다")
+        return body
+
+    # --- 요청 ---
+    def do_HEAD(self):
+        self.do_GET()
+
+    def do_GET(self):
+        srv = self.server.routine
+        parts = urllib.parse.urlsplit(self.path)
+        path = parts.path.rstrip("/") or "/"
+        try:
+            if not self._host_ok():
+                srv.note("GET", path, 403)
+                return self._json(403, {"ok": False, "error": "허용되지 않는 Host"})
+            if path in ("/", "/index.html", "/루틴.html"):
+                status, page = srv.page()
+                srv.note("GET", "/", status)
+                return self._html(status, page)
+            if path == "/favicon.ico":
+                return self._send(204, b"", "image/x-icon")
+            if path == "/api/state":
+                srv.stats["state"] += 1
+                return self._json(200, srv.state())
+            if path.startswith("/api/report/"):
+                rid = urllib.parse.unquote(path[len("/api/report/"):])
+                fp = srv.report_file(rid)
+                if not fp:
+                    srv.note("GET", path, 404)
+                    return self._json(404, {"ok": False,
+                                            "error": "리포트를 찾을 수 없습니다"})
+                with open(fp, "rb") as f:
+                    data = f.read()
+                srv.note("GET", f"/api/report/{rid}", 200)
+                return self._send(200, data, "text/html; charset=utf-8")
+            srv.note("GET", path, 404)
+            return self._json(404, {"ok": False, "error": "없는 경로"})
+        except Exception as e:
+            log_error(f"루틴 서버 GET {path}", e)
+            srv.note("GET", path, 500)
+            try:
+                self._json(500, {"ok": False, "error": f"서버 오류: {e}"})
+            except Exception:
+                pass
+
+    def do_POST(self):
+        srv = self.server.routine
+        parts = urllib.parse.urlsplit(self.path)
+        path = parts.path.rstrip("/") or "/"
+        query = urllib.parse.parse_qs(parts.query)
+        status = 500
+        try:
+            if not self._host_ok():
+                raise RoutineRequestError(403, "허용되지 않는 Host")
+            if not path.startswith("/api/"):
+                raise RoutineRequestError(404, "없는 경로")
+            if not self._token_ok(query):
+                raise RoutineRequestError(401, "토큰 불일치")
+            body = self._read_body()
+            handler = {"/api/check": srv.api_check, "/api/score": srv.api_score,
+                       "/api/review": srv.api_review,
+                       "/api/action": srv.api_action}.get(path)
+            if handler is None:
+                raise RoutineRequestError(404, "없는 경로")
+            status, payload = handler(body)
+            srv.note("POST", path, status, payload)
+            return self._json(status, payload)
+        except RoutineRequestError as e:
+            status = e.status
+            srv.note("POST", path, status, {"error": e.message})
+            return self._json(status, {"ok": False, "error": e.message})
+        except Exception as e:
+            log_error(f"루틴 서버 POST {path}", e)
+            srv.note("POST", path, 500, {"error": str(e)})
+            try:
+                self._json(500, {"ok": False, "error": f"서버 오류: {e}"})
+            except Exception:
+                pass
+
+
+class RoutineServer:
+    """루틴 웹 연동 로컬 서버 (시험장 프로그램이 상태의 원본).
+
+    sets_fn(): 현재 세트 목록(읽기 전용 스냅샷)을 돌려주는 함수.
+    ui_call(fn): fn 을 Tk 스레드에서 실행하도록 넘기는 함수 — 없으면(테스트)
+        서버 스레드에서 바로 실행.
+    action_fn(action, set, record, norm, record_id): Tk 스레드에서 프로그램 동작
+        → (ok, 오류 문구). 없으면 동작은 받기만 하고 ok.
+    on_change(kind, info): 쓰기 반영 뒤 Tk 스레드에서 호출(화면 갱신용).
+    exam_running_fn(): 시험 진행 중 여부. today: 기준 날짜(date 또는 함수, 테스트용).
+    port: 우선 포트(기본 8765) — 사용 중이면 빈 포트. html_path: 루틴 페이지 파일.
+    """
+
+    def __init__(self, sets_fn=None, ui_call=None, action_fn=None,
+                 on_change=None, exam_running_fn=None, port=None,
+                 html_path=None, today=None, log=None):
+        self.sets_fn = sets_fn or (lambda: [])
+        self.ui_call = ui_call
+        self.action_fn = action_fn
+        self.on_change = on_change
+        self.exam_running_fn = exam_running_fn or (lambda: False)
+        self.preferred_port = ROUTINE_PORT_DEFAULT if port is None else int(port)
+        self._html_path = html_path
+        self._today = today
+        self.log = log or startup_log
+        self.token = secrets.token_urlsafe(18)
+        self.httpd = None
+        self.thread = None
+        self.port = None
+        self.stats = {"state": 0, "requests": 0}
+        self._fingerprint = None
+        self._write_lock = threading.Lock()
+
+    # --- 수명 ---
+    def start(self):
+        """포트 bind(우선 포트 → 빈 포트) 후 데몬 스레드로 serve_forever."""
+        last = None
+        cands = [self.preferred_port]
+        if self.preferred_port != 0:
+            cands.append(0)
+        for p in cands:
+            try:
+                self.httpd = _RoutineHTTPServer(("127.0.0.1", p), _RoutineHandler)
+                break
+            except OSError as e:
+                last = e
+                self.httpd = None
+        if self.httpd is None:
+            raise last or OSError("루틴 서버 포트를 열 수 없습니다")
+        self.httpd.routine = self
+        self.port = int(self.httpd.server_address[1])
+        self.thread = threading.Thread(target=self.httpd.serve_forever,
+                                       kwargs={"poll_interval": 0.5},
+                                       daemon=True, name="루틴서버")
+        self.thread.start()
+        hp = self.html_path()
+        self.log(f"루틴 서버 시작: http://127.0.0.1:{self.port}/ "
+                 f"(우선 포트 {self.preferred_port}"
+                 f"{' 사용 중 → 대체' if self.port != self.preferred_port else ''}"
+                 f", 토큰 {self.token[:4]}…) · 페이지="
+                 f"{hp if os.path.isfile(hp) else '없음(' + hp + ')'}")
+        return self.port
+
+    def stop(self):
+        httpd, self.httpd = self.httpd, None
+        if httpd is None:
+            return
+        try:
+            httpd.shutdown()
+            httpd.server_close()
+        except Exception:
+            pass
+        self.log(f"루틴 서버 종료 (상태 조회 {self.stats['state']}회, "
+                 f"기타 요청 {self.stats['requests']}회)")
+
+    @property
+    def running(self):
+        return self.httpd is not None and self.thread is not None \
+            and self.thread.is_alive()
+
+    def url(self, tab=None):
+        """페이지 주소 (토큰 포함). tab='quiz' 면 #quiz 로 그 탭을 엽니다."""
+        u = f"http://127.0.0.1:{self.port}/?t={self.token}"
+        return u + (f"#{tab}" if tab else "")
+
+    def html_path(self):
+        return self._html_path or routine_html_path()
+
+    def today(self):
+        t = self._today
+        if callable(t):
+            t = t()
+        return t or date.today()
+
+    def note(self, method, path, status, payload=None):
+        """시작 로그 요약 (폴링 제외). 오류 응답은 문구까지."""
+        self.stats["requests"] += 1
+        err = ""
+        if isinstance(payload, dict) and payload.get("ok") is False:
+            err = f" · {payload.get('error')}"
+        elif isinstance(payload, dict) and "error" in payload \
+                and "ok" not in payload:
+            err = f" · {payload.get('error')}"
+        try:
+            self.log(f"루틴 서버: {method} {path} → {status}{err}")
+        except Exception:
+            pass
+
+    # --- 읽기 ---
+    def page(self):
+        """GET / → (status, HTML). 파일은 매 요청마다 읽어 갱신을 바로 반영."""
+        hp = self.html_path()
+        try:
+            with open(hp, encoding="utf-8-sig") as f:
+                return 200, render_routine_page(f.read())
+        except OSError:
+            return 200, routine_missing_page(hp)
+
+    def _touch_if_files_changed(self):
+        """GUI 밖에서(grade.py·손 편집) 기록·설정 파일이 바뀌어도 generated 갱신."""
+        fp = []
+        for p in (RECORDS_PATH, SET_CONFIG_PATH):
+            try:
+                st = os.stat(p)
+                fp.append((st.st_mtime_ns, st.st_size))
+            except OSError:
+                fp.append(None)
+        fp = tuple(fp)
+        if self._fingerprint is not None and fp != self._fingerprint:
+            routine_touch()
+        self._fingerprint = fp
+
+    def state(self):
+        self._touch_if_files_changed()
+        return build_state(self.sets_fn(), today=self.today(),
+                           exam_running=bool(self.exam_running_fn()))
+
+    def _ok(self):
+        st = self.state()
+        return 200, dict([("ok", True)] + list(st.items()))
+
+    def report_file(self, rid):
+        """record_id → 존재하는 채점결과 HTML 경로 (기록에 있는 것만, 경로 탈출 불가)."""
+        rid = str(rid or "").strip()
+        if not rid or any(c in rid for c in "/\\") or ".." in rid:
+            return None
+        info = record_index(self.sets_fn()).get(rid)
+        return info["html"] if info and info.get("html") else None
+
+    # --- Tk 스레드 실행 ---
+    def _run_on_ui(self, fn, timeout):
+        """fn 을 Tk 스레드에서 실행하고 결과를 기다림 → (끝났는지, 결과)."""
+        if self.ui_call is None:
+            return True, fn()
+        box = {}
+        ev = threading.Event()
+
+        def job():
+            try:
+                box["r"] = fn()
+            except Exception as e:      # 로그는 호출 쪽에서
+                box["e"] = e
+            finally:
+                ev.set()
+
+        self.ui_call(job)
+        if not ev.wait(timeout):
+            return False, None
+        if "e" in box:
+            raise box["e"]
+        return True, box.get("r")
+
+    def _write(self, fn):
+        """쓰기 작업을 Tk 스레드에서 실행(요청끼리는 직렬화). 응답 없으면 논리 오류로."""
+        try:
+            with self._write_lock:
+                done, _r = self._run_on_ui(fn, ROUTINE_UI_TIMEOUT)
+        except Exception as e:
+            log_error("루틴 연동 쓰기", e)
+            return 200, {"ok": False, "error": f"저장 실패: {e}"}
+        if not done:
+            return 200, {"ok": False, "error": "시험장 창이 응답하지 않습니다 — "
+                                              "잠시 후 다시 시도하세요"}
+        return self._ok()
+
+    def _changed(self, kind, info):
+        if self.on_change is not None:
+            try:
+                self.on_change(kind, info)
+            except Exception as e:
+                log_error(f"루틴 연동 반영({kind})", e)
+
+    # --- 쓰기 ---
+    def api_check(self, body):
+        key = body.get("key")
+        if not isinstance(key, str) or not key.strip() or len(key) > 120 \
+                or any(ord(c) < 32 for c in key):
+            raise RoutineRequestError(400, "key 누락 또는 형식 오류")
+        key = key.strip()
+        value = body.get("value")
+        on = value is True or value == 1 or (
+            isinstance(value, str) and value.lower() in ("true", "1", "on"))
+
+        def job():
+            cfg = load_set_config(SET_CONFIG_PATH)
+            wc = cfg.get(WEB_CHECKS_KEY)
+            if not isinstance(wc, dict):
+                wc = cfg[WEB_CHECKS_KEY] = {}
+            if on:
+                wc[key] = True
+            else:
+                wc.pop(key, None)
+            if not save_set_config(cfg, SET_CONFIG_PATH):
+                raise OSError("세트설정.json 저장 실패")
+            self._changed("check", {"key": key, "value": on})
+
+        return self._write(job)
+
+    def api_score(self, body):
+        d_txt = body.get("date")
+        try:
+            d = datetime.strptime(str(d_txt), "%Y-%m-%d").date()
+        except (TypeError, ValueError):
+            raise RoutineRequestError(400, "date 형식 오류 (YYYY-MM-DD)")
+        norm = body.get("set")
+        if not isinstance(norm, str) or not norm:
+            raise RoutineRequestError(400, "set(norm) 누락")
+        s = next((x for x in self.sets_fn() if x.get("norm") == norm), None)
+        if s is None:
+            raise RoutineRequestError(400, "알 수 없는 세트")
+        total = body.get("total")
+        if isinstance(total, bool) or not isinstance(total, (int, float)) \
+                or not float(total).is_integer() or not 0 <= total <= 100:
+            raise RoutineRequestError(400, "total 은 0~100 정수")
+        total = int(total)
+        no = routine_day_no(d)
+        record = {
+            "일시": f"{d.isoformat()} {datetime.now().strftime('%H:%M')}",
+            "세트명": s["name"], "점수": total, "소요시간": "-", "리포트": None,
+            "mode": "수동", "출처": "루틴페이지",
+        }
+        if 1 <= no <= 14:
+            record["day"] = plan_day_tag(no)
+            record["루틴"] = ROUTINE_TAG
+
+        def job():
+            append_record(record, RECORDS_PATH)
+            self._changed("score", {"record": record, "set": s})
+
+        return self._write(job)
+
+    def api_review(self, body):
+        rid = body.get("record_id")
+        if not isinstance(rid, str) or not rid:
+            raise RoutineRequestError(400, "record_id 누락")
+        done = body.get("done") is True
+        info = record_index(self.sets_fn()).get(rid)
+        if info is None:
+            return 200, {"ok": False, "error": "기록을 찾을 수 없습니다"}
+        if not info.get("json"):
+            return 200, {"ok": False, "error": "채점결과 JSON이 없는 기록은 오답노트 "
+                                              "상태를 저장할 수 없습니다"}
+        json_name = os.path.basename(info["json"])
+        count = int(info.get("count") or 0)
+
+        def job():
+            checks = set(range(count)) if done else set()
+            if not record_review_state(info["norm"], json_name, checks,
+                                       SET_CONFIG_PATH, done=done):
+                raise OSError("세트설정.json 저장 실패")
+            self._changed("review", {"record_id": rid, "done": done,
+                                     "norm": info["norm"], "json": json_name})
+
+        return self._write(job)
+
+    def api_action(self, body):
+        action = body.get("action")
+        if action not in ROUTINE_ACTIONS:
+            raise RoutineRequestError(400, "알 수 없는 action")
+        norm = body.get("set")
+        rid = body.get("record_id")
+        norm = norm if isinstance(norm, str) and norm else None
+        rid = rid if isinstance(rid, str) and rid else None
+        sets = self.sets_fn()
+        s = next((x for x in sets if x.get("norm") == norm), None) if norm else None
+        rec = record_index(sets).get(rid) if rid else None
+        if norm and s is None:
+            return 200, {"ok": False, "error": "알 수 없는 세트"}
+        if rid and rec is None:
+            return 200, {"ok": False, "error": "기록을 찾을 수 없습니다"}
+        if rec is not None and s is None:
+            s = rec.get("set")
+        if action in ("start_exam", "start_retry") and self.exam_running_fn():
+            return 200, {"ok": False, "error": "시험 진행 중"}
+        if action == "open_pdf":
+            if s is None:
+                return 200, {"ok": False, "error": "세트를 지정하세요"}
+            if not s.get("pdf") or not os.path.isfile(str(s.get("pdf"))):
+                return 200, {"ok": False, "error": "문제지 PDF 없음"}
+        if action in ("open_review", "start_retry") and s is None and rec is None:
+            return 200, {"ok": False, "error": "세트 또는 기록을 지정하세요"}
+        if action == "open_report" and (rec is None or not rec.get("html")):
+            return 200, {"ok": False, "error": "리포트 파일이 없습니다"}
+        if self.action_fn is None:
+            return self._ok()
+        try:
+            done, result = self._run_on_ui(
+                lambda: self.action_fn(action, s, rec, norm, rid),
+                ROUTINE_ACTION_TIMEOUT)
+        except Exception as e:
+            log_error(f"루틴 연동 동작({action})", e)
+            return 200, {"ok": False, "error": f"동작 실패: {e}"}
+        if done and isinstance(result, tuple) and len(result) == 2 \
+                and not result[0]:
+            return 200, {"ok": False, "error": str(result[1] or "동작 실패")}
+        return self._ok()
+
+
 def format_elapsed(seconds):
     seconds = max(0, int(seconds))
     m, s = divmod(seconds, 60)
@@ -3756,7 +4799,7 @@ if HAS_TK:
         """채점 결과 창: 큰 점수 + 시트별 점수 + 리포트 열기."""
 
         def __init__(self, master, result, html_path, folder=None,
-                     copied=False, goal=None):
+                     copied=False, goal=None, linked=False):
             super().__init__(master)
             self.title(f"{APP_TITLE} - 채점 결과")
             self.configure(bg=BG)
@@ -3812,7 +4855,15 @@ if HAS_TK:
                 tk.Label(frm, text=g_txt, bg=g_bg, fg=g_fg,
                          font=("Malgun Gothic", 9, "bold"), padx=10, pady=5,
                          wraplength=360).pack(pady=(6, 0))
-            if copied:
+            if linked:
+                self.link_lbl = tk.Label(
+                    frm, text="채점 결과가 루틴 페이지에 자동 반영되었습니다 — "
+                    "열려 있는 페이지는 5초 안에 갱신됩니다 (시작 화면 "
+                    "[루틴 열기])", bg=BRAND_SOFT, fg=BRAND_DARK,
+                    font=("Malgun Gothic", 9, "bold"), wraplength=360,
+                    padx=10, pady=6, justify="left")
+                self.link_lbl.pack(pady=(10, 0))
+            elif copied:
                 tk.Label(frm, text="성적이 복사되었습니다 — 루틴 웹페이지에서 "
                          "[성적 붙여넣기]를 누르면 자동 기록됩니다",
                          bg=BRAND_SOFT, fg=BRAND_DARK,
@@ -4228,7 +5279,8 @@ if HAS_TK:
             else:
                 self.checks.add(i)
             record_review_state(self.set_info.get("norm") or "",
-                                self.json_name, self.checks)
+                                self.json_name, self.checks,
+                                total=len(self.items))
             self._refresh_list()
 
         def _retake(self):
@@ -4530,11 +5582,30 @@ if HAS_TK:
                 fg=BRAND_DARK, activebackground="#CFE9DA", relief="flat",
                 padx=12, pady=4, command=self.toggle_check)
             self.check_btn.pack(side="left", padx=6)
+            # ⑤ 함수 퀴즈 단계에서만 보이는 [웹에서 퀴즈 풀기] (루틴 페이지 퀴즈 탭)
+            self.web_btn = tk.Button(
+                bf, text="웹에서 퀴즈 풀기", font=UI_FONT_BOLD, bg="#1F5FBF",
+                fg="white", activebackground="#174A96", relief="flat",
+                padx=12, pady=4, command=self.open_web_step)
             tk.Button(bf, text="닫기", font=UI_FONT, relief="groove",
                       padx=12, pady=4, command=self.destroy).pack(
                 side="right")
             self._render_header()
             self.refresh(select=self.current_index())
+
+        def web_tab_of(self, i=None):
+            """스텝의 루틴 페이지 탭(#quiz 등). 없으면 None."""
+            i = self.selected_index() if i is None else i
+            if i is None or i >= len(self.steps):
+                return None
+            return self.steps[i].get("웹탭") or None
+
+        def open_web_step(self):
+            """[웹에서 퀴즈 풀기] — 루틴 페이지의 해당 탭을 브라우저로 엽니다."""
+            tab = self.web_tab_of()
+            if not tab:
+                return None
+            return self.app.open_routine_page(tab=tab)
 
         # --- 세트 슬롯 ---
 
@@ -4814,6 +5885,14 @@ if HAS_TK:
                 lines.append("[이 단계 시작]을 누르면 풀이 사본과 타이머가 "
                              "열립니다. 채점까지 끝나면 자동으로 "
                              "체크됩니다.")
+            if st.get("웹탭"):
+                lines.append("[웹에서 퀴즈 풀기]를 누르면 루틴 페이지의 퀴즈 "
+                             "탭이 브라우저로 열립니다. 페이지에서 ⑤를 "
+                             "체크하면 이 단계도 자동으로 체크됩니다.")
+                if not self.web_btn.winfo_manager():
+                    self.web_btn.pack(side="left", padx=6)
+            elif self.web_btn.winfo_manager():
+                self.web_btn.pack_forget()
             self.detail_lbl.configure(text="\n".join(lines))
 
         # --- 동작 ---
@@ -4849,6 +5928,9 @@ if HAS_TK:
             kind, payload = resolve_step_action(st, self.app.sets,
                                                 self.slot_sets)
             if kind == "info":
+                if (payload or {}).get("웹탭"):        # 함수 퀴즈 → 루틴 페이지 탭
+                    self.app.open_routine_page(tab=payload["웹탭"])
+                    return
                 messagebox.showinfo(f"{APP_TITLE} - {st['이름']}",
                                     (payload or {}).get("메시지") or
                                     st.get("설명", ""), parent=self)
@@ -4973,9 +6055,12 @@ if HAS_TK:
             self.step_guide = None            # 단계 가이드 창 (열려 있으면)
             self._current_exam = None         # 진행 중 시험 dict
             self._excel_warn = None           # Excel 확인 안내 창
+            self.routine = None               # 루틴 웹 연동 서버 (RoutineServer)
+            self._routine_jobs = queue.Queue()   # 서버 스레드 → Tk 스레드 작업 큐
             self._build_ui()
             self.refresh_sets()
             self.refresh_records()
+            self._start_routine_server()
             excel = find_excel_exe()
             startup_log(f"시작 화면 준비: 스캔 루트={self.scan_root} · "
                         f"세트 {len(self.sets)}개 · "
@@ -4996,6 +6081,19 @@ if HAS_TK:
                 threading.Thread(target=self._bg_update_check,
                                  daemon=True).start()
                 self.after(1200, lambda: self._update_poll(tok))
+            if auto_update and self.routine_auto_open_var.get() \
+                    and self.routine is not None:
+                self.after(900, self.open_routine_page)   # 시작 시 자동 열기
+
+        def destroy(self):
+            """창 종료 시 루틴 서버도 내림 (재시작하는 새 프로세스가 포트를 쓰도록)."""
+            srv, self.routine = self.routine, None
+            if srv is not None:
+                try:
+                    srv.stop()
+                except Exception:
+                    pass
+            super().destroy()
 
         # ---------------- UI 구성 ----------------
 
@@ -5048,6 +6146,11 @@ if HAS_TK:
                 bg=BRAND_SOFT, fg=BRAND_DARK, padx=8, pady=2,
                 command=self.recompute_plan)
             self.recalc_btn.pack(side="right", padx=(0, 8))
+            self.routine_btn = tk.Button(
+                row1, text="루틴 열기", font=UI_FONT_BOLD, bg="#1F5FBF",
+                fg="white", activebackground="#174A96", relief="flat",
+                padx=10, pady=2, command=self.open_routine_page)
+            self.routine_btn.pack(side="right", padx=(0, 8))
             self.plan_todo_lbl = tk.Label(plan_card, text="", bg=BRAND_SOFT,
                                           fg=INK, font=("Malgun Gothic", 9),
                                           justify="left", anchor="w",
@@ -5151,6 +6254,13 @@ if HAS_TK:
                 bg=BG, fg=INK, activebackground=BG, font=UI_FONT,
                 command=self._toggle_auto_update)
             self.auto_update_chk.pack(side="right", padx=(0, 2))
+            self.routine_auto_open_var = tk.BooleanVar(
+                value=bool(get_app_setting(ROUTINE_AUTO_OPEN_SETTING, False)))
+            self.routine_auto_open_chk = tk.Checkbutton(
+                ctrl, text="루틴 자동 열기", variable=self.routine_auto_open_var,
+                bg=BG, fg=INK, activebackground=BG, font=UI_FONT,
+                command=self._toggle_routine_auto_open)
+            self.routine_auto_open_chk.pack(side="right", padx=(0, 2))
             tk.Button(ctrl, text="Excel 신뢰 위치로 등록", font=UI_FONT,
                       relief="groove", padx=10, pady=4,
                       command=self.on_register_trust).pack(
@@ -5257,6 +6367,246 @@ if HAS_TK:
                 self.pdf_warn_lbl.pack(fill="x", side="bottom")
             else:
                 self.pdf_warn_lbl.pack_forget()
+
+        # ---------------- 루틴 웹 연동 (v2.4.0) ----------------
+
+        def _start_routine_server(self):
+            """로컬 연동 서버 기동: 8765 → 저장된 포트 → 빈 포트. 실패해도 프로그램은
+            계속 뜨고(연동 기능만 꺼짐), 실제 포트는 `_설정.루틴포트`에 저장."""
+            prefer = ROUTINE_PORT_DEFAULT
+            srv = None
+            try:
+                srv = RoutineServer(
+                    sets_fn=lambda: self.sets, ui_call=self._routine_jobs.put,
+                    action_fn=self.routine_action,
+                    on_change=self.on_routine_changed,
+                    exam_running_fn=lambda: self.exam_running, port=prefer)
+                srv.start()
+            except Exception as e:
+                log_error("루틴 서버 시작", e)
+                startup_log(f"루틴 서버를 띄우지 못했습니다 ({e}) — 연동 없이 계속")
+                srv = None
+            self.routine = srv
+            if srv is not None:
+                try:
+                    if get_app_setting(ROUTINE_PORT_SETTING) != srv.port:
+                        set_app_setting(ROUTINE_PORT_SETTING, srv.port)
+                except Exception:
+                    pass
+            self.after(100, self._routine_pump)
+            return srv
+
+        def _routine_pump(self):
+            """서버 스레드가 넘긴 작업을 Tk 스레드에서 실행 (100ms 주기)."""
+            try:
+                while True:
+                    job = self._routine_jobs.get_nowait()
+                    try:
+                        job()
+                    except Exception as e:
+                        log_error("루틴 연동 작업", e)
+            except queue.Empty:
+                pass
+            except Exception:
+                pass
+            try:
+                if self.winfo_exists():
+                    self.after(100, self._routine_pump)
+            except Exception:
+                pass
+
+        def routine_alive(self):
+            return self.routine is not None and self.routine.running
+
+        def routine_url(self, tab=None):
+            return self.routine.url(tab) if self.routine_alive() else None
+
+        def open_routine_page(self, tab=None):
+            """[루틴 열기] — 기본 브라우저로 루틴 페이지(토큰 포함 주소) 열기.
+            tab='quiz' 면 함수 퀴즈 탭. 반환: 연 주소(실패 None)."""
+            if not self.routine_alive():
+                messagebox.showwarning(
+                    APP_TITLE, "루틴 연동 서버가 실행되지 않아 페이지를 열 수 "
+                    "없습니다.\n[시작 로그 보기]에서 '루틴 서버' 줄을 확인하고 "
+                    "프로그램을 다시 실행해 보세요.", parent=self)
+                return None
+            url = self.routine.url(tab)
+            try:
+                ok = bool(webbrowser.open(url))
+            except Exception as e:
+                log_error("루틴 페이지 열기", e)
+                ok = False
+            base = url.split("?")[0]
+            startup_log(f"루틴 페이지 열기: {base}"
+                        f"{' #' + tab if tab else ''} → "
+                        f"{'브라우저 실행' if ok else '실패'}")
+            self.show_toast(
+                f"브라우저에서 루틴 페이지를 열었습니다 — 주소: {base} "
+                "(페이지는 시험장이 켜져 있는 동안 5초마다 동기화)" if ok else
+                f"브라우저를 열지 못했습니다. 주소창에 직접 입력하세요: {url}",
+                seconds=10)
+            return url if ok else None
+
+        def _toggle_routine_auto_open(self):
+            on = bool(self.routine_auto_open_var.get())
+            set_app_setting(ROUTINE_AUTO_OPEN_SETTING, on)
+            startup_log(f"루틴 자동 열기 {'켬' if on else '끔'} "
+                        f"(세트설정 _설정.{ROUTINE_AUTO_OPEN_SETTING})")
+            self.show_toast(
+                "시험장을 시작할 때 루틴 페이지를 브라우저로 자동으로 엽니다"
+                if on else "루틴 페이지 자동 열기를 껐습니다 — [루틴 열기]로 "
+                "언제든 열 수 있습니다", seconds=5)
+            return on
+
+        def bring_to_front(self):
+            """시험장 창을 앞으로 (웹에서 동작을 요청했을 때)."""
+            try:
+                self.deiconify()
+                self.lift()
+                self.focus_force()
+                self.attributes("-topmost", True)
+                self.after(400, lambda: self.attributes("-topmost", False))
+            except Exception:
+                pass
+
+        def _web_pending_plan(self, s, step_kind):
+            """웹에서 시작한 시험/재풀이가 오늘 단계 가이드의 어느 스텝인지 찾아
+            채점 완료 시 자동 체크되도록 _pending_plan 을 만듭니다."""
+            no = routine_day_no()
+            plan = {"day": plan_day_tag(no), "목표": None, "step": None,
+                    "done_steps": []}
+            try:
+                today_plan = self.plan_for(no)
+                for i, st in enumerate(today_plan.get("스텝") or []):
+                    if st.get("형") == step_kind and st.get("세트") == s["name"]:
+                        plan["step"] = i
+                        plan["done_steps"] = [i]
+                        if step_kind == "모의" and i + 1 < len(today_plan["스텝"]) \
+                                and today_plan["스텝"][i + 1].get("형") == "채점":
+                            plan["done_steps"].append(i + 1)
+                        plan["목표"] = st.get("목표")
+                        break
+                if plan["목표"] is None and self.adaptive \
+                        and self.adaptive.get("kind") == "study":
+                    for sl in self.adaptive["days"].get(date.today(), []):
+                        if sl.get("set") and sl["set"].get("norm") == s.get("norm"):
+                            plan["목표"] = sl.get("goal")
+                            break
+            except Exception as e:
+                log_error("웹 시작 스텝 연결", e)
+            return plan
+
+        def routine_action(self, action, s, rec, norm, record_id):
+            """(Tk 스레드) 웹의 /api/action 실행 → (ok, 오류 문구)."""
+            self.bring_to_front()
+            if action == "show":
+                return True, None
+            if action in ("start_exam", "start_retry") and self.exam_running:
+                return False, "시험 진행 중"
+            if action == "start_exam":
+                if s is None:
+                    picks = pick_set_for_retry(self.sets, load_records(), 1)
+                    if not picks:
+                        return False, "시작할 세트가 없습니다"
+                    s = picks[0][0]
+                    startup_log(f"웹 요청 자동 선택: {s['name']} ({picks[0][1]})")
+                if not self._select_set_in_list(s):
+                    return False, "목록에 없는 세트"
+                self._pending_plan = self._web_pending_plan(s, "모의")
+                startup_log(f"웹 요청: 시험 시작 '{s['name']}'")
+                self.start_exam()
+                return True, None
+            if action == "open_review":
+                if s is None:
+                    return False, "세트를 찾을 수 없습니다"
+                self._select_set_in_list(s)
+                startup_log(f"웹 요청: 오답노트 '{s['name']}'")
+                self.open_review_mode(full_only=rec is None,
+                                      json_path=rec.get("json") if rec else None,
+                                      set_info=s)
+                return True, None
+            if action == "start_retry":
+                if s is None:
+                    return False, "세트를 찾을 수 없습니다"
+                kind, payload = retry_payload_for_set(
+                    s, 15, json_path=rec.get("json") if rec else None)
+                if kind != "retry":
+                    return False, (payload or {}).get("이유") or \
+                        (payload or {}).get("메시지") or "재풀이할 오답이 없습니다"
+                self._select_set_in_list(s)
+                self._pending_plan = self._web_pending_plan(s, "오답재풀이")
+                startup_log(f"웹 요청: 오답 재풀이 '{s['name']}' "
+                            f"({', '.join(payload['sheets'])})")
+                self.start_exam(practice={
+                    "sheets": payload["sheets"], "label": payload["label"],
+                    "minutes": payload["minutes"], "mode": "오답재풀이"})
+                return True, None
+            if action == "open_report":
+                if not rec or not rec.get("html"):
+                    return False, "리포트 파일이 없습니다"
+                ok, err = open_file(rec["html"])
+                return (True, None) if ok else (False, f"리포트를 열지 못했습니다: {err}")
+            if action == "open_pdf":
+                if not s or not s.get("pdf") or not os.path.isfile(s["pdf"]):
+                    return False, "문제지 PDF 없음"
+                ok, err = open_file(s["pdf"])
+                return (True, None) if ok else (False, f"PDF를 열지 못했습니다: {err}")
+            return False, "알 수 없는 action"
+
+        def on_routine_changed(self, kind, info):
+            """(Tk 스레드) 웹 쓰기 반영 뒤 화면 갱신. 오늘의 ⑤ 함수 퀴즈 체크는
+            단계 가이드의 '(선택) 함수 퀴즈' 스텝과 동기화합니다."""
+            info = info or {}
+            if kind == "score":
+                self.refresh_records()
+                self._show_info()
+                rec = info.get("record") or {}
+                self.show_toast(f"루틴 페이지에서 점수 기록: {rec.get('세트명', '?')} "
+                                f"{rec.get('점수', '?')}점 (수동)", seconds=6)
+                return
+            if kind == "review":
+                self._show_info()
+                return
+            if kind == "check":
+                key = str(info.get("key") or "")
+                if not key.endswith("|quiz"):
+                    return
+                if key.split("|")[0] != date.today().isoformat():
+                    return
+                self._sync_quiz_step(bool(info.get("value")))
+
+        def _sync_quiz_step(self, on):
+            """웹 ⑤ 체크 ↔ 오늘 단계 가이드의 함수 퀴즈 스텝 완료 표시."""
+            no = routine_day_no()
+            day_tag = plan_day_tag(no)
+            if not day_tag:
+                return False
+            try:
+                steps = self.plan_for(no).get("스텝") or []
+                idx = next((i for i, st in enumerate(steps)
+                            if st.get("웹탭") == "quiz"), None)
+                if idx is None:
+                    return False
+                g = getattr(self, "step_guide", None)
+                if g is not None and g.winfo_exists() and g.day_tag == day_tag:
+                    if on:
+                        g.mark_step_done(idx)
+                    elif idx in g.done:
+                        g.done.discard(idx)
+                        g._persist()
+                        g.refresh(select=g.current_index())
+                else:
+                    done = load_step_progress(day_tag)
+                    if on:
+                        done.add(idx)
+                    else:
+                        done.discard(idx)
+                    save_step_progress(day_tag, done)
+                self._render_plan_card()
+                return True
+            except Exception as e:
+                log_error("웹 퀴즈 체크 동기화", e)
+                return False
 
         # ---------------- 자동 업데이트 ----------------
 
@@ -5644,6 +6994,7 @@ if HAS_TK:
             }
             self._current_exam = exam
             self.exam_running = True
+            routine_touch()                    # 루틴 페이지: 시험 진행 중 표시
             self.start_btn.configure(state="disabled", text="진행 중")
             # 문제지 PDF를 먼저 열고 → 잠시 후 Excel (Excel 창이 맨 앞에 오게)
             delay = 0
@@ -5726,6 +7077,7 @@ if HAS_TK:
 
         def exam_closed(self):
             self.exam_running = False
+            routine_touch()
             exam = self._current_exam
             if exam is not None:
                 exam["closed"] = True
@@ -5904,13 +7256,17 @@ if HAS_TK:
 
         # ---------------- 오답노트 모드 ----------------
 
-        def open_review_mode(self, full_only=False):
-            s = self._selected_set()
+        def open_review_mode(self, full_only=False, json_path=None,
+                             set_info=None):
+            """오답노트 모드. json_path 를 주면 그 채점결과(웹 [오답노트 열기]),
+            아니면 선택 세트의 최신 채점결과."""
+            s = set_info or self._selected_set()
             if not s:
                 messagebox.showinfo(APP_TITLE, "먼저 세트를 선택하세요.",
                                     parent=self)
                 return
-            jp = find_latest_result_json(s, full_only=full_only)
+            jp = json_path if json_path and os.path.isfile(json_path) \
+                else find_latest_result_json(s, full_only=full_only)
             if not jp:
                 messagebox.showinfo(
                     APP_TITLE, "이 세트의 채점 기록(채점결과 JSON)이 "
@@ -6060,7 +7416,8 @@ if HAS_TK:
                 goal = (exam.get("plan") or {}).get("목표")
                 ResultWindow(self, result, html_path,
                              folder=os.path.dirname(html_path),
-                             copied=copied, goal=goal)
+                             copied=copied, goal=goal,
+                             linked=self.routine_alive())
                 if os.path.isfile(html_path):
                     open_file(html_path)
             pinfo = exam.get("practice_info")
@@ -6470,13 +7827,96 @@ def run_smoke():
     back = app.clipboard_get()
     import json as _json
     assert _json.loads(back) == fake, back[:80]
+    # v2.4.0: 루틴 웹 연동 서버 — 기동·상태 조회·[루틴 열기]/[웹에서 퀴즈 풀기]
+    import urllib.request as _ur
+    assert app.routine is not None and app.routine.running, "루틴 서버 기동"
+    assert app.routine_btn.cget("text") == "루틴 열기"
+    assert app.routine_auto_open_chk.cget("text") == "루틴 자동 열기"
+    _url = app.routine_url()
+    assert _url and _url.startswith(f"http://127.0.0.1:{app.routine.port}/?t=")
+    with _ur.urlopen(f"http://127.0.0.1:{app.routine.port}/api/state",
+                     timeout=5) as _resp:
+        _st = _json.loads(_resp.read().decode("utf-8"))
+        assert _resp.headers.get("Cache-Control") == "no-store"
+    assert _st["today"] == date.today().isoformat() and "plan" in _st \
+        and len(_st["plan"]["days"]) == 16, list(_st)
+    with _ur.urlopen(f"http://127.0.0.1:{app.routine.port}/",
+                     timeout=5) as _resp:
+        _page = _resp.read().decode("utf-8")
+    assert _page.lstrip().lower().startswith("<!doctype html>"), _page[:40]
+    # 쓰기: 토큰 없으면 401, 토큰 있으면 Tk 스레드(펌프)에서 저장 후 최신 상태
+    _req = _ur.Request(f"http://127.0.0.1:{app.routine.port}/api/check",
+                       data=b'{"key":"smoke|quiz","value":true}',
+                       headers={"Content-Type": "application/json"})
+    try:
+        _ur.urlopen(_req, timeout=5)
+        raise AssertionError("토큰 없는 POST 가 통과")
+    except _ur.HTTPError as e:
+        assert e.code == 401, e.code
+    _box = {}
+
+    def _post_check():
+        r = _ur.Request(f"http://127.0.0.1:{app.routine.port}/api/check",
+                        data=b'{"key":"smoke|quiz","value":true}',
+                        headers={"Content-Type": "application/json",
+                                 "X-Coco-Token": app.routine.token})
+        try:
+            with _ur.urlopen(r, timeout=10) as resp:
+                _box["r"] = _json.loads(resp.read().decode("utf-8"))
+        except Exception as e:
+            _box["e"] = e
+    _t = threading.Thread(target=_post_check, daemon=True)
+    _t.start()
+    _deadline = time.time() + 10
+    while _t.is_alive() and time.time() < _deadline:
+        app.update()                       # 펌프(after)가 작업을 실행하도록
+        time.sleep(0.05)
+    assert _box.get("r", {}).get("ok") is True, _box
+    assert _box["r"]["checks"].get("smoke|quiz") is True
+    _cfg = load_set_config()
+    assert _cfg.get(WEB_CHECKS_KEY, {}).get("smoke|quiz") is True, "_웹체크 저장"
+    _cfg.get(WEB_CHECKS_KEY, {}).pop("smoke|quiz", None)
+    save_set_config(_cfg)
+    # 단계 가이드: 마지막(함수 퀴즈) 스텝에서만 [웹에서 퀴즈 풀기] 표시
+    save_step_progress("d03", set())
+    g7 = StepGuideWindow(app, plan_for_day(3))
+    app.update_idletasks()
+    app.update()
+    assert not g7.web_btn.winfo_manager()
+    g7.listbox.selection_clear(0, "end")
+    g7.listbox.selection_set(g7.listbox.size() - 1)
+    g7._show_detail()
+    assert g7.web_btn.winfo_manager() and g7.web_tab_of() == "quiz"
+    _opened = []
+    app.open_routine_page = lambda tab=None: _opened.append(tab)
+    g7.start_step()                                  # 퀴즈 스텝 → 웹 탭 열기
+    assert _opened == ["quiz"], _opened
+    g7.destroy()
+    save_step_progress("d03", set())
+    del app.open_routine_page
+    # 채점 결과 창: 연동 중이면 '자동 반영' 문구
+    rw = ResultWindow(app, {"total": 80, "pass_line": 70, "sheets": []}, "",
+                      linked=True)
+    app.update_idletasks()
+    app.update()
+    assert "자동 반영" in rw.link_lbl.cget("text")
+    rw.destroy()
+    # 동작 브리지: 시험 중이면 오류, show 는 ok
+    app.exam_running = True
+    assert app.routine_action("start_exam", None, None, None, None) == \
+        (False, "시험 진행 중")
+    app.exam_running = False
+    assert app.routine_action("show", None, None, None, None) == (True, None)
+    assert app.routine_action("open_pdf", {"name": "x", "pdf": None}, None,
+                              "x", None)[0] is False
     timer.finished = True
     timer.destroy()
     app.destroy()
+    assert not app.routine.running if app.routine else True
     print("SMOKE OK: 창 생성/위젯 렌더/타이머/오답노트 패널/단계 가이드(세트 "
           "자동 선택·바꾸기·미발견 직접 선택)/오류 대화상자·로그/진단 창/"
           "시작 로그 창/Excel 확인 안내 창/PDF 회차 경고/안내 띠·자동 업데이트 "
-          "토글/파괴 정상")
+          "토글/루틴 연동 서버(상태·쓰기·페이지·퀴즈 버튼·결과 문구)/파괴 정상")
 
 
 def _notify_no_tk():

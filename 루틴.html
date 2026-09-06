@@ -1,0 +1,3333 @@
+<title>컴활 2급 D-18 스프린트</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Do+Hyeon&family=IBM+Plex+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
+<style>
+  :root{
+    --bg:#FAFBF9;
+    --ink:#17251C;
+    --accent:#107C41;
+    --accent-deep:#0B5C30;
+    --warn:#B7791F;
+    --line:#DCE5DD;
+    --card:#FFFFFF;
+    --muted:#5C6B60;
+    --accent-soft:#E9F3EC;
+    --warn-soft:#F9F1DF;
+    --code-bg:#F1F5F1;
+    --scrim:rgba(23,37,28,.45);
+    --shadow:0 1px 2px rgba(23,37,28,.05), 0 4px 14px rgba(23,37,28,.05);
+  }
+  @media (prefers-color-scheme: dark){
+    :root:not([data-theme="light"]){
+      --bg:#101613;
+      --ink:#E4EDE6;
+      --accent:#34B36B;
+      --accent-deep:#7BCFA0;
+      --warn:#D9A441;
+      --line:#263229;
+      --card:#18211C;
+      --muted:#94A698;
+      --accent-soft:#1B2A20;
+      --warn-soft:#2A2416;
+      --code-bg:#131C16;
+      --scrim:rgba(0,0,0,.6);
+      --shadow:0 1px 2px rgba(0,0,0,.35), 0 4px 14px rgba(0,0,0,.25);
+    }
+  }
+  :root[data-theme="dark"]{
+    --bg:#101613;
+    --ink:#E4EDE6;
+    --accent:#34B36B;
+    --accent-deep:#7BCFA0;
+    --warn:#D9A441;
+    --line:#263229;
+    --card:#18211C;
+    --muted:#94A698;
+    --accent-soft:#1B2A20;
+    --warn-soft:#2A2416;
+    --code-bg:#131C16;
+    --scrim:rgba(0,0,0,.6);
+    --shadow:0 1px 2px rgba(0,0,0,.35), 0 4px 14px rgba(0,0,0,.25);
+  }
+
+  *{box-sizing:border-box}
+  body{
+    background:var(--bg);
+    color:var(--ink);
+    font-family:"IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", sans-serif;
+    font-size:15.5px;
+    line-height:1.65;
+    margin:0;
+  }
+  code, .fx{
+    font-family:"IBM Plex Mono", "Nanum Gothic Coding", Consolas, monospace;
+  }
+  h1,h2,h3,.d-num,.dc-tag,.strip .dt,.mast-dday,.tabbar [role="tab"],.start-btn,.big-done{
+    font-family:"Do Hyeon", "IBM Plex Sans KR", "Malgun Gothic", sans-serif;
+    font-weight:400;
+    letter-spacing:.01em;
+  }
+  h1,h2,h3{margin:0; text-wrap:balance}
+  ul{margin:6px 0 0; padding-left:18px}
+  li{margin:3px 0}
+  li::marker{color:var(--accent)}
+  a{color:var(--accent-deep)}
+  input[type="checkbox"]{
+    accent-color:var(--accent);
+    width:17px; height:17px;
+    margin:0;
+    flex:none;
+  }
+  input[type="checkbox"]:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+  button:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+
+  .page{max-width:1080px; margin:0 auto; padding:24px 20px 72px}
+  .sec-head{display:flex; align-items:center; gap:10px; margin:44px 0 6px}
+  .sec-head:first-child{margin-top:0}
+  .sec-head::before{content:""; width:12px; height:12px; background:var(--accent); flex:none}
+  .sec-head h2{font-size:24px}
+  .sec-sub{margin:0 0 18px; color:var(--muted); font-size:14px}
+  .sec-note{margin:14px 0 0; color:var(--muted); font-size:14px}
+
+  /* ---------- 마스트헤드 · 탭바 ---------- */
+  .masthead{
+    display:flex; align-items:baseline; justify-content:space-between; gap:16px;
+    flex-wrap:wrap; margin-bottom:14px;
+  }
+  .masthead h1{font-size:24px}
+  .mast-dday{color:var(--warn); font-size:18px; white-space:nowrap; font-variant-numeric:tabular-nums}
+  .tabbar{
+    position:sticky; top:0; z-index:30;
+    background:var(--bg);
+    display:flex; gap:2px; align-items:flex-end;
+    overflow-x:auto;
+    border-bottom:2px solid var(--line);
+    margin:0 0 26px;
+  }
+  .tabbar [role="tab"]{
+    appearance:none; background:none; border:none; cursor:pointer;
+    font-size:16px; color:var(--muted);
+    padding:10px 14px 8px;
+    border-bottom:3px solid transparent;
+    margin-bottom:-2px;
+    white-space:nowrap;
+  }
+  .tabbar [role="tab"][aria-selected="true"]{
+    color:var(--accent-deep);
+    background:var(--card);
+    border-bottom-color:var(--accent);
+  }
+  .tabbar [role="tab"]:hover{color:var(--accent-deep)}
+  .tabbar [role="tab"]:focus-visible{outline:2px solid var(--accent); outline-offset:-2px}
+  [role="tabpanel"][hidden]{display:none}
+
+  /* ---------- 히어로 ---------- */
+  .hero{display:flex; flex-direction:column; gap:22px}
+  .hero-top{display:flex; flex-wrap:wrap; align-items:flex-end; justify-content:space-between; gap:12px 32px}
+  .hero-title .fx{
+    display:inline-flex; align-items:center; gap:10px;
+    margin:0 0 12px; padding:5px 12px;
+    background:var(--card); border:1px solid var(--line);
+    font-size:13px; color:var(--muted);
+  }
+  .fx .fx-tag{color:var(--accent); font-weight:600; font-style:italic}
+  .fx code{background:none; border:none; padding:0; color:var(--ink); font-size:13px}
+  .fx .fx-out{color:var(--warn); font-weight:600}
+  .hero-sub{margin:8px 0 0; color:var(--muted)}
+  .hero-sub strong{color:var(--ink)}
+  .d-num{
+    font-size:clamp(64px, 11vw, 104px);
+    line-height:.95;
+    color:var(--warn);
+    font-variant-numeric:tabular-nums;
+  }
+
+  /* ---------- 날짜 스트립 ---------- */
+  .strip-wrap{overflow-x:auto; border:1px solid var(--line); background:var(--card); box-shadow:var(--shadow)}
+  .strip{
+    display:grid;
+    grid-template-columns:repeat(16, minmax(46px, 1fr));
+    gap:1px;
+    background:var(--line);
+    min-width:780px;
+  }
+  .cell{
+    background:var(--card);
+    display:flex; flex-direction:column; align-items:center; gap:1px;
+    padding:8px 2px 7px;
+    text-align:center;
+  }
+  .cell .wd{font-size:11px; color:var(--muted)}
+  .cell .dt{font-size:19px; font-variant-numeric:tabular-nums}
+  .cell .mk{font-size:10.5px; line-height:1.4; min-height:15px; color:var(--muted)}
+  .cell.mock{background:var(--accent-soft)}
+  .cell.mock .mk{color:var(--accent-deep); font-weight:700}
+  .cell.today{background:var(--accent)}
+  .cell.today .wd,.cell.today .dt,.cell.today .mk{color:var(--card); font-weight:500}
+  .cell.exam{background:var(--warn-soft)}
+  .cell.exam .dt,.cell.exam .mk{color:var(--warn); font-weight:700}
+  .strip-legend{
+    display:flex; flex-wrap:wrap; gap:8px 20px;
+    margin-top:10px; font-size:13px; color:var(--muted);
+  }
+  .strip-legend .key{display:inline-flex; align-items:center; gap:7px}
+  .key i{width:11px; height:11px; border:1px solid var(--line); flex:none}
+  .key .k-today{background:var(--accent); border-color:var(--accent)}
+  .key .k-mock{background:var(--accent-soft)}
+  .key .k-exam{background:var(--warn-soft); border-color:var(--warn)}
+
+  /* ---------- 진행률 · 성적 추이 ---------- */
+  .progress{background:var(--card); border:1px solid var(--line); padding:16px 18px; box-shadow:var(--shadow)}
+  .progress-head{
+    display:flex; justify-content:space-between; align-items:baseline; gap:12px;
+    font-size:14px; margin-bottom:10px;
+    font-variant-numeric:tabular-nums;
+  }
+  .progress-head .p-label{font-weight:700}
+  .progress-head #progress-label{color:var(--accent-deep); font-weight:700}
+  .progress-bar{height:10px; background:var(--accent-soft); overflow:hidden}
+  .progress-fill{height:100%; width:0%; background:var(--accent); transition:width .35s ease}
+  .score-trend{display:flex; flex-wrap:wrap; gap:8px; margin-top:12px; font-size:12.5px; font-variant-numeric:tabular-nums}
+  .trend-chip{
+    display:inline-flex; gap:6px; align-items:center;
+    padding:3px 10px; background:var(--code-bg); border:1px solid var(--line); color:var(--muted);
+    white-space:nowrap;
+  }
+  .trend-chip.ok{border-color:var(--accent); color:var(--accent-deep); background:var(--accent-soft)}
+  .trend-chip.miss{border-color:var(--warn); color:var(--warn); background:var(--warn-soft)}
+
+  .hero-d{display:flex; flex-direction:column; align-items:flex-end}
+  .d-sub{margin:4px 0 0; color:var(--muted); font-size:14px; font-variant-numeric:tabular-nums; white-space:nowrap}
+  .trend-chip.rec{border-color:var(--accent); color:var(--ink)}
+  .cell.mock2{background:var(--accent-soft); background:color-mix(in srgb, var(--accent) 28%, var(--card))}
+  .key .k-mock2{background:var(--accent-soft); background:color-mix(in srgb, var(--accent) 28%, var(--card))}
+
+  .plan-banner{margin-top:14px; padding:12px 16px; background:var(--accent-soft); border:1px solid var(--accent); color:var(--accent-deep); font-size:14px; font-weight:500}
+  .plan-banner.warn{background:var(--warn-soft); border-color:var(--warn); color:var(--warn)}
+  .plan-banner:empty{display:none}
+  .plan-items{list-style:none; padding:0; margin:6px 0 0; display:grid; gap:8px}
+  .pi{display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:14px}
+  .pi-kind{font-size:11.5px; font-weight:700; padding:1px 7px; background:var(--accent-soft); color:var(--accent-deep); white-space:nowrap}
+  .pi-kind.retry,.pi-kind.redo{background:var(--warn-soft); color:var(--warn)}
+  .pi-name{font-weight:700}
+  .pi-target{font-size:12.5px; color:var(--muted); font-variant-numeric:tabular-nums}
+  .pi .score-row{margin-top:0; flex-basis:100%}
+  .done-list{margin:6px 0 0; padding-left:18px; font-size:14px}
+  .rec-set{font:inherit; font-size:13.5px; padding:7px 8px; border:1px solid var(--line); background:var(--bg); color:var(--ink); max-width:190px}
+  .rec-set:focus-visible{outline:2px solid var(--accent)}
+  .state-chip.missed{background:var(--warn-soft); color:var(--warn)}
+
+  /* ---------- 시작 버튼 · 포커스 모드 ---------- */
+  .start-row{display:flex; align-items:center; gap:16px; flex-wrap:wrap}
+  .start-btn{
+    appearance:none; border:none; cursor:pointer;
+    background:var(--accent); color:var(--card);
+    font-size:20px; padding:14px 30px;
+    box-shadow:var(--shadow);
+  }
+  .start-btn:hover{background:var(--accent-deep)}
+  .start-hint{font-size:13px; color:var(--muted)}
+  #focus-area{max-width:720px; margin:0 auto}
+  .focus-head{
+    display:flex; justify-content:space-between; align-items:center; gap:12px;
+    margin-bottom:16px; flex-wrap:wrap;
+  }
+  .focus-head .f-status{font-weight:700; font-variant-numeric:tabular-nums}
+  #focus-exit{
+    appearance:none; cursor:pointer;
+    background:var(--card); border:1px solid var(--line); color:var(--muted);
+    font:inherit; font-size:13.5px; padding:6px 14px;
+  }
+  #focus-exit:hover{color:var(--accent-deep); border-color:var(--accent)}
+  .congrats{
+    background:var(--accent-soft); border:1px solid var(--accent);
+    color:var(--accent-deep); font-weight:700;
+    padding:14px 18px; margin-bottom:16px;
+  }
+  .preview-label{
+    margin:0 0 8px; font-size:13px; font-weight:700; color:var(--warn);
+  }
+  .focus-card .day-card{padding:24px 26px}
+  .focus-card .day-card h3{font-size:22px}
+  .big-done{
+    appearance:none; border:none; cursor:pointer;
+    display:block; width:100%; margin-top:16px;
+    background:var(--accent); color:var(--card);
+    font-size:19px; padding:14px;
+  }
+  .big-done:hover{background:var(--accent-deep)}
+  .big-done:disabled{background:var(--line); color:var(--muted); cursor:not-allowed}
+  .focus-note{margin:16px 0 0; font-size:13.5px; color:var(--muted)}
+
+  /* ---------- 표 ---------- */
+  .table-wrap{overflow-x:auto; border:1px solid var(--line); background:var(--card); box-shadow:var(--shadow)}
+  table{border-collapse:collapse; width:100%; min-width:640px; font-size:14.5px; font-variant-numeric:tabular-nums}
+  th,td{padding:10px 14px; text-align:left; border-bottom:1px solid var(--line); vertical-align:top}
+  thead th{
+    background:var(--accent-soft); color:var(--accent-deep);
+    font-size:13px; letter-spacing:.04em; white-space:nowrap;
+  }
+  tbody tr:last-child td{border-bottom:none}
+  td.num, th.num{text-align:right; white-space:nowrap}
+  td strong{color:var(--accent-deep)}
+  .tfoot-note td{background:var(--code-bg); color:var(--muted); font-size:13.5px}
+
+  /* ---------- Day 카드 ---------- */
+  .day-grid{display:grid; gap:16px; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); align-items:stretch}
+  .day-card{
+    background:var(--card); border:1px solid var(--line); box-shadow:var(--shadow);
+    padding:18px 20px 16px;
+    display:flex; flex-direction:column; gap:12px;
+  }
+  .day-card.mock{border-color:var(--accent)}
+  .day-card.is-done{border-color:var(--accent); background:var(--accent-soft)}
+  .dc-head{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+  .dc-tag{
+    font-size:16px; color:var(--accent-deep);
+    border:1px solid var(--accent); padding:1px 9px 0;
+    white-space:nowrap;
+  }
+  .is-done .dc-tag{background:var(--accent); color:var(--card); border-color:var(--accent)}
+  .dc-date{font-size:13.5px; color:var(--muted); font-variant-numeric:tabular-nums; white-space:nowrap}
+  .chip{
+    margin-left:auto;
+    font-size:12px; font-weight:700; white-space:nowrap;
+    padding:2px 9px;
+    background:var(--accent-soft); color:var(--accent-deep);
+  }
+  .day-card.is-done .chip{background:var(--card)}
+  .chip.chip-mock{background:var(--accent); color:var(--card)}
+  .chip.chip-exam{background:var(--warn); color:var(--card)}
+  .state-chip{
+    font-size:12px; font-weight:700; white-space:nowrap; padding:2px 9px;
+  }
+  .state-chip.cleared{background:var(--accent); color:var(--card)}
+  .state-chip.current{border:1px solid var(--accent); color:var(--accent-deep)}
+  .state-chip.preview{background:var(--warn-soft); color:var(--warn)}
+  .day-card h3{font-size:19px; line-height:1.35}
+  .dc-label{
+    margin:0; font-size:12px; font-weight:700; letter-spacing:.05em;
+    color:var(--muted);
+  }
+  .dc-block{margin:0}
+  .dc-block ul{font-size:14.5px}
+  .dc-block .src{font-weight:700; color:var(--accent-deep)}
+  .dc-freq{margin:0; font-size:12.5px; color:var(--muted); font-variant-numeric:tabular-nums}
+  .task-list{list-style:none; padding:0; margin:6px 0 0; font-size:14.5px}
+  .task-list li{margin:0}
+  .task-list label{display:flex; gap:9px; align-items:flex-start; padding:4px 0; cursor:pointer}
+  .task-list input{margin-top:3px}
+  .dc-foot{
+    margin-top:auto; padding-top:12px; border-top:1px solid var(--line);
+    display:flex; align-items:center; justify-content:space-between; gap:12px;
+    font-size:13.5px;
+  }
+  .dc-time{color:var(--muted); font-variant-numeric:tabular-nums}
+  .done{display:inline-flex; align-items:center; gap:8px; font-weight:700; cursor:pointer; user-select:none}
+  .done input:disabled{cursor:not-allowed}
+  .score-target{color:var(--warn); font-weight:700; white-space:nowrap}
+  .score-row{display:flex; gap:8px; align-items:center; flex-wrap:wrap; margin-top:10px}
+  .score-row input[type="number"]{
+    width:88px; padding:7px 10px;
+    border:1px solid var(--line); background:var(--bg); color:var(--ink);
+    font:inherit; font-variant-numeric:tabular-nums;
+  }
+  .score-row input[type="number"]:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+  .score-btn{
+    appearance:none; border:none; cursor:pointer;
+    background:var(--accent); color:var(--card);
+    font:inherit; font-weight:700; padding:8px 16px;
+  }
+  .score-btn:hover{background:var(--accent-deep)}
+  .score-note{font-size:12.5px; color:var(--muted)}
+  .score-line{margin:8px 0 0; font-size:13.5px; color:var(--muted); font-variant-numeric:tabular-nums}
+  .score-line.ok{color:var(--accent-deep); font-weight:700}
+  .score-line.miss{color:var(--warn); font-weight:700}
+
+  /* ---------- 채점결과 가져오기 · 내 성적 ---------- */
+  .import-box{margin-top:14px}
+  .drop-zone{
+    position:relative;
+    display:flex; flex-wrap:wrap; align-items:center; justify-content:center; gap:10px;
+    border:2px dashed var(--line); background:var(--card);
+    padding:22px 18px; text-align:center; cursor:pointer;
+    color:var(--muted); font-size:14px;
+  }
+  .drop-zone:hover{border-color:var(--accent); color:var(--accent-deep)}
+  .drop-zone:focus-visible{outline:2px solid var(--accent); outline-offset:2px; border-color:var(--accent)}
+  .drop-zone.drag-on{border-color:var(--accent); background:var(--accent-soft); color:var(--accent-deep)}
+  .dz-btn{
+    display:inline-block; background:var(--accent); color:var(--card);
+    font-weight:700; font-size:13.5px; padding:7px 16px;
+  }
+  .import-input{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%)}
+  .import-hint{margin:8px 0 0; font-size:12.5px; color:var(--muted)}
+  .import-status{margin:8px 0 0; font-size:13.5px; color:var(--accent-deep); font-weight:700; font-variant-numeric:tabular-nums}
+  .import-status:empty{display:none}
+  .import-status.err{color:var(--warn)}
+  .paste-row{display:flex; align-items:center; gap:12px; flex-wrap:wrap; margin-bottom:10px}
+  .paste-btn{
+    appearance:none; border:none; cursor:pointer;
+    background:var(--accent); color:var(--card);
+    font:inherit; font-weight:700; font-size:14.5px; padding:10px 22px;
+    box-shadow:var(--shadow);
+  }
+  .paste-btn:hover{background:var(--accent-deep)}
+  .paste-hint{font-size:12.5px; color:var(--muted); flex:1; min-width:200px}
+  .folder-row{display:flex; align-items:center; gap:8px; flex-wrap:wrap; margin-bottom:10px}
+  .folder-state{font-size:12.5px; color:var(--muted); font-variant-numeric:tabular-nums}
+  .folder-state:empty{display:none}
+  .paste-modal-backdrop{
+    position:fixed; inset:0; z-index:100;
+    background:var(--scrim);
+    display:flex; align-items:center; justify-content:center;
+    padding:20px;
+  }
+  .paste-modal-backdrop[hidden]{display:none}
+  .paste-modal{
+    background:var(--card); border:1px solid var(--line); box-shadow:var(--shadow);
+    padding:22px 24px; width:100%; max-width:560px;
+    display:flex; flex-direction:column; gap:12px;
+  }
+  .paste-modal h3{font-size:20px}
+  .pm-hint{margin:0; font-size:14px; color:var(--muted)}
+  .paste-modal textarea{
+    width:100%; min-height:140px; padding:12px; resize:vertical;
+    font-family:"IBM Plex Mono", Consolas, monospace; font-size:13px;
+    border:1px dashed var(--accent); background:var(--bg); color:var(--ink);
+  }
+  .paste-modal textarea:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+  .pm-error{margin:0; font-size:13.5px; color:var(--warn); font-weight:700; min-height:1.3em}
+  .pm-actions{display:flex; gap:8px; justify-content:flex-end}
+  .result-list{display:grid; gap:12px; margin-top:16px}
+  .result-card{
+    background:var(--card); border:1px solid var(--line); box-shadow:var(--shadow);
+    padding:14px 18px;
+  }
+  .rc-head{display:flex; align-items:baseline; gap:8px 14px; flex-wrap:wrap}
+  .rc-title{font-weight:700; color:var(--accent-deep)}
+  .rc-when{font-size:12.5px; color:var(--muted); font-variant-numeric:tabular-nums}
+  .rc-badge{
+    margin-left:auto; font-size:12.5px; font-weight:700; padding:2px 10px;
+    white-space:nowrap; font-variant-numeric:tabular-nums;
+  }
+  .rc-badge.ok{background:var(--accent-soft); color:var(--accent-deep); border:1px solid var(--accent)}
+  .rc-badge.miss{background:var(--warn-soft); color:var(--warn); border:1px solid var(--warn)}
+  .rc-bars{display:grid; gap:5px; margin-top:10px}
+  .rc-bar-row{display:grid; grid-template-columns:92px 1fr 56px; gap:10px; align-items:center; font-size:12.5px}
+  .rc-bar-name{color:var(--muted); white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+  .rc-bar{height:8px; background:var(--code-bg); border:1px solid var(--line); overflow:hidden}
+  .rc-fill{height:100%; background:var(--accent)}
+  .rc-fill.part{background:var(--warn)}
+  .rc-bar-val{text-align:right; color:var(--muted); font-variant-numeric:tabular-nums}
+  .rc-weak{margin:10px 0 0; font-size:13px; color:var(--warn); font-weight:700}
+
+  /* ---------- 함수 퀴즈 ---------- */
+  .sr-only{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%)}
+  .quiz-bar{
+    display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+    margin-bottom:16px; font-size:14px;
+  }
+  .quiz-filter{display:inline-flex; align-items:center; gap:8px; font-weight:700}
+  .quiz-filter select{
+    font:inherit; padding:6px 10px;
+    border:1px solid var(--line); background:var(--card); color:var(--ink);
+  }
+  .quiz-filter select:focus-visible{outline:2px solid var(--accent)}
+  .quiz-nav-btn{
+    appearance:none; cursor:pointer; font:inherit; font-size:13.5px;
+    background:var(--card); border:1px solid var(--line); color:var(--muted);
+    padding:7px 14px;
+  }
+  .quiz-nav-btn:hover{color:var(--accent-deep); border-color:var(--accent)}
+  .quiz-stats{margin-left:auto; color:var(--muted); font-size:13px; font-variant-numeric:tabular-nums}
+  .quiz-card{
+    background:var(--card); border:1px solid var(--line); box-shadow:var(--shadow);
+    padding:20px 22px; max-width:760px;
+    display:flex; flex-direction:column; gap:12px;
+  }
+  .quiz-meta{display:flex; align-items:center; gap:10px; flex-wrap:wrap}
+  .quiz-meta .chip{margin-left:0}
+  .quiz-no{font-size:13px; color:var(--muted); font-variant-numeric:tabular-nums}
+  .quiz-state{font-size:12px; font-weight:700; padding:2px 9px}
+  .quiz-state.ok{background:var(--accent-soft); color:var(--accent-deep)}
+  .quiz-state.wrong{background:var(--warn-soft); color:var(--warn)}
+  .quiz-q{margin:0; font-size:15.5px; font-weight:500}
+  .quiz-ctx{margin:0; font-size:13.5px; color:var(--muted)}
+  .quiz-input-row{display:flex; gap:8px; flex-wrap:wrap}
+  .quiz-input-row input[type="text"]{
+    flex:1; min-width:220px; padding:10px 12px;
+    font-family:"IBM Plex Mono", Consolas, monospace; font-size:14px;
+    border:1px solid var(--line); background:var(--bg); color:var(--ink);
+  }
+  .quiz-input-row input[type="text"]:focus-visible{outline:2px solid var(--accent); outline-offset:1px}
+  .quiz-feedback{margin:0; font-size:14px; min-height:1.4em}
+  .quiz-feedback.ok{color:var(--accent-deep); font-weight:700}
+  .quiz-feedback.wrong{color:var(--warn); font-weight:700}
+  .quiz-hint{
+    margin:0; padding:10px 14px; font-size:13.5px;
+    background:var(--accent-soft); color:var(--accent-deep);
+  }
+  .quiz-answer{background:var(--code-bg); border:1px solid var(--line); padding:12px 16px; overflow-x:auto}
+  .quiz-answer code{background:none; border:none; padding:0; white-space:pre; font-size:13.5px}
+  .quiz-answer p{margin:8px 0 0; font-size:13.5px; color:var(--muted)}
+  .quiz-actions{display:flex; gap:8px; flex-wrap:wrap; padding-top:4px}
+  .quiz-next{
+    appearance:none; cursor:pointer; font:inherit; font-weight:700; font-size:13.5px;
+    background:var(--accent); color:var(--card); border:none; padding:8px 18px;
+    margin-left:auto;
+  }
+  .quiz-next:hover{background:var(--accent-deep)}
+
+  /* ---------- 오늘의 할 일 ---------- */
+  #today-slot{margin-top:14px}
+  #today-slot .day-card{max-width:640px}
+  .today-note{
+    margin:12px 0 0; padding:14px 18px;
+    background:var(--card); border:1px dashed var(--line);
+    color:var(--muted); font-size:14px; max-width:640px;
+  }
+
+  /* ---------- 시험일 카드 ---------- */
+  .exam-card{
+    border:1px solid var(--warn); background:var(--card); box-shadow:var(--shadow);
+    padding:22px 24px;
+    display:flex; flex-direction:column; gap:18px;
+  }
+  .exam-card .dc-head{gap:12px}
+  .exam-card .dc-tag{color:var(--warn); border-color:var(--warn)}
+  .exam-cols{display:grid; gap:22px; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr))}
+  .check-list{list-style:none; padding:0; margin:6px 0 0; font-size:14.5px}
+  .check-list li{margin:0}
+  .check-list label{display:flex; gap:10px; align-items:flex-start; padding:6px 0; cursor:pointer}
+  .check-list input{margin-top:3px}
+  .time-bar{display:flex; height:34px; overflow:hidden; margin-top:10px; border:1px solid var(--line)}
+  .time-bar span{
+    display:flex; align-items:center; justify-content:center;
+    color:var(--card); font-size:12px; font-weight:700; white-space:nowrap; overflow:hidden;
+  }
+  .seg-1{flex:8; background:var(--accent-deep)}
+  .seg-2{flex:15; background:var(--accent)}
+  .seg-3{flex:7; background:var(--accent); background:color-mix(in srgb, var(--accent) 62%, var(--card))}
+  .seg-4{flex:8; color:var(--ink); background:var(--accent-soft); background:color-mix(in srgb, var(--accent) 40%, var(--card))}
+  .seg-5{flex:2; background:var(--warn)}
+  .time-list{margin:10px 0 0; font-size:13.5px; color:var(--muted); font-variant-numeric:tabular-nums}
+
+  /* ---------- 치트시트 · 함수 사전 ---------- */
+  .pattern-list{list-style:none; margin:0; padding:0; display:grid; gap:10px}
+  .pattern-list li{
+    background:var(--card); border:1px solid var(--line);
+    padding:12px 16px; box-shadow:var(--shadow);
+  }
+  .pattern-list .p-name{font-weight:700; color:var(--accent-deep)}
+  .pattern-list p{margin:2px 0 0; font-size:13.5px; color:var(--muted)}
+  code{
+    background:var(--code-bg); border:1px solid var(--line);
+    padding:1px 6px; font-size:13px; color:var(--ink);
+    overflow-wrap:anywhere;
+  }
+  .code-block{
+    background:var(--code-bg); border:1px solid var(--line);
+    padding:12px 16px; overflow-x:auto; margin:10px 0 0;
+  }
+  .code-block code{background:none; border:none; padding:0; white-space:pre; font-size:13.5px}
+  td code{white-space:nowrap}
+  .fn-cat{margin-top:26px}
+  .fn-cat h3{font-size:18px; margin-bottom:8px; color:var(--accent-deep)}
+  .fn-cat .table-wrap table{min-width:560px}
+
+  /* ---------- 실수 노트 ---------- */
+  .trap-grid{display:grid; gap:16px; grid-template-columns:repeat(auto-fill, minmax(320px, 1fr)); margin-top:18px}
+  .trap-card{
+    background:var(--card); border:1px solid var(--line); box-shadow:var(--shadow);
+    padding:16px 20px 14px;
+  }
+  .trap-card h3{font-size:17px; margin-bottom:2px}
+  .trap-card .t-pts{font-size:12.5px; color:var(--warn); font-weight:700; font-variant-numeric:tabular-nums}
+  .trap-card ul{font-size:14px}
+  .trap-card li{margin:6px 0}
+
+  /* ---------- 박스 ---------- */
+  .info-box{
+    background:var(--card); border:1px solid var(--line); border-left:4px solid var(--accent);
+    box-shadow:var(--shadow); padding:18px 22px;
+  }
+  .info-box h2{font-size:21px; margin-bottom:6px}
+  .warn-box{
+    background:var(--warn-soft); border:1px solid var(--warn); border-left:4px solid var(--warn);
+    padding:18px 22px;
+  }
+  .warn-box h2{font-size:21px; color:var(--warn); margin-bottom:6px}
+  .warn-box ul{font-size:14.5px}
+  .warn-box li{margin:7px 0}
+  .warn-box li::marker{color:var(--warn)}
+  .warn-box strong{color:var(--warn)}
+
+  /* ---------- 시험장 연동 ---------- */
+  .link-bar{
+    display:flex; align-items:center; gap:8px 12px; flex-wrap:wrap;
+    margin:-4px 0 14px; padding:9px 14px;
+    background:var(--accent-soft); border:1px solid var(--accent); color:var(--accent-deep);
+    font-size:13.5px; font-variant-numeric:tabular-nums;
+  }
+  .link-bar .lb-dot{width:9px; height:9px; border-radius:50%; background:var(--accent); flex:none}
+  .link-bar.off{background:var(--warn-soft); border-color:var(--warn); color:var(--warn)}
+  .link-bar.off .lb-dot{background:var(--warn)}
+  .link-bar.exam{border-style:dashed}
+  .link-bar .lb-text{font-weight:700}
+  .link-bar .lb-actions{display:inline-flex; gap:6px; margin-left:auto}
+  .link-bar .lb-notice{flex-basis:100%; font-weight:700; color:var(--warn)}
+  .link-bar .lb-notice:empty{display:none}
+  .act-row{display:flex; gap:6px; flex-wrap:wrap; flex-basis:100%; margin-top:4px}
+  .act-btn{
+    appearance:none; cursor:pointer; font:inherit; font-size:12.5px; font-weight:700;
+    background:var(--card); border:1px solid var(--accent); color:var(--accent-deep);
+    padding:5px 11px; text-decoration:none; display:inline-block; line-height:1.4;
+  }
+  .act-btn:hover{background:var(--accent); color:var(--card)}
+  .act-btn:disabled{border-color:var(--line); color:var(--muted); background:var(--card); cursor:not-allowed}
+  .act-btn.primary{background:var(--accent); color:var(--card)}
+  .act-btn.primary:hover{background:var(--accent-deep)}
+  .act-btn.primary:disabled{background:var(--line); color:var(--muted)}
+  .auto-mark{font-size:11px; font-weight:700; color:var(--muted); margin-left:4px; white-space:nowrap}
+  .task-list input:disabled + span{color:var(--muted)}
+  .task-list input:disabled:checked + span{color:var(--ink)}
+  .stage-group{margin:8px 0 2px; font-size:13px; font-weight:700; color:var(--accent-deep)}
+  .done-list li{margin:4px 0}
+  .done-list .act-row{margin:4px 0 6px}
+  .mode-chip{font-size:11.5px; font-weight:700; padding:1px 7px; background:var(--code-bg); color:var(--muted); border:1px solid var(--line); white-space:nowrap}
+  .mode-chip.retry{background:var(--warn-soft); color:var(--warn); border-color:var(--warn)}
+  .rc-actions{display:flex; gap:6px; flex-wrap:wrap; margin-top:10px}
+  .dc-foot .dc-time{white-space:nowrap; flex:none}
+  .dc-foot .score-target{white-space:normal; text-align:right}
+  .day-card.is-done .chip.chip-mock{color:var(--accent-deep)}
+
+  @media (max-width:640px){
+    .page{padding:18px 14px 56px}
+    .masthead h1{font-size:20px}
+    .sec-head{margin-top:36px}
+  }
+  @media (prefers-reduced-motion: reduce){
+    *{transition:none !important; animation:none !important}
+  }
+</style>
+
+<main class="page">
+
+  <!-- ============ 마스트헤드 + 탭바 ============ -->
+  <header class="masthead">
+    <h1>컴활 2급 실기 · 2주 완성 스프린트</h1>
+    <span class="mast-dday" id="mast-dday">1차 9/11 (금) D-9 · 2차 9/18 (금) D-16</span>
+  </header>
+
+  <div class="link-bar" id="link-bar" hidden aria-live="polite">
+    <span class="lb-dot" aria-hidden="true"></span>
+    <span class="lb-text" id="link-text">시험장 연결 확인 중…</span>
+    <span class="lb-actions"><button type="button" id="link-sync" class="quiz-nav-btn">지금 동기화</button><button type="button" id="link-show" class="quiz-nav-btn">시험장 창 보기</button></span>
+    <span class="lb-notice" id="link-notice"></span>
+  </div>
+
+  <nav class="tabbar" role="tablist" aria-label="루틴 섹션">
+    <button type="button" role="tab" id="tab-today"    aria-controls="panel-today"    aria-selected="true"  tabindex="0">오늘</button>
+    <button type="button" role="tab" id="tab-stage1"   aria-controls="panel-stage1"   aria-selected="false" tabindex="-1">1단계</button>
+    <button type="button" role="tab" id="tab-stage2"   aria-controls="panel-stage2"   aria-selected="false" tabindex="-1">2단계·시험일</button>
+    <button type="button" role="tab" id="tab-fn"       aria-controls="panel-fn"       aria-selected="false" tabindex="-1">함수 사전</button>
+    <button type="button" role="tab" id="tab-quiz"     aria-controls="panel-quiz"     aria-selected="false" tabindex="-1">함수 퀴즈</button>
+    <button type="button" role="tab" id="tab-mistakes" aria-controls="panel-mistakes" aria-selected="false" tabindex="-1">실수 노트</button>
+    <button type="button" role="tab" id="tab-grading"  aria-controls="panel-grading"  aria-selected="false" tabindex="-1">시험장·채점</button>
+  </nav>
+
+  <!-- ============ 탭 1 · 오늘 ============ -->
+  <section role="tabpanel" id="panel-today" aria-labelledby="tab-today">
+
+    <div id="today-normal">
+      <div class="hero">
+        <div class="hero-top">
+          <div class="hero-title">
+            <p class="fx"><span class="fx-tag">fx</span><code>=DATE(2026,9,11)-TODAY()</code><span class="fx-out" id="fx-out">9</span></p>
+            <p class="hero-sub"><strong>9/3 (목) 시작</strong> · 매일 한 세트 40분 완주 → 채점 → 오답노트 · 밀리면 남은 세트를 자동 재배치 · <strong>1차 9/11 (금)</strong> · <strong>2차 9/18 (금)</strong> — 70점 합격</p>
+          </div>
+          <div class="hero-d"><div class="d-num" id="d-num" aria-label="1차 시험까지 남은 날">D-9</div><p class="d-sub" id="d-sub">2차 9/18 (금) · D-16</p></div>
+        </div>
+
+        <div class="start-row">
+          <button type="button" id="start-btn" class="start-btn">오늘 하루 공부 시작</button>
+          <button type="button" id="recalc-btn" class="quiz-nav-btn" data-fallback-only>일정 다시 계산</button>
+          <span class="start-hint" id="plan-remaining"></span>
+        </div>
+        <div class="plan-banner" id="plan-banner" aria-live="polite"></div>
+
+        <div>
+          <div class="strip-wrap" role="img" aria-label="9월 3일부터 9월 18일까지 날짜 스트립. 매일 모의 1세트, 9월 5일·6일·13일은 2세트, 1차 시험 9월 11일, 2차 시험 9월 18일. 오늘 날짜는 자동 표시.">
+            <div class="strip" aria-hidden="true">
+              <div class="cell mock" data-date="2026-09-03"><span class="wd">목</span><span class="dt">3</span><span class="mk">모의</span></div>
+              <div class="cell mock" data-date="2026-09-04"><span class="wd">금</span><span class="dt">4</span><span class="mk">모의</span></div>
+              <div class="cell mock mock2" data-date="2026-09-05"><span class="wd">토</span><span class="dt">5</span><span class="mk">2세트</span></div>
+              <div class="cell mock mock2" data-date="2026-09-06"><span class="wd">일</span><span class="dt">6</span><span class="mk">2세트</span></div>
+              <div class="cell mock" data-date="2026-09-07"><span class="wd">월</span><span class="dt">7</span><span class="mk">모의</span></div>
+              <div class="cell mock" data-date="2026-09-08"><span class="wd">화</span><span class="dt">8</span><span class="mk">모의</span></div>
+              <div class="cell mock" data-date="2026-09-09"><span class="wd">수</span><span class="dt">9</span><span class="mk">모의</span></div>
+              <div class="cell mock" data-date="2026-09-10"><span class="wd">목</span><span class="dt">10</span><span class="mk">마감</span></div>
+              <div class="cell exam" data-date="2026-09-11"><span class="wd">금</span><span class="dt">11</span><span class="mk">시험</span></div>
+              <div class="cell mock" data-date="2026-09-12"><span class="wd">토</span><span class="dt">12</span><span class="mk">복기+1</span></div>
+              <div class="cell mock mock2" data-date="2026-09-13"><span class="wd">일</span><span class="dt">13</span><span class="mk">2세트</span></div>
+              <div class="cell mock" data-date="2026-09-14"><span class="wd">월</span><span class="dt">14</span><span class="mk">모의</span></div>
+              <div class="cell mock" data-date="2026-09-15"><span class="wd">화</span><span class="dt">15</span><span class="mk">모의</span></div>
+              <div class="cell mock" data-date="2026-09-16"><span class="wd">수</span><span class="dt">16</span><span class="mk">모의</span></div>
+              <div class="cell mock" data-date="2026-09-17"><span class="wd">목</span><span class="dt">17</span><span class="mk">마감</span></div>
+              <div class="cell exam" data-date="2026-09-18"><span class="wd">금</span><span class="dt">18</span><span class="mk">시험</span></div>
+            </div>
+          </div>
+          <div class="strip-legend">
+            <span class="key"><i class="k-today"></i>오늘 (자동 표시)</span>
+            <span class="key"><i class="k-mock"></i>모의 1세트</span>
+            <span class="key"><i class="k-mock2"></i>2세트</span>
+            <span class="key"><i class="k-exam"></i>시험일 (1차 9/11 · 2차 9/18)</span>
+          </div>
+          <p class="today-note" id="strip-status" hidden></p>
+        </div>
+
+        <div class="progress">
+          <div class="progress-head">
+            <span class="p-label">학습 진행률</span>
+            <span id="progress-label">완주 0 / 필요 0세트 · 0%</span>
+          </div>
+          <div class="progress-bar" role="progressbar" aria-label="학습 진행률" aria-valuemin="0" aria-valuemax="14" aria-valuenow="0" id="progress-track">
+            <div class="progress-fill" id="progress-fill"></div>
+          </div>
+          <div class="score-trend" id="score-trend" aria-label="모의고사 성적 추이"></div>
+        </div>
+      </div>
+
+      <div class="sec-head"><h2>오늘의 할 일 <span id="today-date"></span></h2></div>
+      <p class="sec-sub" id="today-sub">오늘 배정 카드 — 전날·그전날 미완주 세트는 자동으로 오늘 이후에 재배치되어 시험 전까지 전부 완주하게 됩니다. 기록이 바뀌면 매 로드 때 다시 계산합니다.</p>
+      <div id="today-slot"></div>
+
+      <div class="sec-head"><h2>내 성적</h2></div>
+      <p class="sec-sub" id="results-sub">채점결과 JSON을 가져오면 날짜·세트 기록에 추가되고, 일정이 자동으로 다시 계산됩니다 (하루 여러 건 가능).</p>
+      <div class="import-box" data-import data-fallback-only>
+        <div class="paste-row">
+          <button type="button" class="paste-btn">성적 붙여넣기</button>
+          <span class="paste-hint">버튼을 누른 뒤 Ctrl+V — 시험장에서 채점하면 성적이 이미 복사되어 있습니다</span>
+        </div>
+        <div class="folder-row" data-folder-row hidden>
+          <button type="button" class="folder-connect quiz-nav-btn">채점결과 폴더 연결</button>
+          <button type="button" class="folder-scan quiz-nav-btn" hidden>새 성적 확인</button>
+          <span class="folder-state"></span>
+        </div>
+        <div class="drop-zone" role="button" tabindex="0" aria-label="채점결과 JSON 파일을 끌어다 놓거나 클릭해서 선택">
+          <span class="dz-text">붙여넣기가 안 되면: JSON 파일을 여기로 끌어다 놓기</span>
+          <span class="dz-or">또는</span>
+          <span class="dz-btn">파일 선택 (여러 개 가능)</span>
+          <input type="file" class="import-input" accept=".json,application/json" multiple aria-hidden="true" tabindex="-1">
+        </div>
+        <p class="import-hint">채점결과 폴더에 <code>채점결과_세트명_일시.json</code>이 저장됩니다. 세트명이 모의 Day와 맞으면 점수 게이트에 자동 기록됩니다.</p>
+        <p class="import-status" aria-live="polite"></p>
+      </div>
+      <div id="results-list" class="result-list"></div>
+
+      <div class="sec-head"><h2>배점 구조 — 어디서 70점을 만드나</h2></div>
+      <p class="sec-sub">12문항 · 100점 만점 · 합격선 70점 · 시험시간 40분 · MS Office 2021 (LTSC) 기준</p>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>문제</th><th>영역</th><th>구성</th><th class="num">배점</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>문제 1</td><td><strong>기본작업</strong></td><td>자료 입력 5점 + 셀 서식 10점 + 조건부서식·고급필터·텍스트나누기 중 1문제 5점</td><td class="num">20점</td></tr>
+            <tr><td>문제 2</td><td><strong>계산작업</strong></td><td>함수 5문제 × 8점 — 문제당 전부 정답이어야 득점 (부분점수 없음)</td><td class="num">40점</td></tr>
+            <tr><td>문제 3</td><td><strong>분석작업</strong></td><td>부분합·통합·시나리오·피벗 등 2문제 × 10점 (부분점수 없음)</td><td class="num">20점</td></tr>
+            <tr><td>문제 4</td><td><strong>기타작업</strong></td><td>매크로 2개 × 5점 + 차트 5항목 × 2점</td><td class="num">20점</td></tr>
+            <tr class="tfoot-note"><td colspan="4">전략: 기본·분석·기타(60점)를 무실점 안정권으로 만들면, 계산작업은 5문제 중 최소 2문제(16점)로 76점 — 안전하게는 3문제를 노린다. 이 루틴은 매일 한 세트를 40분 완주 → 채점 → 오답노트 → 오답 재풀이까지 한다 — 부분 연습으로는 실력이 안 되고, 실력은 완주한 세트 수로 측정된다.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div id="focus-area" hidden>
+      <div class="focus-head">
+        <span class="f-status" id="focus-status"></span>
+        <button type="button" id="focus-exit">포커스 종료</button>
+      </div>
+      <div id="focus-banner"></div>
+      <div id="focus-slot" class="focus-card"></div>
+    </div>
+  </section>
+
+  <!-- ============ 탭 2 · 1단계 ============ -->
+  <section role="tabpanel" id="panel-stage1" aria-labelledby="tab-stage1" hidden>
+    <div class="sec-head"><h2>1단계 — 1차 완주 (9/3 – 9/10)</h2></div>
+    <p class="sec-sub">매일 한 세트 40분 완주 → 채점 → 오답노트 → 오답 재풀이 · 주말 2세트 · 재응시 최소 2(2026 1회 재도전 목표 65 포함) · 밀리면 남은 세트를 자동 재배치(이른 평일부터 2세트 승격, 마감일은 최후) · 9/11 (금) 1차 시험</p>
+    <div class="day-grid" id="grid-prep">
+      <article class="day-card" data-day="d00">
+        <header class="dc-head">
+          <span class="dc-tag">Day 0</span><span class="dc-date">시작 전 (9/2 수)</span><span class="chip">준비</span>
+        </header>
+        <h3>시작 전 준비 — 내일 첫 완주를 위해</h3>
+        <div class="dc-block">
+          <p class="dc-label">체크리스트 (선택 — 클리어 대상 아님)</p>
+          <ul class="task-list">
+            <li><label><input type="checkbox" id="d00t1"><span>시험장 프로그램 설치 확인 — 시험 모드·오답노트 모드·오답 재풀이를 한 번씩 열어 보기</span></label></li>
+            <li><label><input type="checkbox" id="d00t2"><span>세트 파일 준비 — 기출 7세트 + 코코 모의고사 1·2회 (새 세트는 계속 추가 가능)</span></label></li>
+            <li><label><input type="checkbox" id="d00t3"><span>이 루틴 한 바퀴 훑어보기 — 실수 노트·함수 사전 위치 확인</span></label></li>
+          </ul>
+        </div>
+        <footer class="dc-foot">
+          <span class="dc-time">약 30분 · 선택</span>
+        </footer>
+      </article>
+    </div>
+    <div class="sec-head"><h2>날짜별 배정 — 자동 재계산</h2></div>
+    <p class="sec-sub">지난 날은 완료/미완주, 오늘은 진행 중, 앞으로는 예정. 완주 기록이 바뀌면 다음 로드 때 자동으로 다시 계산됩니다.</p>
+    <div class="day-grid" id="grid-stage1"></div>
+
+    <div class="sec-head"><h2>9/11 (금) — 1차 시험</h2></div>
+    <article class="exam-card" data-date="2026-09-11">
+      <header class="dc-head">
+        <span class="dc-tag">1차 D-DAY</span><span class="dc-date">9/11 (금) · 40분</span><span class="chip chip-exam">시험</span>
+      </header>
+      <div class="exam-cols">
+        <div>
+          <p class="dc-label">최종 체크리스트</p>
+          <ul class="check-list">
+            <li><label><input type="checkbox" id="e01">수험표 · 신분증 챙기기</label></li>
+            <li><label><input type="checkbox" id="e02">시험장 30분 전 도착</label></li>
+            <li><label><input type="checkbox" id="e03">자동 저장 없음 — 파트 하나 끝날 때마다 Ctrl+S</label></li>
+            <li><label><input type="checkbox" id="e04">계산작업은 확실한 문제부터 (부분점수 없음)</label></li>
+            <li><label><input type="checkbox" id="e05">매크로 실행 테스트 · 시나리오 철자 재확인</label></li>
+            <li><label><input type="checkbox" id="e06">중도 퇴실은 종료 5분 전부터 불가 — 남는 시간엔 입력 오타·시나리오 이름 재검토</label></li>
+          </ul>
+        </div>
+        <div>
+          <p class="dc-label">시간 배분 전략 — 40분</p>
+          <div class="time-bar" role="img" aria-label="시간 배분: 기본작업 8분, 계산작업 15분, 분석작업 7분, 기타작업 8분, 검토 2분">
+            <span class="seg-1">기본 8</span><span class="seg-2">계산 15</span><span class="seg-3">분석 7</span><span class="seg-4">기타 8</span><span class="seg-5"></span>
+          </div>
+          <p class="time-list">기본작업 8분 → 계산작업 15분 → 분석작업 7분 → 기타작업 8분 → 검토 2분</p>
+          <p class="time-list">계산작업에서 2분 이상 막히는 문제는 표시하고 넘어간다. 검토 2분에 저장 상태와 시나리오·매크로를 최종 확인. 시험 후 막힌 유형을 메모해 두면 Day 9 복기에 쓴다.</p>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <!-- ============ 탭 3 · 2단계·시험일 ============ -->
+  <section role="tabpanel" id="panel-stage2" aria-labelledby="tab-stage2" hidden>
+    <div class="sec-head"><h2>2단계 — 재응시 강화 (9/12 – 9/17)</h2></div>
+    <p class="sec-sub">1차에 합격했으면 2단계는 선택입니다 · 아직 재응시 안 한 세트부터 최고점 오름차순으로 용량 내 최대 재응시(오늘·어제 응시 세트는 뒤로) + 신규 세트 첫응시 · 9/12는 복기 + 1세트 · 목표 75 → 80 → 85 · 9/18 (금) 2차 시험</p>
+    <div class="day-grid" id="grid-stage2"></div>
+
+    <div class="sec-head"><h2>9/18 (금) — 2차 시험</h2></div>
+    <article class="exam-card" data-date="2026-09-18">
+      <header class="dc-head">
+        <span class="dc-tag">2차 D-DAY</span><span class="dc-date">9/18 (금) · 40분</span><span class="chip chip-exam">시험</span>
+      </header>
+      <div class="exam-cols">
+        <div>
+          <p class="dc-label">최종 체크리스트</p>
+          <ul class="check-list">
+            <li><label><input type="checkbox" id="e11">수험표 · 신분증 챙기기</label></li>
+            <li><label><input type="checkbox" id="e12">시험장 30분 전 도착</label></li>
+            <li><label><input type="checkbox" id="e13">자동 저장 없음 — 파트 하나 끝날 때마다 Ctrl+S</label></li>
+            <li><label><input type="checkbox" id="e14">계산작업은 확실한 문제부터 (부분점수 없음)</label></li>
+            <li><label><input type="checkbox" id="e15">매크로 실행 테스트 · 시나리오 철자 재확인</label></li>
+            <li><label><input type="checkbox" id="e16">1차 복기 메모에서 막혔던 유형을 시험 직전에 한 번 더 보기</label></li>
+          </ul>
+        </div>
+        <div>
+          <p class="dc-label">시간 배분 전략 — 40분</p>
+          <div class="time-bar" role="img" aria-label="시간 배분: 기본작업 8분, 계산작업 15분, 분석작업 7분, 기타작업 8분, 검토 2분">
+            <span class="seg-1">기본 8</span><span class="seg-2">계산 15</span><span class="seg-3">분석 7</span><span class="seg-4">기타 8</span><span class="seg-5"></span>
+          </div>
+          <p class="time-list">기본작업 8분 → 계산작업 15분 → 분석작업 7분 → 기타작업 8분 → 검토 2분</p>
+          <p class="time-list">2주간 완주 14세트 이상 — 시간 배분은 이미 몸에 있다. 검토 2분에 저장 상태와 시나리오·매크로만 최종 확인.</p>
+        </div>
+      </div>
+    </article>
+  </section>
+
+  <!-- ============ 탭 5 · 함수 사전 ============ -->
+  <section role="tabpanel" id="panel-fn" aria-labelledby="tab-fn" hidden>
+    <div class="sec-head"><h2>계산작업 5대 패턴</h2></div>
+    <p class="sec-sub">골격을 먼저 외우고, 아래 빈도표와 출제범위 표로 넓힌다</p>
+
+    <ul class="pattern-list">
+      <li>
+        <span class="p-name">패턴 1 · 순위 판정</span> — IF + OR + LARGE/SMALL
+        <div class="code-block"><code>=IF(OR(C2&gt;=LARGE($C$2:$C$11,3), D2&gt;=LARGE($D$2:$D$11,3)), "본선", "")</code></div>
+        <p>기준 범위는 절대참조. "이상/이하 n위"가 LARGE인지 SMALL인지 먼저 판단. 공백 처리도 <code>""</code> 수식으로.</p>
+      </li>
+      <li>
+        <span class="p-name">패턴 2 · 시간 계산</span> — HOUR/MINUTE + 30분 올림 + 문자열 연결
+        <div class="code-block"><code>=HOUR(C2-B2) + IF(MINUTE(C2-B2)&gt;=30, 1, 0) &amp; "시간"</code></div>
+        <p>종료-시작 순서 확인. 올림 기준(30분)과 붙일 단위 문자를 문제에서 그대로 옮긴다.</p>
+      </li>
+      <li>
+        <span class="p-name">패턴 3 · 추출 + 참조</span> — LEFT/MID + VLOOKUP/HLOOKUP + IFERROR
+        <div class="code-block"><code>=IFERROR(VLOOKUP(LEFT(A2,2), $F$2:$G$5, 2, FALSE), "코드오류")</code></div>
+        <p>정확 일치 FALSE 필수. 참조표가 가로면 HLOOKUP + 행 번호. 추출 결과로 계산하려면 <code>*1</code>.</p>
+      </li>
+      <li>
+        <span class="p-name">패턴 4 · DB 함수 + 반올림</span> — DMAX/DMIN/DAVERAGE/DSUM + ROUND 계열
+        <div class="code-block"><code>=ROUND(DMAX(A1:E11, 4, G1:G2) - DMIN(A1:E11, 4, G1:G2), 1)</code></div>
+        <p>인수 3개: 필드명 포함 전체 표 · 필드(열 번호나 필드명) · 필드명 포함 조건 범위. ROUND 자릿수 부호 주의.</p>
+      </li>
+      <li>
+        <span class="p-name">패턴 5 · 조건 통계 · 최댓값 보유자</span> — COUNTIFS/SUMIF · INDEX + MATCH + MAX
+        <div class="code-block"><code>=COUNTIFS($B$2:$B$11, "서울", $C$2:$C$11, "&gt;=90") &amp; "명"
+=INDEX($A$2:$A$11, MATCH(MAX($D$2:$D$11), $D$2:$D$11, 0))</code></div>
+        <p>조건은 "범위, 조건" 쌍으로 나열. MATCH 마지막 인수 0(정확 일치) 필수.</p>
+      </li>
+    </ul>
+
+    <div class="sec-head"><h2>기출 빈도 치트시트</h2></div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>함수 (기출 빈도)</th><th>골격</th><th>포인트</th></tr>
+        </thead>
+        <tbody>
+          <tr><td><strong>IF</strong> (86)</td><td><code>=IF(조건, 참, 거짓)</code></td><td>거의 매회 출제 — OR·AND와 결합</td></tr>
+          <tr><td><strong>SMALL</strong> (39) · <strong>LARGE</strong> (18)</td><td><code>=SMALL($C$2:$C$11, 2)</code></td><td>순위 판정의 기준값, 범위 절대참조</td></tr>
+          <tr><td><strong>AVERAGE</strong> (36)</td><td><code>=AVERAGE(C2:E2)</code></td><td>판정 조건식 안에서 자주 등장</td></tr>
+          <tr><td><strong>LEFT</strong> (30) · <strong>MID</strong> (26)</td><td><code>=LEFT(A2,2)</code> · <code>=MID(A2,4,2)</code></td><td>코드 추출 후 참조 함수에 전달</td></tr>
+          <tr><td><strong>HLOOKUP</strong> (30) · <strong>VLOOKUP</strong> (19)</td><td><code>=VLOOKUP(값, 표, 열, FALSE)</code></td><td>정확 일치 FALSE, 가로 표는 HLOOKUP</td></tr>
+          <tr><td><strong>OR</strong> (29)</td><td><code>=OR(조건1, 조건2)</code></td><td>IF 안에서 "하나라도 만족"</td></tr>
+          <tr><td><strong>CHOOSE</strong> (24)</td><td><code>=CHOOSE(MID(A2,8,1), "남", "여")</code></td><td>인덱스는 1부터 — 주민번호·요일 판정</td></tr>
+          <tr><td><strong>HOUR·MINUTE</strong> (24)</td><td><code>=HOUR(C2-B2) &amp; "시간"</code></td><td>경과시간, 30분 올림 조건 확인</td></tr>
+          <tr><td><strong>YEAR</strong> (17)</td><td><code>=YEAR(TODAY()) - YEAR(B2)</code></td><td>근속연수·나이 계산</td></tr>
+          <tr><td><strong>INT</strong> (16)</td><td><code>=INT(값)</code></td><td>소수 버림 — ROUNDDOWN과 구분</td></tr>
+          <tr><td><strong>IFERROR</strong> (15)</td><td><code>=IFERROR(수식, "코드오류")</code></td><td>참조 실패 문구를 문제 그대로</td></tr>
+          <tr><td><strong>PROPER</strong> (15)</td><td><code>=PROPER(A2) &amp; "님"</code></td><td>단어 첫 글자만 대문자</td></tr>
+          <tr><td><strong>SEARCH</strong> (10)</td><td><code>=SEARCH("값", A2)</code></td><td>대소문자 무시 — FIND와 구분</td></tr>
+          <tr><td><strong>MATCH</strong> (9)</td><td><code>=MATCH(MAX(범위), 범위, 0)</code></td><td>INDEX와 결합해 보유자 찾기</td></tr>
+          <tr><td><strong>DMAX·DMIN·DAVERAGE·DSUM</strong></td><td><code>=DMAX(전체표, 필드, 조건범위)</code></td><td>조건 범위에 필드명 포함</td></tr>
+          <tr><td><strong>COUNTIFS·SUMIF</strong></td><td><code>=COUNTIFS(범위, 조건) &amp; "명"</code></td><td>단위 문자열 연결 잊지 않기</td></tr>
+          <tr><td><strong>ROUND 계열</strong></td><td><code>=ROUND(값, 1)</code></td><td>자릿수 양수=소수, 음수=정수 자리</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="sec-head"><h2>출제범위 함수 — 카테고리별</h2></div>
+    <p class="sec-sub">구문이 헷갈리면 함수명 입력 후 Ctrl+A — 인수 대화상자가 열린다</p>
+
+    <div class="fn-cat">
+      <h3>날짜 / 시간</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>함수</th><th>구문</th><th>메모</th></tr></thead>
+          <tbody>
+            <tr><td>DATE</td><td><code>DATE(년,월,일)</code></td><td>날짜 만들기</td></tr>
+            <tr><td>YEAR · MONTH · DAY</td><td><code>YEAR(날짜)</code></td><td>연·월·일 추출</td></tr>
+            <tr><td>DAYS</td><td><code>DAYS(종료일,시작일)</code></td><td>두 날짜 사이 일수 — 종료일이 먼저</td></tr>
+            <tr><td>WEEKDAY</td><td><code>WEEKDAY(날짜,옵션)</code></td><td>옵션 1: 일요일=1 · 2: 월요일=1 · 3: 월요일=0</td></tr>
+            <tr><td>DAYS360</td><td><code>DAYS360(시작,종료)</code></td><td>1년을 360일로 본 일수</td></tr>
+            <tr><td>TODAY · NOW</td><td><code>TODAY()</code> · <code>NOW()</code></td><td>오늘 날짜 / 현재 날짜+시간 (인수 없음)</td></tr>
+            <tr><td>TIME</td><td><code>TIME(시,분,초)</code></td><td>시간 만들기</td></tr>
+            <tr><td>HOUR · MINUTE · SECOND</td><td><code>HOUR(시간)</code></td><td>시·분·초 추출</td></tr>
+            <tr><td>EDATE</td><td><code>EDATE(날짜,개월)</code></td><td>n개월 뒤 같은 날짜</td></tr>
+            <tr><td>EOMONTH</td><td><code>EOMONTH(날짜,개월)</code></td><td>n개월 뒤 그 달의 말일</td></tr>
+            <tr><td>WORKDAY</td><td><code>WORKDAY(날짜,일수)</code></td><td>주말 제외 n일 뒤 날짜</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="fn-cat">
+      <h3>논리</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>함수</th><th>구문</th><th>메모</th></tr></thead>
+          <tbody>
+            <tr><td>IF</td><td><code>IF(조건,참,거짓)</code></td><td>기본 분기</td></tr>
+            <tr><td>IFS</td><td><code>IFS(조건1,값1,…)</code></td><td>앞에서부터 처음 참인 조건의 값</td></tr>
+            <tr><td>AND · OR · NOT</td><td><code>AND(조건1,조건2)</code></td><td>모두 참 / 하나라도 참 / 반대</td></tr>
+            <tr><td>TRUE · FALSE</td><td><code>TRUE()</code> · <code>FALSE()</code></td><td>논리값 자체를 반환</td></tr>
+            <tr><td>IFERROR</td><td><code>IFERROR(수식,대체값)</code></td><td>수식이 오류일 때 대체값</td></tr>
+            <tr><td>SWITCH</td><td><code>SWITCH(값,비교1,결과1,…)</code></td><td>값과 일치하는 항목의 결과</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="fn-cat">
+      <h3>데이터베이스</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>함수</th><th>구문</th><th>메모</th></tr></thead>
+          <tbody>
+            <tr><td>DSUM · DAVERAGE · DMAX · DMIN</td><td><code>D함수(데이터베이스,필드,조건범위)</code></td><td>공통 구문 — 조건 범위는 필드명 포함</td></tr>
+            <tr><td>DCOUNT · DCOUNTA</td><td><code>DCOUNT(데이터베이스,필드,조건범위)</code></td><td>숫자 셀 개수 / 비어 있지 않은 셀 개수</td></tr>
+            <tr><td>DSTDEV</td><td><code>DSTDEV(데이터베이스,필드,조건범위)</code></td><td>조건에 맞는 값의 표본 표준편차</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="fn-cat">
+      <h3>문자열</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>함수</th><th>구문</th><th>메모</th></tr></thead>
+          <tbody>
+            <tr><td>LEFT · RIGHT</td><td><code>LEFT(문자열,개수)</code></td><td>왼쪽/오른쪽에서 n글자</td></tr>
+            <tr><td>MID</td><td><code>MID(문자열,시작,개수)</code></td><td>중간에서 n글자</td></tr>
+            <tr><td>LOWER · UPPER · PROPER</td><td><code>PROPER(문자열)</code></td><td>소문자 / 대문자 / 단어 첫 글자만 대문자</td></tr>
+            <tr><td>FIND</td><td><code>FIND(찾을값,문자열)</code></td><td>위치 반환 — 대소문자 구분함</td></tr>
+            <tr><td>SEARCH</td><td><code>SEARCH(찾을값,문자열)</code></td><td>위치 반환 — 대소문자 구분 안 함</td></tr>
+            <tr><td>LEN</td><td><code>LEN(문자열)</code></td><td>글자 수</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="fn-cat">
+      <h3>수학</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>함수</th><th>구문</th><th>메모</th></tr></thead>
+          <tbody>
+            <tr><td>SUM · SUMIF</td><td><code>SUMIF(범위,조건,합계범위)</code></td><td>조건에 맞는 합</td></tr>
+            <tr><td>SUMIFS</td><td><code>SUMIFS(합계범위,범위1,조건1,…)</code></td><td>더할 범위가 첫 인수 — SUMIF와 순서 반대</td></tr>
+            <tr><td>ROUND · ROUNDUP · ROUNDDOWN</td><td><code>ROUND(수,자릿수)</code></td><td>반올림 / 올림 / 내림 — 자릿수 부호 주의</td></tr>
+            <tr><td>ABS · MOD</td><td><code>MOD(수,나눌수)</code></td><td>절댓값 / 나머지</td></tr>
+            <tr><td>INT · TRUNC</td><td><code>INT(수)</code> · <code>TRUNC(수)</code></td><td>작거나 같은 정수 / 소수 잘라내기 — 음수에서 결과 다름</td></tr>
+            <tr><td>POWER</td><td><code>POWER(수,지수)</code></td><td>거듭제곱</td></tr>
+            <tr><td>RAND · RANDBETWEEN</td><td><code>RANDBETWEEN(최소,최대)</code></td><td>난수 — RAND()는 0~1 사이</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="fn-cat">
+      <h3>찾기 / 참조</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>함수</th><th>구문</th><th>메모</th></tr></thead>
+          <tbody>
+            <tr><td>VLOOKUP</td><td><code>VLOOKUP(값,표,열번호,방법)</code></td><td>세로 표 — 정확 일치는 FALSE(0)</td></tr>
+            <tr><td>HLOOKUP</td><td><code>HLOOKUP(값,표,행번호,방법)</code></td><td>가로 표 — 행 번호로 지정</td></tr>
+            <tr><td>CHOOSE</td><td><code>CHOOSE(번호,값1,값2,…)</code></td><td>번호는 1부터 시작</td></tr>
+            <tr><td>INDEX</td><td><code>INDEX(배열,행,열)</code></td><td>위치의 값을 꺼낸다</td></tr>
+            <tr><td>MATCH</td><td><code>MATCH(값,범위,0)</code></td><td>값의 위치 번호 — 0은 정확 일치</td></tr>
+            <tr><td>COLUMN · ROW</td><td><code>COLUMN(셀)</code></td><td>셀의 열/행 번호</td></tr>
+            <tr><td>COLUMNS · ROWS</td><td><code>COLUMNS(범위)</code></td><td>범위의 열/행 개수</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+    <div class="fn-cat">
+      <h3>통계</h3>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>함수</th><th>구문</th><th>메모</th></tr></thead>
+          <tbody>
+            <tr><td>AVERAGE · AVERAGEA</td><td><code>AVERAGE(범위)</code></td><td>AVERAGEA는 문자를 0으로 쳐서 포함</td></tr>
+            <tr><td>AVERAGEIF · AVERAGEIFS</td><td><code>AVERAGEIFS(평균범위,범위1,조건1,…)</code></td><td>조건부 평균</td></tr>
+            <tr><td>MAX · MAXA / MIN · MINA</td><td><code>MAX(범위)</code></td><td>A 붙은 버전은 문자·논리값 포함</td></tr>
+            <tr><td>LARGE · SMALL</td><td><code>LARGE(범위,k)</code></td><td>k번째로 큰 / 작은 값</td></tr>
+            <tr><td>RANK.EQ</td><td><code>RANK.EQ(수,범위,옵션)</code></td><td>옵션 1 = 오름차순 — 기록 경기(작을수록 1등)</td></tr>
+            <tr><td>COUNT · COUNTA · COUNTBLANK</td><td><code>COUNT(범위)</code></td><td>숫자 / 비어 있지 않음 / 빈 셀 개수</td></tr>
+            <tr><td>COUNTIF · COUNTIFS</td><td><code>COUNTIFS(범위1,조건1,…)</code></td><td>조건 개수 세기</td></tr>
+            <tr><td>MEDIAN · MODE.SNGL</td><td><code>MEDIAN(범위)</code></td><td>중앙값 / 최빈값</td></tr>
+            <tr><td>VAR.S · STDEV.S</td><td><code>STDEV.S(범위)</code></td><td>표본 분산 / 표본 표준편차</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 탭 · 함수 퀴즈 ============ -->
+  <section role="tabpanel" id="panel-quiz" aria-labelledby="tab-quiz" hidden>
+    <div class="sec-head"><h2>함수 퀴즈 — 수식을 직접 쳐 보기</h2></div>
+    <p class="sec-sub">선택 워밍업 — 모의 전후 10문제씩. 계산작업 유형별 40문제, 수식을 입력해 채점하면 어디가 틀렸는지 짚어 줍니다. 진행 상황은 저장됩니다.</p>
+
+    <div class="quiz-bar">
+      <label class="quiz-filter">유형
+        <select id="quiz-filter">
+          <option value="all">전체</option>
+          <option value="판정">판정</option>
+          <option value="참조">참조</option>
+          <option value="시간날짜">시간·날짜</option>
+          <option value="문자열">문자열</option>
+          <option value="DB">DB 함수</option>
+          <option value="통계조건">통계·조건</option>
+          <option value="wrong">오답만 다시</option>
+        </select>
+      </label>
+      <button type="button" id="quiz-random" class="quiz-nav-btn">랜덤 문제</button>
+      <span class="quiz-stats" id="quiz-stats" aria-live="polite"></span>
+    </div>
+
+    <div class="quiz-card">
+      <div class="quiz-meta">
+        <span class="chip" id="quiz-cat">판정</span>
+        <span class="quiz-no" id="quiz-no"></span>
+        <span class="quiz-state" id="quiz-state"></span>
+      </div>
+      <p class="quiz-q" id="quiz-q"></p>
+      <p class="quiz-ctx" id="quiz-ctx"></p>
+      <div class="quiz-input-row">
+        <label class="sr-only" for="quiz-input">수식 입력</label>
+        <input type="text" id="quiz-input" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="=수식 입력 후 Enter">
+        <button type="button" id="quiz-grade" class="score-btn">채점</button>
+      </div>
+      <p class="quiz-feedback" id="quiz-feedback" aria-live="polite"></p>
+      <p class="quiz-hint" id="quiz-hint" hidden></p>
+      <div class="quiz-answer" id="quiz-answer" hidden>
+        <code id="quiz-answer-code"></code>
+        <p id="quiz-explain"></p>
+      </div>
+      <div class="quiz-actions">
+        <button type="button" id="quiz-hint-btn" class="quiz-nav-btn">힌트</button>
+        <button type="button" id="quiz-reveal" class="quiz-nav-btn">해설 보기</button>
+        <button type="button" id="quiz-next" class="quiz-next">다음 문제</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- ============ 탭 6 · 실수 노트 ============ -->
+  <section role="tabpanel" id="panel-mistakes" aria-labelledby="tab-mistakes" hidden>
+    <div class="warn-box">
+      <h2>전멸 함정 — 한 곳 실수로 통째로 잃는 점수</h2>
+      <ul>
+        <li><strong>입력 5점</strong> — 오타 한 곳이면 5점 전부 상실. 부분점수 없음.</li>
+        <li><strong>계산 문제당 8점</strong> — 한 문제 안의 결과가 전부 맞아야 득점. 지정된 함수 외 사용도 오답.</li>
+        <li><strong>분석 문제당 10점</strong> — 한 단계 실수하면 10점 통째로 상실.</li>
+        <li><strong>차트 신규 작성 = 0점</strong> · <strong>시나리오 이름 오타 = 0점</strong> · 매크로는 셀 포인터 무관 실행이 인정 조건.</li>
+      </ul>
+    </div>
+
+    <div class="trap-grid">
+
+      <article class="trap-card">
+        <h3>자료 입력</h3>
+        <p class="t-pts">기본작업 · 5점 통짜</p>
+        <ul>
+          <li>오타 한 곳이면 5점이 전부 사라진다 — 부분점수 없음</li>
+          <li>띄어쓰기 · 영문 대소문자 · 특수문자를 글자 단위로 대조</li>
+          <li>타자가 느리면 입력을 맨 마지막에 푸는 것도 유효한 전략</li>
+        </ul>
+      </article>
+
+      <article class="trap-card">
+        <h3>셀 서식</h3>
+        <p class="t-pts">기본작업 · 10점</p>
+        <ul>
+          <li>"굴림"과 "굴림체"는 다른 글꼴(체 = 고정폭) — 목록 클릭 대신 글꼴명을 직접 입력</li>
+          <li>표시 형식 대화상자는 Ctrl+1</li>
+          <li>최빈출 사용자 지정 형식: <code>#,##0"원"</code></li>
+        </ul>
+      </article>
+
+      <article class="trap-card">
+        <h3>조건부서식</h3>
+        <p class="t-pts">기본작업-3 · 5점</p>
+        <ul>
+          <li>적용 범위는 표머리 제외, 문제가 명시한 범위까지만</li>
+          <li>수식 규칙은 열 고정 혼합참조 <code>$B4</code> — F4 두 번</li>
+          <li>LEFT/MID 결과는 문자열 — 숫자처럼 보여도 <code>=LEFT($B4,1)="1"</code>처럼 따옴표로 비교</li>
+        </ul>
+      </article>
+
+      <article class="trap-card">
+        <h3>고급 필터</h3>
+        <p class="t-pts">기본작업-3 · 5점</p>
+        <ul>
+          <li>"평균 이상" 같은 함수 조건은 표머리와 <strong>다른 이름</strong>의 머리글 아래 <code>="&gt;="&amp;AVERAGE(범위)</code> — 따옴표와 &amp; 필수</li>
+          <li>"80 이상 90 미만"은 같은 행에 머리글 2개(<code>&gt;=80</code>, <code>&lt;90</code>) — AND</li>
+          <li>"~이거나"는 조건을 <strong>다른 행</strong>에 — OR</li>
+        </ul>
+      </article>
+
+      <article class="trap-card">
+        <h3>계산작업</h3>
+        <p class="t-pts">5문제 × 8점 · 부분점수 없음</p>
+        <ul>
+          <li><strong>문제가 제시한 함수만 사용</strong> — 다른 함수로 값이 맞아도 오답</li>
+          <li>IF 3단 분기에서 공백 표시도 수식으로: <code>""</code></li>
+          <li>기록 경기(작을수록 1등)는 <code>RANK.EQ(값,범위,1)</code> — 셋째 인수 1</li>
+          <li>문자열 함수 결과로 계산하려면 <code>*1</code>로 숫자 변환</li>
+          <li>인수 순서가 헷갈리면 함수명 입력 후 Ctrl+A — 인수 대화상자</li>
+        </ul>
+      </article>
+
+      <article class="trap-card">
+        <h3>분석작업</h3>
+        <p class="t-pts">2문제 × 10점 · 부분점수 없음</p>
+        <ul>
+          <li>부분합: 그룹 기준 열 <strong>정렬 먼저</strong>, 두 번째 계산 추가 시 "새로운 값으로 대치" 해제</li>
+          <li>시나리오: 셀 이름 정의 오타 = 0점, 요약 시트 위치 지시를 무시하면 실격 위험</li>
+          <li>데이터 표: 결과가 #N/A면 행/열 입력 셀을 반대로 넣은 것</li>
+          <li>통합: "첫 행"과 "왼쪽 열" 모두 체크</li>
+        </ul>
+      </article>
+
+      <article class="trap-card">
+        <h3>매크로</h3>
+        <p class="t-pts">기타작업 · 2개 × 5점</p>
+        <ul>
+          <li>도형·단추는 <strong>기록을 중지한 뒤</strong> 삽입 — 기록 중 삽입하면 매크로에 섞인다</li>
+          <li>범위를 선택한 채로 기록 중지하면 오류 위험 — 빈 셀을 클릭하고 중지</li>
+          <li>완성 후 다른 셀에서 실행 테스트 — 셀 포인터 무관 동작해야 인정</li>
+        </ul>
+      </article>
+
+      <article class="trap-card">
+        <h3>차트</h3>
+        <p class="t-pts">기타작업 · 5항목 × 2점</p>
+        <ul>
+          <li>새로 만들면 0점 — 반드시 제공된 차트를 수정</li>
+          <li>제목을 셀과 연동: 차트 제목 선택 → <strong>수식 입력줄</strong>에 <code>=시트명!A1</code></li>
+        </ul>
+      </article>
+
+      <article class="trap-card">
+        <h3>시험 규정</h3>
+        <p class="t-pts">전 영역 공통</p>
+        <ul>
+          <li>자동 저장 없음 — 파트 하나 끝날 때마다 Ctrl+S</li>
+          <li>중도 퇴실은 종료 5분 전부터 불가</li>
+          <li>시간이 남으면 입력 오타·시나리오 이름부터 재검토</li>
+        </ul>
+      </article>
+
+    </div>
+  </section>
+
+  <!-- ============ 탭 7 · 시험장·채점 ============ -->
+  <section role="tabpanel" id="panel-grading" aria-labelledby="tab-grading" hidden>
+    <div class="info-box">
+      <h2>자동 채점 프로그램 사용법</h2>
+      <p class="sec-note" style="margin-top:0">모의 40분이 끝나면 풀이 파일을 저장하고 바로 채점한다. 나온 점수를 해당 Day 카드의 점수 칸에 그대로 입력하면 목표 달성 여부가 판정된다.</p>
+      <div class="code-block"><code>python grade.py --problem 문제.xlsx --answer 정답.xlsx --student 내풀이.xlsx</code></div>
+      <ul>
+        <li>정답 파일과 비교해 100점 만점으로 채점된다.</li>
+        <li>분석작업은 실제 시험처럼 부분점수 없이 채점된다 — 모의에서 0점이 나와도 원인은 보통 한 곳이다.</li>
+        <li>점수는 매 세트마다 기록해 세트별 최고점 추이를 확인한다 ("오늘" 탭 진행률 아래 성적 추이).</li>
+        <li>시험장의 부분 연습 모드는 필요할 때만 쓴다 — 루틴의 기본은 매일 한 세트 완주다.</li>
+        <li>감점 문항은 오답노트에 "영역 · 문항 · 감점 이유" 형식으로 남기고, 다음 날 첫 10분에 다시 푼다.</li>
+      </ul>
+    </div>
+
+    <div class="sec-head" data-fallback-only><h2>채점결과 가져오기</h2></div>
+    <p class="sec-sub" data-fallback-only>채점 프로그램이 만든 JSON을 불러오면 점수 게이트·성적 추이·내 성적 카드에 반영됩니다. 파일은 브라우저 안에서만 읽힙니다.</p>
+    <div class="import-box" data-import data-fallback-only>
+      <div class="paste-row">
+        <button type="button" class="paste-btn">성적 붙여넣기</button>
+        <span class="paste-hint">버튼을 누른 뒤 Ctrl+V — 시험장에서 채점하면 성적이 이미 복사되어 있습니다</span>
+      </div>
+      <div class="folder-row" data-folder-row hidden>
+        <button type="button" class="folder-connect quiz-nav-btn">채점결과 폴더 연결</button>
+        <button type="button" class="folder-scan quiz-nav-btn" hidden>새 성적 확인</button>
+        <span class="folder-state"></span>
+      </div>
+      <div class="drop-zone" role="button" tabindex="0" aria-label="채점결과 JSON 파일을 끌어다 놓거나 클릭해서 선택">
+        <span class="dz-text">붙여넣기가 안 되면: JSON 파일을 여기로 끌어다 놓기</span>
+        <span class="dz-or">또는</span>
+        <span class="dz-btn">파일 선택 (여러 개 가능)</span>
+        <input type="file" class="import-input" accept=".json,application/json" multiple aria-hidden="true" tabindex="-1">
+      </div>
+      <p class="import-hint">채점결과 폴더에 <code>채점결과_세트명_일시.json</code>이 저장됩니다. 가져온 결과는 "오늘" 탭의 내 성적 카드에 표시됩니다.</p>
+      <p class="import-status" aria-live="polite"></p>
+    </div>
+
+    <div class="sec-head"><h2>시험장 메모</h2></div>
+    <div class="info-box">
+      <ul style="margin-top:0">
+        <li>수험표·신분증 지참, 시험장 30분 전 도착.</li>
+        <li>자동 저장이 없다 — 파트 하나 끝날 때마다 Ctrl+S. 저장 습관이 점수를 지킨다.</li>
+        <li>중도 퇴실은 종료 5분 전부터 불가 — 시간이 남으면 입력 오타와 시나리오 이름부터 재검토.</li>
+      </ul>
+    </div>
+  </section>
+
+  <!-- ============ 성적 붙여넣기 모달 (클립보드 API 차단 환경 폴백) ============ -->
+  <div class="paste-modal-backdrop" id="paste-modal" hidden>
+    <div class="paste-modal" role="dialog" aria-modal="true" aria-labelledby="paste-modal-title">
+      <h3 id="paste-modal-title">성적 붙여넣기</h3>
+      <p class="pm-hint">아래 칸을 클릭하고 Ctrl+V를 누르세요 — 시험장에서 채점하면 성적이 이미 복사되어 있습니다. 붙여넣는 즉시 자동으로 가져옵니다.</p>
+      <textarea id="paste-modal-text" rows="6" placeholder="여기를 클릭하고 Ctrl+V" aria-label="채점결과 JSON 붙여넣기" autocomplete="off" spellcheck="false"></textarea>
+      <p class="pm-error" id="paste-modal-error" aria-live="polite"></p>
+      <div class="pm-actions">
+        <button type="button" id="paste-modal-import" class="score-btn">가져오기</button>
+        <button type="button" id="paste-modal-close" class="quiz-nav-btn">닫기</button>
+      </div>
+    </div>
+  </div>
+
+</main>
+
+<script>
+(function(){
+  var KEY5 = "cca-d18-routine-v5";
+  var KEY4 = "cca-d18-routine-v4";
+  var KEY3 = "cca-d18-routine-v3";
+  var START_ISO = "2026-09-03";
+  var EXAM_ISO = "2026-09-11";
+  var EXAM2_ISO = "2026-09-18";
+  var lastCleared = null; /* 이번 세션에서 방금 오늘 카드를 클리어했는지 (축하 표시용) */
+
+  /* ---------- 시험장 연동 모드 (로컬 서버 127.0.0.1) — 감지 조건·토큰·상태 (규약 연동_API.md v2.4.1) ---------- */
+  var LINK_HOST = false;
+  try { LINK_HOST = (location.protocol === "http:" && /^(127\.0\.0\.1|localhost)$/i.test(location.hostname)); } catch (e) { LINK_HOST = false; }
+  var TOKEN = "";
+  try {
+    var tokenMatch = /[?&]t=([^&#]+)/.exec(location.search || "");
+    if (tokenMatch) {
+      TOKEN = decodeURIComponent(tokenMatch[1]);
+      try { sessionStorage.setItem("cca-link-token", TOKEN); } catch (e1) { /* 저장 불가 무시 */ }
+    } else {
+      try { TOKEN = sessionStorage.getItem("cca-link-token") || ""; } catch (e2) { TOKEN = ""; }
+    }
+  } catch (e) { TOKEN = ""; }
+  /* api.on = 연동 모드 확정, st = 마지막 /api/state, sets/recs = 화면용 정규화 사본 */
+  var api = { on: false, probed: false, st: null, sets: [], recs: [], generated: null, connected: false, lastSync: 0, timer: null, busy: false, deferred: false };
+  function linked() { return api.on && api.st !== null; }
+
+  /* ---------- 적응형 일정 · 채점결과 매핑 (순수 함수 — 시험장 프로그램과 동일 규격) ---------- */
+  /* __IMPORT_PURE_START__ */
+  var FIXED_SETS = [
+    { key:"sangsi1", name:"2024 상시 1회" },
+    { key:"koko1",   name:"코코 모의고사 1회" },
+    { key:"atype",   name:"2024 A형" },
+    { key:"sangsi2", name:"2024 상시 2회" },
+    { key:"koko2",   name:"코코 모의고사 2회" },
+    { key:"btype",   name:"2024 B형" },
+    { key:"s24",     name:"24 2급 상시" },
+    { key:"cca",     name:"컴활 2급 상시" },
+    { key:"y2026",   name:"2026 1회" }
+  ];
+  var ROUTINE_START = "2026-09-03";
+  var EXAM_DATES = ["2026-09-11", "2026-09-18"];
+  var REDO_KEY = "y2026", REDO_GOAL = 65, RETRY_MIN_SEG1 = 2, WEEKEND_CAP = 2, WEEKDAY_CAP = 1;
+  var AUTO_NAME = "자동 선택";
+  var PHASES = [
+    { no:1, start:"2026-09-03", deadline:"2026-09-10", exam:"2026-09-11" },
+    { no:2, start:"2026-09-12", deadline:"2026-09-17", exam:"2026-09-18" }
+  ];
+
+  function pad2(n) { return (n < 10 ? "0" : "") + n; }
+  function normalizeSetName(s) {
+    return String(s || "").toLowerCase()
+      .replace(/\.[a-z0-9]+$/i, "")
+      .replace(/[\s_\-.()\[\]]+/g, "");
+  }
+  function stripExt(name) { return String(name || "").replace(/\.[a-z0-9]+$/i, ""); }
+  /* 세트명 → 세트 키 (고정 9세트, 그 외는 "new:정규화명"으로 신규 편입) */
+  function canonSet(problemName) {
+    var n = normalizeSetName(problemName);
+    if (!n) { return null; }
+    if (n.indexOf("코코") >= 0) {
+      if (n.indexOf("1회") >= 0) { return "koko1"; }
+      if (n.indexOf("2회") >= 0) { return "koko2"; }
+      return "new:" + n;
+    }
+    if (n.indexOf("상시1회") >= 0) { return "sangsi1"; }
+    if (n.indexOf("상시2회") >= 0) { return "sangsi2"; }
+    if (n.indexOf("2026") >= 0 && n.indexOf("1회") >= 0) { return "y2026"; }
+    if (n.indexOf("a형") >= 0) { return "atype"; }
+    if (n.indexOf("b형") >= 0) { return "btype"; }
+    if (n.indexOf("24") >= 0 && n.indexOf("2급상시") >= 0) { return "s24"; }
+    if (n.indexOf("컴활") >= 0 && n.indexOf("상시") >= 0) { return "cca"; }
+    return "new:" + n;
+  }
+  function setName(key, fallback) {
+    for (var i = 0; i < FIXED_SETS.length; i++) { if (FIXED_SETS[i].key === key) { return FIXED_SETS[i].name; } }
+    if (key && key.indexOf("new:") === 0) { return fallback || key.slice(4); }
+    return fallback || "세트 미지정";
+  }
+  function addDays(iso, n) {
+    var p = iso.split("-");
+    var d = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2]) + n * 86400000);
+    return d.getUTCFullYear() + "-" + pad2(d.getUTCMonth() + 1) + "-" + pad2(d.getUTCDate());
+  }
+  function dayDiff(a, b) { /* a - b (일) */
+    var pa = a.split("-"), pb = b.split("-");
+    return Math.round((Date.UTC(+pa[0], +pa[1] - 1, +pa[2]) - Date.UTC(+pb[0], +pb[1] - 1, +pb[2])) / 86400000);
+  }
+  function weekdayIdx(iso) {
+    var p = iso.split("-");
+    return new Date(Date.UTC(+p[0], +p[1] - 1, +p[2])).getUTCDay();
+  }
+  function isWeekend(iso) { var w = weekdayIdx(iso); return w === 0 || w === 6; }
+  function fmtMD(iso) { return (+iso.slice(5, 7)) + "/" + (+iso.slice(8, 10)); }
+  function resultToRecord(rec) {
+    return { date: String(rec.generated || "").slice(0, 10), set: canonSet(rec.problem), name: stripExt(rec.problem), total: rec.total, target: (typeof rec.target === "number") ? rec.target : null, src: "import" };
+  }
+  /* 세트 풀 = 고정 9세트 + 기록에 등장한 신규 세트 */
+  function collectSets(records) {
+    var extra = {};
+    (records || []).forEach(function(r){
+      if (r && r.set && r.set.indexOf("new:") === 0 && !extra[r.set]) { extra[r.set] = r.name || r.set.slice(4); }
+    });
+    return FIXED_SETS.concat(Object.keys(extra).map(function(k){ return { key: k, name: extra[k] }; }));
+  }
+  function sortRecords(records) {
+    return (records || []).filter(function(r){ return r && typeof r.date === "string" && r.date.length === 10; })
+      .slice().sort(function(a, b){
+        if (a.date !== b.date) { return a.date < b.date ? -1 : 1; }
+        var sa = a.set || "", sb = b.set || "";
+        if (sa !== sb) { return sa < sb ? -1 : 1; }
+        return (a.total || 0) - (b.total || 0);
+      });
+  }
+  /* 구간: 시험일 → exam, 9/18 이후 → after, 9/11 이전 → 1구간(9/3~9/10), 9/12~9/17 → 2구간 */
+  function segmentFor(today) {
+    if (EXAM_DATES.indexOf(today) >= 0) { return { kind: "exam", examNo: EXAM_DATES.indexOf(today) + 1 }; }
+    if (today > EXAM_DATES[1]) { return { kind: "after" }; }
+    if (today < EXAM_DATES[0]) {
+      return { kind: "study", seg: 1, segStart: ROUTINE_START, start: today > ROUTINE_START ? today : ROUTINE_START, end: addDays(EXAM_DATES[0], -1) };
+    }
+    return { kind: "study", seg: 2, segStart: addDays(EXAM_DATES[0], 1), start: today, end: addDays(EXAM_DATES[1], -1) };
+  }
+  /* 기본 용량: 주말 2 / 평일 1 / 마감일 1(+실수노트) / 시험 다음날 1(+복기) */
+  function baseCapacity(d, segEnd) {
+    if (d === addDays(EXAM_DATES[0], 1) || d === segEnd) { return 1; }
+    return isWeekend(d) ? WEEKEND_CAP : WEEKDAY_CAP;
+  }
+  /* 첫응시 우선순위: 고정 9세트 순 → 그 외 이름순("신규") */
+  function prioritizedSets(sets) {
+    var fixed = [], rest = [];
+    FIXED_SETS.forEach(function(f){
+      var s = sets.filter(function(x){ return x.key === f.key; })[0];
+      if (s) { fixed.push({ set: s, label: f.name }); }
+    });
+    sets.forEach(function(s){
+      if (!FIXED_SETS.some(function(f){ return f.key === s.key; })) { rest.push(s); }
+    });
+    rest.sort(function(a, b){ return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0); });
+    return fixed.concat(rest.map(function(s){ return { set: s, label: "신규" }; }));
+  }
+  function bestOf(recs) {
+    var b = null;
+    recs.forEach(function(r){ if (typeof r.total === "number" && (b === null || r.total > b)) { b = r.total; } });
+    return b;
+  }
+  function makeSlot(kind, s, goal, why) {
+    return { kind: kind, set: s ? s.key : null, name: s ? s.name : AUTO_NAME, target: (goal === undefined) ? null : goal, auto: !s, why: why, countsAsRetry: false, mandatory: false, best: null };
+  }
+  /*
+   * 적응형 일정 — 시험장 v2.2.0 build_adaptive_plan 과 동일 규격 (결정적)
+   *  · 1구간 "재응시 최소 2"에 2026 1회 재도전(목표 65, 루틴 중 미응시면 필수) 포함 → 정상 진행 = v4 일정
+   *  · 2구간 "전 세트 재응시"는 용량 내 최대(소프트), 아직 재응시 안 한 세트 그룹 먼저
+   *  · 9/12 = 복기 + 1세트, 마감일(9/10·9/17) = 1세트 + 실수 노트
+   *  · 평일 2세트 승격은 이른 평일부터 필요한 만큼만(마감일은 최후), 주말·9/12·오늘(2세트 완료)은 승격 안 함
+   *  · 재응시 풀 = 최고점 오름차순(동점은 이름순), 오늘·어제 응시 세트는 뒤로
+   *  · 목표: 1구간 70→75→80→85, 2구간 75→80→85 (슬롯 수에 맞춰 단계 분배)
+   */
+  function buildAdaptivePlan(today, records, sets) {
+    sets = sets || FIXED_SETS;
+    var seg = segmentFor(today);
+    var plan = { today: today, kind: seg.kind, phase: seg.seg || 0, ended: seg.kind === "after", examNo: seg.examNo || 0,
+                 start: null, deadline: null, exam: null, days: [], promoted: [], optional: [], missed: [], reason: "", warning: null, warnings: [],
+                 retryTarget: 0, remainingSets: 0, todayRecords: [], doneInPhase: 0, progress: { done: 0, need: 0 }, shrunk: false };
+    if (seg.kind !== "study") { return plan; }
+    var start = seg.start, end = seg.end, segStart = seg.segStart;
+    plan.start = start; plan.deadline = end; plan.exam = addDays(end, 1);
+    var recs = sortRecords(records);
+    var bySet = {};
+    sets.forEach(function(s){ bySet[s.key] = []; });
+    var byDate = {};
+    recs.forEach(function(r){
+      if (r.set && bySet[r.set]) { bySet[r.set].push(r); }
+      (byDate[r.date] = byDate[r.date] || []).push(r);
+    });
+    var todayRecords = byDate[today] || [];
+    var doneToday = todayRecords.length;
+    plan.todayRecords = todayRecords;
+
+    /* 학습일 · 기본 용량 */
+    var days = [];
+    for (var d = start; d <= end; d = addDays(d, 1)) { if (EXAM_DATES.indexOf(d) < 0) { days.push(d); } }
+    var cap = {};
+    days.forEach(function(dd){ cap[dd] = baseCapacity(dd, end); });
+    if (cap[today] !== undefined) { cap[today] = Math.max(0, cap[today] - doneToday); }
+    var reviewDay = addDays(EXAM_DATES[0], 1);
+    var boostable = days.filter(function(dd){ return !isWeekend(dd) && dd !== reviewDay && !(dd === today && doneToday >= 2); });
+
+    /* 풀 */
+    var ordered = prioritizedSets(sets);
+    var firstPool = ordered.filter(function(o){ return !bySet[o.set.key].length; });
+    var redoSet = null;
+    if (seg.seg === 1) {
+      var ys = sets.filter(function(s){ return s.key === REDO_KEY; })[0];
+      if (ys && bySet[REDO_KEY].length && !bySet[REDO_KEY].some(function(r){ return r.date >= ROUTINE_START; })) { redoSet = ys; }
+    }
+    var mandatory = [];
+    firstPool.forEach(function(o){
+      var isRedo = (o.set.key === REDO_KEY);
+      var sl = makeSlot("first", o.set, isRedo ? REDO_GOAL : null, "첫 응시 · 우선순위 " + o.label);
+      sl.countsAsRetry = isRedo; sl.mandatory = isRedo;
+      mandatory.push(sl);
+      if (redoSet && isRedo) { redoSet = null; }
+    });
+    if (redoSet) {
+      var pos = mandatory.length;
+      for (var i = 0; i < mandatory.length; i++) { if (/신규$/.test(mandatory[i].why)) { pos = i; break; } }
+      var redoSlot = makeSlot("redo", redoSet, REDO_GOAL, "2026 1회 재도전 (루틴 중 미응시)");
+      redoSlot.countsAsRetry = true; redoSlot.mandatory = true;
+      mandatory.splice(pos, 0, redoSlot);
+    }
+    var attempted = ordered.filter(function(o){ return bySet[o.set.key].length > 0; });
+    function lastDate(key) { var l = null; bySet[key].forEach(function(r){ if (l === null || r.date > l) { l = r.date; } }); return l; }
+    function recent(key) { return dayDiff(today, lastDate(key)) < 2; }
+    function retryCmp(a, b) {
+      var ba = bestOf(bySet[a.key]), bb = bestOf(bySet[b.key]);
+      ba = ba === null ? -1 : ba; bb = bb === null ? -1 : bb;
+      if (ba !== bb) { return ba - bb; }
+      return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0);
+    }
+    var groups;
+    if (seg.seg === 2) {
+      var redone = {};
+      attempted.forEach(function(o){ if (bySet[o.set.key].some(function(r){ return r.date >= segStart; })) { redone[o.set.key] = true; } });
+      groups = [attempted.filter(function(o){ return !redone[o.set.key]; }).map(function(o){ return o.set; }),
+                attempted.filter(function(o){ return redone[o.set.key]; }).map(function(o){ return o.set; })];
+    } else {
+      groups = [attempted.map(function(o){ return o.set; })];
+    }
+    var retryPool = [];
+    groups.forEach(function(g){
+      retryPool = retryPool.concat(g.filter(function(s){ return !recent(s.key); }).sort(retryCmp));
+      retryPool = retryPool.concat(g.filter(function(s){ return recent(s.key); }).sort(retryCmp));
+    });
+    var retriesDone = 0;
+    attempted.forEach(function(o){
+      var rr = bySet[o.set.key];
+      if (seg.seg === 1 && o.set.key === REDO_KEY) {
+        if (rr.some(function(r){ return r.date >= segStart; })) { retriesDone++; }
+        return;
+      }
+      rr.forEach(function(r, i){ if (i > 0 && r.date >= segStart) { retriesDone++; } });
+    });
+
+    /* 필요량 vs 용량 — ① 평일 승격(이른 날부터, 마감일 최후) ② 재응시 축소(최소 1) ③ 첫응시 뒤에서부터 강등 */
+    var retryTarget = seg.seg === 1 ? RETRY_MIN_SEG1 : 0;
+    var demoted = [], boostDays = [], extra = 0;
+    function totalCap() { var c = 0; days.forEach(function(dd){ c += cap[dd]; }); return c; }
+    for (;;) {
+      var redoIn = mandatory.some(function(sl){ return sl.countsAsRetry; });
+      extra = seg.seg === 1 ? Math.max(0, retryTarget - retriesDone - (redoIn ? 1 : 0)) : 0;
+      var required = mandatory.length + extra;
+      if (required <= totalCap()) { break; }
+      var nxt = boostable.filter(function(dd){ return boostDays.indexOf(dd) < 0; })[0];
+      if (nxt) { boostDays.push(nxt); cap[nxt] += 1; continue; }
+      if (retryTarget > 1) { retryTarget -= 1; continue; }
+      if (mandatory.length) { demoted.push(mandatory.pop()); continue; }
+      break;
+    }
+    if (seg.seg === 2) { extra = Math.max(0, totalCap() - mandatory.length); }
+    plan.retryTarget = retryTarget;
+    plan.shrunk = seg.seg === 1 && retryTarget < RETRY_MIN_SEG1;
+
+    /* 재응시 슬롯 (목표 단계 상승) */
+    var retrySlots = [];
+    var nR = extra, cursor = 0;
+    for (var k = 0; k < nR; k++) {
+      var goal;
+      if (seg.seg === 1) { goal = 70 + 5 * Math.min(3, Math.floor((k * 4) / Math.max(1, nR))); }
+      else { goal = 75 + 5 * Math.min(2, Math.floor((k * 3) / Math.max(1, nR))); }
+      var s = null;
+      if (retryPool.length) { s = retryPool[cursor % retryPool.length]; cursor++; }
+      var b = s ? bestOf(bySet[s.key]) : null;
+      var why = s ? ("재응시 · 최고점 " + (b !== null ? b + "점" : "점수 없음")) : "재응시 · 자동 선택";
+      var rsl = makeSlot("retry", s, goal, why);
+      rsl.best = b;
+      retrySlots.push(rsl);
+    }
+
+    /* 배정: 첫응시(우선순위) → 재응시, 이른 슬롯부터, 같은 날 같은 세트 금지 */
+    var queue = mandatory.concat(retrySlots);
+    var perDay = {};
+    days.forEach(function(dd){ perDay[dd] = []; });
+    days.forEach(function(dd){
+      while (perDay[dd].length < cap[dd] && queue.length) {
+        var pickIdx = -1;
+        for (var q = 0; q < queue.length; q++) {
+          var sl = queue[q];
+          if (sl.set === null || perDay[dd].every(function(x){ return x.set === null || x.set !== sl.set; })) { pickIdx = q; break; }
+        }
+        if (pickIdx < 0) { break; }
+        var picked = queue.splice(pickIdx, 1)[0];
+        picked.date = dd;
+        perDay[dd].push(picked);
+      }
+    });
+    queue.forEach(function(sl){ demoted.push(sl); });
+    demoted.forEach(function(sl){ sl.kind = "optional"; });
+
+    var remaining = 0;
+    plan.days = days.map(function(dd){
+      remaining += perDay[dd].length;
+      var boosted = boostDays.indexOf(dd) >= 0;
+      var base = baseCapacity(dd, end);
+      return { date: dd, wd: weekdayIdx(dd), base: base, capacity: base + (boosted ? 1 : 0), done: dd === today ? doneToday : 0, remaining: cap[dd],
+               deadlineDay: dd === end, reviewDay: dd === reviewDay, promoted: boosted, items: perDay[dd] };
+    });
+    plan.promoted = boostDays;
+    plan.optional = demoted.map(function(sl){ return sl.set; });
+    plan.optionalNames = demoted.map(function(sl){ return sl.name; });
+    plan.remainingSets = remaining;
+
+    /* 재배치 사유 */
+    var missed = [];
+    var lim = today < addDays(end, 1) ? today : addDays(end, 1);
+    for (var md = segStart; md < lim; md = addDays(md, 1)) {
+      if (EXAM_DATES.indexOf(md) < 0 && !(byDate[md] && byDate[md].length)) { missed.push(md); }
+    }
+    plan.missed = missed;
+    var nDays = days.filter(function(dd){ return cap[dd] > 0; }).length;
+    var reason = "";
+    if (missed.length || boostDays.length || demoted.length) {
+      if (missed.length) { reason = missed.map(fmtMD).join("·") + " 미완주 → "; }
+      reason += "남은 세트 " + remaining + "개를 " + nDays + "일에 재배치";
+      if (boostDays.length) { reason += "(평일도 2세트)"; }
+    }
+    plan.reason = reason;
+    if (demoted.length) {
+      plan.warning = "용량 부족: " + demoted.length + "세트는 '선택'으로 강등 — " + plan.optionalNames.join(", ") + " (남는 시간에 추가 응시하세요)";
+      plan.warnings = [plan.warning];
+    }
+    var done = 0;
+    recs.forEach(function(r){ if (r.date >= segStart && r.date <= end && r.date <= today && EXAM_DATES.indexOf(r.date) < 0) { done++; } });
+    plan.doneInPhase = done;
+    plan.progress = { done: done, need: done + remaining };
+    return plan;
+  }
+  function planSummary(plan) {
+    if (!plan) { return ""; }
+    if (plan.kind === "exam") { return plan.examNo === 1 ? "오늘은 1차 시험일 — 시험 후 2단계 일정이 자동 계산됩니다." : "오늘은 2차 시험일입니다."; }
+    if (plan.kind === "after") { return "루틴 기간(9/3 – 9/17)이 끝났습니다."; }
+    if (plan.reason) { return plan.reason; }
+    return "일정대로 진행 중 — 남은 세트 " + plan.remainingSets + "개 (마감 " + fmtMD(plan.deadline) + ")";
+  }
+  function validateResult(j) {
+    var missing = [];
+    if (!j || typeof j !== "object") { return { ok: false, missing: ["JSON 객체"] }; }
+    if (typeof j.generated !== "string" || !j.generated) { missing.push("generated"); }
+    if (typeof j.total !== "number") { missing.push("total"); }
+    if (!j.files || typeof j.files.problem !== "string" || !j.files.problem) { missing.push("files.problem"); }
+    if (missing.length) { return { ok: false, missing: missing }; }
+    var sheets = [];
+    if (Array.isArray(j.sheets)) {
+      j.sheets.forEach(function(s){
+        if (s && typeof s.name === "string" && typeof s.alloc === "number" && typeof s.earned === "number") {
+          sheets.push({ name: s.name, alloc: s.alloc, earned: s.earned });
+        }
+      });
+    }
+    var wrong = [];
+    if (Array.isArray(j.wrong_items)) {
+      j.wrong_items.forEach(function(w){
+        if (w && typeof w.category === "string" && typeof w.lost === "number") {
+          wrong.push({ label: (typeof w.label === "string") ? w.label : "", category: w.category, lost: w.lost });
+        }
+      });
+    }
+    var passLine = (typeof j.pass_line === "number") ? j.pass_line : 70;
+    return {
+      ok: true,
+      rec: {
+        generated: j.generated, problem: j.files.problem, total: j.total, pass_line: passLine,
+        passed: (typeof j.passed === "boolean") ? j.passed : (j.total >= passLine),
+        date: j.generated.slice(0, 10), set: canonSet(j.files.problem), sheets: sheets, wrong: wrong
+      }
+    };
+  }
+  function parseResultText(text) {
+    var t = String(text || "").trim();
+    if (!t) { return { ok: false, error: "내용이 비어 있습니다" }; }
+    var j;
+    try { j = JSON.parse(t); } catch (e) { return { ok: false, error: "JSON 형식이 아닙니다" }; }
+    return { ok: true, list: Array.isArray(j) ? j : [j] };
+  }
+  function modalPasteDecision(text) {
+    var p = parseResultText(text);
+    if (!p.ok) { return { action: "error", message: "가져올 수 없어요 — " + p.error + ". 시험장에서 채점 직후 다시 복사해 붙여넣으세요." }; }
+    return { action: "import", count: p.list.length };
+  }
+  /* __IMPORT_PURE_END__ */
+
+  /* ---------- 상태 로드 (v5 · v4/v3에서 마이그레이션: 체크 초기화, 채점결과·점수 이력·퀴즈 보존) ---------- */
+  var V4_DATES = { d01:"2026-09-03", d02:"2026-09-04", d03:"2026-09-05", d04:"2026-09-06", d05:"2026-09-07", d06:"2026-09-08", d07:"2026-09-09", d08:"2026-09-10",
+                   d09:"2026-09-12", d10:"2026-09-13", d11:"2026-09-14", d12:"2026-09-15", d13:"2026-09-16", d14:"2026-09-17" };
+  var V4_SETS = { d01:["sangsi1"], d02:["koko1"], d03:["atype","sangsi2"], d04:["koko2","btype"], d05:["s24"], d06:["cca"], d07:["y2026"] };
+  var state = null;
+  try {
+    var raw5 = localStorage.getItem(KEY5);
+    if (raw5) {
+      var parsed = JSON.parse(raw5);
+      if (parsed && typeof parsed === "object" && parsed.checks && typeof parsed.checks === "object") { state = parsed; }
+    }
+  } catch (e) { state = null; }
+  if (!state) {
+    state = { tab: "", focus: false, checks: {}, results: [], manual: [], quiz: {}, folderLinked: false };
+    try {
+      var rawOld = localStorage.getItem(KEY4) || localStorage.getItem(KEY3);
+      if (rawOld) {
+        var old = JSON.parse(rawOld);
+        if (old && typeof old === "object") {
+          if (typeof old.tab === "string") { state.tab = old.tab; }
+          if (old.quiz && typeof old.quiz === "object") { state.quiz = old.quiz; }
+          state.folderLinked = old.folderLinked === true;
+          if (old.checks && typeof old.checks === "object") {
+            Object.keys(old.checks).forEach(function(k){ if (k.charAt(0) === "e" && old.checks[k] === true) { state.checks[k] = true; } });
+          }
+          if (Array.isArray(old.results)) {
+            state.results = old.results.filter(function(r){ return r && typeof r === "object" && typeof r.generated === "string"; });
+          }
+          /* v4 수동 점수 → 날짜·세트가 있는 기록으로 변환 (v3 형식은 Day 대응이 달라 생략) */
+          if (localStorage.getItem(KEY4) && old.scores && typeof old.scores === "object") {
+            Object.keys(old.scores).forEach(function(k){
+              var arr = old.scores[k];
+              if (!Array.isArray(arr) || !V4_DATES[k]) { return; }
+              arr.forEach(function(total, i){
+                var setKey = (V4_SETS[k] || [])[i] || null;
+                if (typeof total === "number") { state.manual.push({ date: V4_DATES[k], set: setKey, name: setName(setKey, "세트 미지정"), total: total, target: null, src: "v4" }); }
+              });
+            });
+          }
+        }
+      }
+    } catch (e) { /* 마이그레이션 실패 시 초기 상태 */ }
+  }
+  if (!state.checks || typeof state.checks !== "object") { state.checks = {}; }
+  if (!Array.isArray(state.results)) { state.results = []; }
+  if (!Array.isArray(state.manual)) { state.manual = []; }
+  if (!state.quiz || typeof state.quiz !== "object") { state.quiz = {}; }
+  state.folderLinked = state.folderLinked === true;
+  state.results.forEach(function(r){
+    if (!r.date) { r.date = String(r.generated || "").slice(0, 10); }
+    if (r.set === undefined) { r.set = canonSet(r.problem); }
+  });
+
+  function save() {
+    try { localStorage.setItem(KEY5, JSON.stringify(state)); } catch (e) { /* 저장 불가 환경 무시 */ }
+  }
+  save();
+
+  /* ---------- 기록 · 일정 · 게이트 헬퍼 ---------- */
+  function allRecords() {
+    if (linked()) {
+      return sortRecords(api.recs.filter(function(r){ return r.mode === "시험" || r.mode === "수동"; }));
+    }
+    var out = state.results.map(resultToRecord);
+    state.manual.forEach(function(m){ out.push({ date: m.date, set: m.set, name: m.name, total: m.total, target: (typeof m.target === "number") ? m.target : null, src: "manual" }); });
+    return sortRecords(out);
+  }
+  var plan = null, plan2 = null, planSets = FIXED_SETS;
+  function computePlan(todayIso) {
+    if (linked()) {
+      planSets = api.sets;
+      plan = planFromApi(api.st, todayIso);
+      plan2 = previewFromApi(api.st, plan);
+      return plan;
+    }
+    var recs = allRecords();
+    planSets = collectSets(recs);
+    plan = buildAdaptivePlan(todayIso, recs, planSets);
+    plan2 = (plan.phase === 1) ? buildAdaptivePlan(PHASES[1].start, recs, planSets) : null;
+    return plan;
+  }
+  function recordsOn(date) { return allRecords().filter(function(r){ return r.date === date; }); }
+  function dayKey(date) { return "p" + date; }
+  function tasksDone(dk) {
+    return state.checks[dk + "t3"] === true && state.checks[dk + "t4"] === true;
+  }
+  /* 연동 모드 단계 판정 (규약 "단계 완료 판정"): ① 기록 존재 ② report_json ③ review[id].done ④ 이후 오답재풀이 기록 · 오답 없음이면 ③④ 자동 충족 */
+  function reviewDone(id) {
+    var rv = (api.st && api.st.review && typeof api.st.review === "object") ? api.st.review[id] : null;
+    return !!(rv && rv.done === true);
+  }
+  function recStamp(r) { return (r.date || "") + " " + (r.time || "") + " " + (r.id || ""); }
+  function retryAfter(rec) {
+    var s = recStamp(rec);
+    if (!rec.set) { return false; }
+    return api.recs.some(function(r2){ return r2.mode === "오답재풀이" && r2.set === rec.set && recStamp(r2) > s; });
+  }
+  function stageOf(rec) {
+    var graded = !!rec.report_json;
+    var noWrong = graded && Array.isArray(rec.wrong) && rec.wrong.length === 0;
+    var manual = rec.mode === "수동";
+    var review = noWrong || reviewDone(rec.id);
+    var retry = noWrong || retryAfter(rec);
+    return { graded: graded, noWrong: noWrong, manual: manual, review: review, retry: retry, cleared: review && (retry || manual) };
+  }
+  /* 오늘 카드 클리어: 배정된 세트가 남지 않았고, 오늘 첫응시 기록이 있으면 ③④ 체크까지 (연동 모드는 기록마다 자동 판정) */
+  function todayCleared() {
+    if (!plan || plan.phase === 0) { return false; }
+    var td = plan.days.filter(function(x){ return x.date === plan.today; })[0];
+    if (!td) { return false; }
+    if (td.items.length) { return false; }
+    if (!plan.todayRecords.length) { return false; }
+    if (linked()) { return plan.todayRecords.every(function(r){ return stageOf(r).cleared; }); }
+    return tasksDone(dayKey(plan.today));
+  }
+  function todayMissing() {
+    var out = [];
+    if (!plan || plan.phase === 0) { return out; }
+    var td = plan.days.filter(function(x){ return x.date === plan.today; })[0];
+    if (!td) { return out; }
+    if (td.items.length) { out.push("세트 " + td.items.length + "개 완주·기록"); }
+    if (linked()) {
+      plan.todayRecords.forEach(function(r){
+        var sg = stageOf(r);
+        if (sg.cleared) { return; }
+        var need = [];
+        if (!sg.review) { need.push("③ 오답노트"); }
+        if (!sg.retry && !sg.manual) { need.push("④ 오답 재풀이"); }
+        out.push(r.name + ": " + need.join(" · "));
+      });
+    } else if (plan.todayRecords.length && !tasksDone(dayKey(plan.today))) { out.push("③ 오답노트 · ④ 오답 재풀이 체크"); }
+    if (!td.items.length && !plan.todayRecords.length) { out.push("오늘 배정 없음 — 여유일"); }
+    return out;
+  }
+  function makeClone(card) {
+    var clone = card.cloneNode(true);
+    Array.prototype.slice.call(clone.querySelectorAll("input[id], select[id]")).forEach(function(inp){
+      inp.setAttribute("data-mirror", inp.id);
+      inp.removeAttribute("id");
+    });
+    return clone;
+  }
+  function keyOf(inp) { return inp.getAttribute("data-check-key") || inp.id || inp.getAttribute("data-mirror"); }
+  function getCheck(key) {
+    if (linked()) { return !!(api.st.checks && api.st.checks[key] === true); }
+    return state.checks[key] === true;
+  }
+  function trackClear(fn) {
+    var before = todayCleared();
+    fn();
+    computePlan(plan ? plan.today : START_ISO);
+    if (!before && todayCleared()) { lastCleared = plan.today; }
+  }
+
+  /* 채점결과 1건 반영: generated 중복 무시, 날짜·세트로 기록에 추가 → 다음 렌더에서 일정 자동 재계산 */
+  function ingestResult(rec) {
+    var dup = state.results.some(function(r){ return r.generated === rec.generated; });
+    if (dup) { return "dup"; }
+    if (plan && rec.date === plan.today) {
+      var td = plan.days.filter(function(x){ return x.date === plan.today; })[0];
+      if (td) {
+        var hit = td.items.filter(function(it){ return (it.kind === "retry" || it.kind === "redo") && (it.set === rec.set || it.set === null); })[0];
+        if (hit) { rec.target = hit.target; }
+      }
+    }
+    state.results.push(rec);
+    return rec.date ? "scored" : "kept";
+  }
+
+  /* ---------- 탭 ---------- */
+  var tabs = Array.prototype.slice.call(document.querySelectorAll('.tabbar [role="tab"]'));
+  var panels = Array.prototype.slice.call(document.querySelectorAll('[role="tabpanel"]'));
+
+  function activateTab(tab, opts) {
+    opts = opts || {};
+    tabs.forEach(function(t){
+      var sel = (t === tab);
+      t.setAttribute("aria-selected", sel ? "true" : "false");
+      t.tabIndex = sel ? 0 : -1;
+    });
+    panels.forEach(function(p){
+      p.hidden = (p.id !== tab.getAttribute("aria-controls"));
+    });
+    if (opts.focus) { tab.focus(); }
+    if (opts.persist) { state.tab = tab.id; save(); }
+    if (opts.scroll) { window.scrollTo(0, 0); }
+  }
+  tabs.forEach(function(tab, i){
+    tab.addEventListener("click", function(){
+      activateTab(tab, { persist: true, scroll: true });
+    });
+    tab.addEventListener("keydown", function(ev){
+      var idx = -1;
+      if (ev.key === "ArrowRight") { idx = (i + 1) % tabs.length; }
+      else if (ev.key === "ArrowLeft") { idx = (i - 1 + tabs.length) % tabs.length; }
+      else if (ev.key === "Home") { idx = 0; }
+      else if (ev.key === "End") { idx = tabs.length - 1; }
+      if (idx >= 0) {
+        ev.preventDefault();
+        activateTab(tabs[idx], { persist: true, scroll: true, focus: true });
+      }
+    });
+  });
+  var savedTab = state.tab ? document.getElementById(state.tab) : null;
+  if (savedTab && savedTab.getAttribute("role") === "tab") { activateTab(savedTab, {}); }
+  else { activateTab(tabs[0], {}); }
+
+  /* ---------- 달력 정보 ---------- */
+  function pad(n) { return (n < 10 ? "0" : "") + n; }
+  var now = new Date();
+  var iso = now.getFullYear() + "-" + pad(now.getMonth() + 1) + "-" + pad(now.getDate());
+  var wdNames = ["일", "월", "화", "수", "목", "금", "토"];
+  /* 연동 모드: 프로그램이 준 today 를 "오늘"로 (같은 PC지만 일정 계산 기준을 맞춘다) */
+  function setToday(isoStr) {
+    if (typeof isoStr !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(isoStr)) { return; }
+    iso = isoStr;
+    var p = isoStr.split("-");
+    now = new Date(+p[0], +p[1] - 1, +p[2], 12, 0, 0);
+  }
+  computePlan(iso);
+
+  /* ---------- D-카운터(1차·2차) · 날짜 스트립 오늘 표시 (동적) ---------- */
+  function renderCalendar(){
+    var dateLabel = document.getElementById("today-date");
+    if (dateLabel) {
+      dateLabel.textContent = "— " + (now.getMonth() + 1) + "/" + now.getDate() + " (" + wdNames[now.getDay()] + ")";
+    }
+    var t0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    function left(y, m, d) { return Math.round((new Date(y, m, d).getTime() - t0.getTime()) / 86400000); }
+    function txt(n) { return n > 0 ? "D-" + n : (n === 0 ? "D-DAY" : "종료"); }
+    var d1 = left(2026, 8, 11), d2 = left(2026, 8, 18);
+    var dnum = document.getElementById("d-num");
+    if (dnum) { dnum.textContent = txt(d1); }
+    var fxo = document.getElementById("fx-out");
+    if (fxo) { fxo.textContent = String(d1); }
+    var dsub = document.getElementById("d-sub");
+    if (dsub) { dsub.textContent = "2차 9/18 (금) · " + txt(d2); }
+    var mast = document.getElementById("mast-dday");
+    if (mast) { mast.textContent = "1차 9/11 (금) " + txt(d1) + " · 2차 9/18 (금) " + txt(d2); }
+    Array.prototype.slice.call(document.querySelectorAll(".strip .cell.today")).forEach(function(c){ c.classList.remove("today"); });
+    var todayCell = document.querySelector('.strip .cell[data-date="' + iso + '"]');
+    if (todayCell) {
+      todayCell.classList.add("today");
+      var mk = todayCell.querySelector(".mk");
+      if (mk && !mk.textContent) { mk.textContent = "오늘"; }
+    }
+    var stripStatus = document.getElementById("strip-status");
+    if (stripStatus) {
+      stripStatus.hidden = true;
+      if (iso === "2026-09-02") {
+        stripStatus.hidden = false;
+        stripStatus.textContent = "내일 9/3 (목) 시작 — 오늘은 시험장 설치와 세트 파일 준비만 해 두세요 (Day 0 카드).";
+      } else if (iso < START_ISO) {
+        stripStatus.hidden = false;
+        stripStatus.textContent = "루틴은 9/3 (목)에 시작합니다. 그 전에는 준비 카드(Day 0)를 체크해 두세요.";
+      } else if (iso > "2026-09-17") {
+        stripStatus.hidden = false;
+        stripStatus.textContent = "루틴 기간(9/3 – 9/17)이 끝났습니다.";
+      }
+    }
+  }
+  renderCalendar();
+
+  /* ---------- 날짜 카드 생성 (적응형 일정에서) ---------- */
+  var STEP_TASKS = [
+    { n:"t1", text:"① 시험 모드 40분 완주 — 중간에 멈추지 않기", req:false },
+    { n:"t2", text:"② 채점 → [성적 붙여넣기]로 점수 반영", req:false },
+    { n:"t3", text:"③ 오답노트 모드 — 틀린 항목 전부 파일에서 직접 고치기", req:true },
+    { n:"t4", text:"④ 틀린 문제만 새 사본에서 다시 풀기 (15분, 시험장 \"오답 재풀이\")", req:true },
+    { n:"t5", text:"⑤ 선택 — 함수 퀴즈 10문제", req:false }
+  ];
+  var SET_SHORT = { sangsi1:"상시1", koko1:"코코1", atype:"A형", sangsi2:"상시2", koko2:"코코2", btype:"B형", s24:"24상시", cca:"컴활상시", y2026:"26-1회" };
+  var KIND_LABEL = { first:"첫응시", redo:"재도전", retry:"재응시", optional:"선택" };
+  function dispName(it) { return it.auto ? "시험장이 고른 세트 (자동 선택)" : it.name; }
+  function esc(s) {
+    return String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+  }
+  var LINKED_STEPS = {
+    t1: "① 시험 모드 40분 완주 — [시험장에서 시작]",
+    t2: "② 채점 — 제출하면 시험장이 자동 채점·반영",
+    t3: "③ 오답노트 모드 — 틀린 항목 전부 파일에서 직접 고치기 (시험장 오답노트 창 완료 또는 여기서 체크)",
+    t4: "④ 틀린 문제만 새 사본에서 다시 풀기 (15분, 시험장 [오답 재풀이] 제출 시 자동)"
+  };
+  /* o: { key: API 체크 키, auto: 자동 판정(비활성), checked: 강제 상태, review: 기록 id(③ 토글) } */
+  function taskLi(id, text, req, dk, o) {
+    o = o || {};
+    var checked = (o.checked !== undefined) ? o.checked : getCheck(o.key || id);
+    return '<li><label><input type="checkbox" id="' + esc(id) + '"' + (req ? ' data-task="' + dk + '"' : '') +
+      (o.key ? ' data-check-key="' + esc(o.key) + '"' : '') +
+      (o.auto ? ' data-auto="1" disabled' : '') +
+      (o.review ? ' data-review="' + esc(o.review) + '"' : '') +
+      (checked ? ' checked' : '') + '><span>' + text + (o.auto ? ' <span class="auto-mark">자동</span>' : '') + '</span></label></li>';
+  }
+  function actBtn(action, setKey, rid, label, cls, disabled) {
+    return '<button type="button" class="act-btn' + (cls ? " " + cls : "") + '" data-action="' + action + '" data-set="' + esc(setKey || "") + '" data-rid="' + esc(rid || "") + '"' + (disabled ? ' disabled' : '') + '>' + esc(label) + '</button>';
+  }
+  function reportLink(r) {
+    return (r.report_html && r.id) ? '<a class="act-btn" href="/api/report/' + encodeURIComponent(r.id) + '" target="_blank" rel="noopener">리포트 보기</a>' : "";
+  }
+  function recordActions(r, running) {
+    if (!r.report_json) { return ""; }
+    return '<div class="act-row">' + actBtn("open_review", r.set, r.id, "오답노트 열기") +
+      actBtn("start_retry", r.set, r.id, running ? "시험 진행 중" : "오답 재풀이", "", running) + reportLink(r) + '</div>';
+  }
+  function passText(r) {
+    if (typeof r.total !== "number") { return "채점 실패"; }
+    return r.passed ? "합격선 " + r.pass_line + " 통과" : "합격선 " + r.pass_line + " 미달";
+  }
+  function setOptions(includeNone) {
+    return planSets.map(function(s){ return '<option value="' + esc(s.key) + '">' + esc(s.name) + '</option>'; }).join("") +
+      (includeNone ? '<option value="">세트 미지정</option>' : '');
+  }
+  function buildDateCard(date, ctx) {
+    var dk = dayKey(date);
+    var wd = wdNames[weekdayIdx(date)];
+    var art = document.createElement("article");
+    art.className = "day-card mock";
+    art.setAttribute("data-day", dk);
+    art.setAttribute("data-date", date);
+    var recs = ctx.records || [];
+    var day = ctx.day || null;
+    var items = day ? day.items : [];
+    var mode = ctx.mode;
+    var on = linked();
+    var running = on && api.st.exam_running === true;
+    var cleared = mode === "today" ? todayCleared() : (mode === "past" ? recs.length > 0 : false);
+    if (cleared) { art.classList.add("is-done"); }
+    var capTxt;
+    if (mode === "past") { capTxt = recs.length ? recs.length + "세트 완주" : "미완주"; }
+    else if (day) { capTxt = day.deadlineDay ? "마감일 · 1세트 + 실수노트" : (day.capacity + "세트" + (day.promoted ? " (승격)" : "")); }
+    else { capTxt = "배정 없음"; }
+    var stTxt, stCls;
+    if (mode === "today") { stTxt = cleared ? "완료" : "진행 중"; stCls = cleared ? "cleared" : "current"; }
+    else if (mode === "past") { stTxt = recs.length ? "완료" : "미완주"; stCls = recs.length ? "cleared" : "missed"; }
+    else if (mode === "preview") { stTxt = "예상"; stCls = "preview"; }
+    else { stTxt = "예정"; stCls = "preview"; }
+    var h3;
+    if (mode === "next") {
+      h3 = "다음 구간 — 1차 시험 후 기록을 반영해 시험장이 자동 계산";
+    } else if (mode === "past") {
+      h3 = recs.length ? recs.map(function(r){ return setName(r.set, r.name); }).join(" + ") : "미완주 — 세트가 이후 날짜로 재배치됨";
+    } else if (items.length) {
+      h3 = items.map(function(it){ return (it.kind === "retry" ? "재응시 · " : (it.kind === "redo" ? "재도전 · " : "")) + dispName(it); }).join(" + ");
+    } else if (mode === "today" && recs.length) {
+      h3 = "오늘 배정 완료 — " + recs.map(function(r){ return setName(r.set, r.name); }).join(" + ");
+    } else {
+      h3 = "배정 없음 — 여유일 (선택: 함수 퀴즈 · 오답 복습)";
+    }
+    var notes = [];
+    if (day && day.promoted) { notes.push("밀린 세트 보충 — 이 날은 2세트"); }
+    if (day && day.deadlineDay) { notes.push("마지막 세트 + 실수 노트 복습 + 일찍 자기"); }
+    if (items.some(function(it){ return it.mandatory; })) { notes.push("2026 1회 재도전 필수 (목표 65)"); }
+    if (day && day.reviewDay) { notes.push("1차 시험 복기 메모 + 1세트"); }
+    if (mode === "preview") { notes.push("예상 일정 — 1차 시험 후 기록을 반영해 자동 재계산"); }
+    if (mode === "future") { notes.push("예정 — 앞선 날의 완주 여부에 따라 자동 재배치"); }
+    if (mode === "next") { notes.push("2단계 배정은 1차 시험 다음 날 아침에 확정됩니다"); }
+    var html = '<header class="dc-head"><span class="dc-tag">' + fmtMD(date) + ' (' + wd + ')</span>' +
+      '<span class="dc-date">' + esc(ctx.phaseLabel || "") + '</span>' +
+      '<span class="chip chip-mock">' + esc(capTxt) + '</span><span class="state-chip ' + stCls + '">' + stTxt + '</span></header>' +
+      '<h3>' + esc(h3) + '</h3>' + (notes.length ? '<p class="dc-freq">' + esc(notes.join(" · ")) + '</p>' : '');
+    if (items.length) {
+      html += '<div class="dc-block"><p class="dc-label">배정 세트</p><ul class="plan-items">';
+      items.forEach(function(it, i){
+        html += '<li class="pi"><span class="pi-kind ' + it.kind + '">' + (KIND_LABEL[it.kind] || it.kind) + '</span>' +
+          '<span class="pi-name" title="' + esc(it.why || "") + '">' + esc(dispName(it)) + '</span>' +
+          (it.target !== null
+            ? '<span class="pi-target">목표 ' + it.target + '점' + (typeof it.best === "number" ? ' · 현재 최고 ' + it.best : '') + '</span>'
+            : '<span class="pi-target">기록용 — 아무 점수나 그대로</span>');
+        if (on && (mode === "today" || mode === "future")) {
+          html += '<div class="act-row">' + actBtn("start_exam", it.set, null, running ? "시험 진행 중" : "시험장에서 시작", "primary", running) +
+            (it.pdf ? actBtn("open_pdf", it.set, null, "문제지 열기") : "") + '</div>';
+        }
+        if (mode === "today") {
+          if (on && it.auto) {
+            html += '<div class="score-row" data-score-ui="' + date + '|SELECT|' + (it.target !== null ? it.target : "") + '|' + i + '"><select class="rec-set" aria-label="세트 선택">' + setOptions(false) + '</select>' +
+              '<input type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="0–100" aria-label="점수 수동 기록">' +
+              '<button type="button" class="score-btn">기록</button><span class="score-note">시험장 밖에서 푼 세트는 여기서 수동 기록</span></div>';
+          } else {
+            html += '<div class="score-row" data-score-ui="' + date + '|' + (it.set || "") + '|' + (it.target !== null ? it.target : "") + '|' + i + '" data-name="' + esc(dispName(it)) + '">' +
+              '<input type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="0–100" aria-label="' + esc(dispName(it)) + ' 점수 입력">' +
+              '<button type="button" class="score-btn">기록</button>' + (on ? '<span class="score-note">시험장 밖에서 푼 경우 수동 기록</span>' : '') + '</div>';
+          }
+        }
+        html += '</li>';
+      });
+      html += '</ul></div>';
+    }
+    if ((mode === "today" || mode === "past") && recs.length) {
+      html += '<div class="dc-block"><p class="dc-label">완주 기록</p><ul class="done-list">';
+      recs.forEach(function(r){
+        if (on) {
+          html += '<li>' + esc(setName(r.set, r.name)) + ' — <strong>' + (typeof r.total === "number" ? r.total + '점' : '채점 실패') + '</strong> · ' + esc(passText(r)) +
+            (r.mode === "수동" ? ' <span class="mode-chip">수동 기록</span>' : '') + (r.time ? ' <span class="dc-time">' + esc(r.time) + '</span>' : '') +
+            recordActions(r, running) + '</li>';
+          return;
+        }
+        var st = (typeof r.target === "number")
+          ? (r.total >= r.target ? " · 목표 " + r.target + " 달성" : " · 목표 " + r.target + " 미달 — 오답 정리 후 재응시")
+          : "";
+        html += '<li>' + esc(setName(r.set, r.name)) + ' — <strong>' + r.total + '점</strong>' + esc(st) + '</li>';
+      });
+      html += '</ul></div>';
+    }
+    if (mode === "today" || mode === "past") {
+      var multi = (day && day.capacity > 1) || recs.length > 1;
+      html += '<div class="dc-block"><p class="dc-label">오늘의 단계' + (multi ? ' (세트마다 ①~④)' : '') + '</p><ul class="task-list">';
+      if (on) {
+        if (day && day.reviewDay) { html += taskLi(dk + "t0", "1차 시험 복기 메모 — 막힌 유형·시간이 부족했던 구간 기록", false, dk, { key: date + "|t0" }); }
+        if (!recs.length) {
+          html += '<li class="stage-group">세트 완주 전 — ①~④는 시험장 기록으로 자동 판정됩니다</li>';
+          ["t1", "t2", "t3", "t4"].forEach(function(n){ html += taskLi(dk + n, LINKED_STEPS[n], false, dk, { auto: true, checked: false }); });
+        } else {
+          recs.forEach(function(r, ri){
+            var sg = stageOf(r);
+            var sfx = "-" + (r.id || ri);
+            if (recs.length > 1) { html += '<li class="stage-group">' + esc(r.name) + (typeof r.total === "number" ? ' · ' + r.total + '점' : '') + '</li>'; }
+            html += taskLi(dk + "t1" + sfx, LINKED_STEPS.t1, false, dk, { auto: true, checked: true });
+            html += taskLi(dk + "t2" + sfx, LINKED_STEPS.t2 + (sg.manual ? " — 수동 기록은 채점 없음" : ""), false, dk, { auto: true, checked: sg.graded });
+            html += taskLi(dk + "t3" + sfx, LINKED_STEPS.t3 + (sg.noWrong ? " — 오답 없음" : ""), false, dk,
+              sg.noWrong ? { auto: true, checked: true } : { review: r.id, checked: sg.review });
+            html += taskLi(dk + "t4" + sfx, LINKED_STEPS.t4 + (sg.noWrong ? " — 오답 없음" : (sg.manual ? " — 수동 기록은 생략 가능" : "")), false, dk, { auto: true, checked: sg.retry });
+          });
+        }
+        html += taskLi(dk + "t5", "⑤ 선택 — 함수 퀴즈 10문제", false, dk, { key: date + "|quiz" });
+        if (day && day.deadlineDay) {
+          html += taskLi(dk + "t6", "실수 노트 탭 전체 1회독", false, dk, { key: date + "|t6" }) + taskLi(dk + "t7", "일찍 자기 — 내일 시험", false, dk, { key: date + "|t7" });
+        }
+      } else {
+        if (day && day.reviewDay) { html += taskLi(dk + "t0", "1차 시험 복기 메모 — 막힌 유형·시간이 부족했던 구간 기록", false, dk); }
+        STEP_TASKS.forEach(function(t){ html += taskLi(dk + t.n, t.text, t.req, dk); });
+        if (day && day.deadlineDay) {
+          html += taskLi(dk + "t6", "실수 노트 탭 전체 1회독", false, dk) + taskLi(dk + "t7", "일찍 자기 — 내일 시험", false, dk);
+        }
+      }
+      html += '</ul></div>';
+    }
+    if (mode === "past") {
+      html += '<div class="score-row score-add" data-score-ui="' + date + '|SELECT"><select class="rec-set" aria-label="세트 선택">' + setOptions(!on) + '</select>' +
+        '<input type="number" min="0" max="100" step="1" inputmode="numeric" placeholder="0–100" aria-label="' + fmtMD(date) + ' 점수 추가">' +
+        '<button type="button" class="score-btn">기록 추가</button><span class="score-note">빠뜨린 완주 기록 보충</span></div>';
+    }
+    var hours = items.length ? items.length * 1.5 : (recs.length ? recs.length * 1.5 : 0);
+    var miss = mode === "today" ? todayMissing() : [];
+    html += '<footer class="dc-foot"><span class="dc-time">' + (hours ? "약 " + hours + "시간" : "—") + '</span>' +
+      (mode === "today" ? '<span class="score-target">' + esc(miss.length ? "클리어까지: " + miss.join(" · ") : "클리어") + '</span>' : '') + '</footer>';
+    art.innerHTML = html;
+    return art;
+  }
+  function dateRange(a, b) { var out = []; for (var d = a; d <= b; d = addDays(d, 1)) { out.push(d); } return out; }
+  function renderPlanCards() {
+    var g1 = document.getElementById("grid-stage1"), g2 = document.getElementById("grid-stage2");
+    if (g1) { g1.textContent = ""; }
+    if (g2) { g2.textContent = ""; }
+    var planByDate = {};
+    (plan.days || []).forEach(function(d){ planByDate[d.date] = d; });
+    var prevByDate = {};
+    if (plan2) { plan2.days.forEach(function(d){ prevByDate[d.date] = d; }); }
+    var recsAll = allRecords();
+    function ctxFor(date, label) {
+      var recs = recsAll.filter(function(r){ return r.date === date; });
+      if (date < iso) { return { mode: "past", records: recs, phaseLabel: label }; }
+      if (date === iso) { return { mode: "today", day: planByDate[date] || null, records: recs, phaseLabel: label }; }
+      if (planByDate[date]) { return { mode: "future", day: planByDate[date], records: recs, phaseLabel: label }; }
+      if (prevByDate[date]) { return { mode: "preview", day: prevByDate[date], records: recs, phaseLabel: label }; }
+      if (linked() && plan.phase === 1 && date >= PHASES[1].start) { return { mode: "next", day: null, records: recs, phaseLabel: label }; }
+      return { mode: "future", day: null, records: recs, phaseLabel: label };
+    }
+    dateRange(PHASES[0].start, PHASES[0].deadline).forEach(function(date){ if (g1) { g1.appendChild(buildDateCard(date, ctxFor(date, "1단계"))); } });
+    dateRange(PHASES[1].start, PHASES[1].deadline).forEach(function(date){ if (g2) { g2.appendChild(buildDateCard(date, ctxFor(date, "2단계"))); } });
+  }
+
+  /* ---------- 렌더 ---------- */
+  function renderInputs() {
+    Array.prototype.slice.call(
+      document.querySelectorAll('input[type="checkbox"][id], input[type="checkbox"][data-mirror]')
+    ).forEach(function(inp){
+      if (inp.hasAttribute("data-auto")) { return; }
+      var rid = inp.getAttribute("data-review");
+      if (rid !== null) {
+        var rv = reviewDone(rid);
+        if (inp.checked !== rv) { inp.checked = rv; }
+        return;
+      }
+      var key = keyOf(inp);
+      if (!key) { return; }
+      var val = getCheck(key);
+      if (inp.checked !== val) { inp.checked = val; }
+    });
+  }
+  function renderBanner() {
+    var b = document.getElementById("plan-banner");
+    if (b) {
+      var warn = plan.phase !== 0 && (plan.missed.length || plan.optional.length || plan.shrunk);
+      b.textContent = planSummary(plan) + (plan.warnings.length ? " — " + plan.warnings.join(" ") : "");
+      b.className = "plan-banner" + (warn ? " warn" : "");
+    }
+    var rem = document.getElementById("plan-remaining");
+    if (rem) {
+      rem.textContent = plan.phase === 0 ? "" : "남은 세트 " + plan.remainingSets + " · 완주 " + plan.progress.done + " / 필요 " + plan.progress.need + " · 마감 " + fmtMD(plan.deadline);
+    }
+  }
+  function renderTrend() {
+    var box = document.getElementById("score-trend");
+    if (!box) { return; }
+    box.textContent = "";
+    var recs = allRecords();
+    planSets.forEach(function(s){
+      var mine = recs.filter(function(r){ return r.set === s.key && typeof r.total === "number"; });
+      var b = mine.length ? Math.max.apply(null, mine.map(function(r){ return r.total; })) : null;
+      var chip = document.createElement("span");
+      chip.className = "trend-chip" + (b === null ? "" : (b >= 70 ? " ok" : " miss"));
+      chip.textContent = shortLabel(s) + " " + (b !== null ? b : "—");
+      chip.title = s.name + (mine.length ? " · " + mine.map(function(r){ return r.total; }).join(" → ") : " · 미응시");
+      box.appendChild(chip);
+    });
+  }
+  function renderProgress() {
+    var done = plan.progress.done, need = plan.progress.need;
+    var pct = need ? Math.round(done / need * 100) : 0;
+    var fill = document.getElementById("progress-fill");
+    var label = document.getElementById("progress-label");
+    var track = document.getElementById("progress-track");
+    if (fill) { fill.style.width = pct + "%"; }
+    if (label) { label.textContent = "완주 " + done + " / 필요 " + need + "세트 · " + pct + "%"; }
+    if (track) { track.setAttribute("aria-valuemax", String(need)); track.setAttribute("aria-valuenow", String(done)); }
+  }
+  function renderTodaySlot() {
+    var slot = document.getElementById("today-slot");
+    if (!slot) { return; }
+    slot.textContent = "";
+    var note = document.createElement("p");
+    note.className = "today-note";
+    if (iso < START_ISO) {
+      var prep = document.querySelector('.day-grid [data-day="d00"]');
+      if (prep) { slot.appendChild(makeClone(prep)); }
+      note.textContent = (iso === "2026-09-02" ? "내일 9/3 (목) 시작입니다." : "루틴은 9/3 (목)에 시작합니다.") + " 위 준비 카드를 체크해 두세요. 첫 카드는 1단계 탭에서 미리 볼 수 있어요.";
+      slot.appendChild(note);
+      return;
+    }
+    var card = document.querySelector('.day-grid [data-day="' + dayKey(iso) + '"]');
+    if (card) { slot.appendChild(makeClone(card)); }
+    if (iso === EXAM_ISO) { note.textContent = "오늘은 1차 시험일입니다. 1단계 탭 끝의 체크리스트를 확인하세요. 시험 후 2단계 일정이 자동 계산됩니다."; }
+    else if (iso === EXAM2_ISO) { note.textContent = "오늘은 2차 시험일입니다. 2단계 탭 끝의 체크리스트를 확인하세요."; }
+    else if (plan.phase === 0) { note.textContent = "루틴 기간이 지났습니다."; }
+    else if (!card) { note.textContent = "오늘은 배정이 없습니다."; }
+    else if (plan.missed.length) { note.textContent = "밀린 세트를 오늘 이후로 재배치했습니다. 카드의 세트를 순서대로 완주하면 됩니다."; }
+    else { note.textContent = "일정대로 진행 중 — 오늘 한 세트, 40분 완주부터."; }
+    slot.appendChild(note);
+  }
+  function renderFocus() {
+    var normal = document.getElementById("today-normal");
+    var area = document.getElementById("focus-area");
+    var banner = document.getElementById("focus-banner");
+    var slot = document.getElementById("focus-slot");
+    var status = document.getElementById("focus-status");
+    if (!area || !slot) { return; }
+    if (!state.focus) {
+      area.hidden = true;
+      if (normal) { normal.hidden = false; }
+      return;
+    }
+    area.hidden = false;
+    if (normal) { normal.hidden = true; }
+    var td = plan.days.filter(function(x){ return x.date === iso; })[0];
+    if (status) {
+      status.textContent = plan.phase === 0 ? "루틴 종료" :
+        fmtMD(iso) + " · 완주 " + plan.progress.done + " / 필요 " + plan.progress.need + (td && td.items.length ? " · 오늘 " + td.items.length + "세트" : "");
+    }
+    banner.textContent = "";
+    slot.textContent = "";
+    var b = document.createElement("div");
+    b.className = "plan-banner" + ((plan.missed.length || plan.optional.length) ? " warn" : "");
+    b.textContent = planSummary(plan);
+    banner.appendChild(b);
+    if (lastCleared) {
+      var c = document.createElement("div");
+      c.className = "congrats";
+      c.textContent = fmtMD(lastCleared) + " 클리어! 오늘 세트가 온전히 내 것이 됐어요.";
+      banner.appendChild(c);
+    }
+    var card = document.querySelector('.day-grid [data-day="' + dayKey(iso) + '"]');
+    if (card) { slot.appendChild(makeClone(card)); }
+    var hint = document.createElement("p");
+    hint.className = "focus-note";
+    var miss = todayMissing();
+    hint.textContent = card ? (miss.length ? "클리어까지: " + miss.join(" · ") : "클리어 조건 충족") : (iso < START_ISO ? "내일부터 시작 — 오늘은 준비만." : "오늘은 배정이 없습니다.");
+    slot.appendChild(hint);
+  }
+  function fmtWhen(isoStr) {
+    var d = new Date(isoStr);
+    if (isNaN(d.getTime())) { return isoStr; }
+    return (d.getMonth() + 1) + "/" + d.getDate() + " " + pad(d.getHours()) + ":" + pad(d.getMinutes());
+  }
+  var NAME_NOISE = /^(상공회의소|기출문제|기출|샘플|컴활2급실기|컴활|실기|상시복원기출문제|복원|개정판|모의고사|유형|문제|문제지)$/;
+  /* 연동 모드 추이 칩 라벨: 세트명에서 상투어를 빼고 연도·회차·형만 남긴다 (예: "2024년 상공회의소 샘플 A형" → "2024 A형") */
+  function shortLabel(s) {
+    if (!linked()) { return SET_SHORT[s.key] || s.name.slice(0, 6); }
+    var toks = String(s.name || "").split(/[\s_\-]+/).filter(function(t){ return t && !NAME_NOISE.test(t); })
+      .map(function(t){ return t.replace(/^(\d{2,4})년$/, "$1"); });
+    var n = toks.join(" ") || String(s.name || "");
+    return n.length > 10 ? n.slice(0, 9) + "…" : n;
+  }
+  function renderResults() {
+    var list = document.getElementById("results-list");
+    if (!list) { return; }
+    list.textContent = "";
+    if (linked()) { renderResultsApi(list); return; }
+    var rs = state.results.slice().sort(function(a, b){ return a.generated < b.generated ? 1 : -1; });
+    if (!rs.length) {
+      var empty = document.createElement("p");
+      empty.className = "today-note";
+      empty.textContent = "아직 가져온 채점결과가 없습니다. 첫 세트를 완주하고 채점한 뒤 [성적 붙여넣기]를 누르면 이곳에 표시되고 일정에 반영됩니다.";
+      list.appendChild(empty);
+      return;
+    }
+    rs.slice(0, 4).forEach(function(r){
+      var card = document.createElement("article");
+      card.className = "result-card";
+      var head = document.createElement("div");
+      head.className = "rc-head";
+      var title = document.createElement("span");
+      title.className = "rc-title";
+      title.textContent = setName(r.set, stripExt(r.problem));
+      var when = document.createElement("span");
+      when.className = "rc-when";
+      when.textContent = fmtWhen(r.generated) + (r.date ? " · " + fmtMD(r.date) + " 기록 반영" : " · 날짜 없음");
+      var badge = document.createElement("span");
+      badge.className = "rc-badge " + (r.passed ? "ok" : "miss");
+      badge.textContent = r.total + "점 / 합격선 " + r.pass_line;
+      head.appendChild(title); head.appendChild(when); head.appendChild(badge);
+      card.appendChild(head);
+      if (r.sheets && r.sheets.length) {
+        var bars = document.createElement("div");
+        bars.className = "rc-bars";
+        r.sheets.forEach(function(s){
+          var row = document.createElement("div");
+          row.className = "rc-bar-row";
+          var nm = document.createElement("span"); nm.className = "rc-bar-name"; nm.textContent = s.name;
+          var bar = document.createElement("div"); bar.className = "rc-bar";
+          var fill = document.createElement("div");
+          var pct = s.alloc > 0 ? Math.max(0, Math.min(100, Math.round(s.earned / s.alloc * 100))) : 0;
+          fill.className = "rc-fill" + (pct >= 100 ? "" : " part");
+          fill.style.width = pct + "%";
+          bar.appendChild(fill);
+          var val = document.createElement("span"); val.className = "rc-bar-val"; val.textContent = s.earned + "/" + s.alloc;
+          row.appendChild(nm); row.appendChild(bar); row.appendChild(val);
+          bars.appendChild(row);
+        });
+        card.appendChild(bars);
+      }
+      if (r.wrong && r.wrong.length) {
+        var sums = {};
+        r.wrong.forEach(function(w){ sums[w.category] = (sums[w.category] || 0) + w.lost; });
+        var top = Object.keys(sums).sort(function(a, b){ return sums[b] - sums[a]; }).slice(0, 2);
+        if (top.length) {
+          var weak = document.createElement("p");
+          weak.className = "rc-weak";
+          weak.textContent = "취약 유형 — " + top.map(function(c){ return c + " -" + sums[c] + "점"; }).join(" · ");
+          card.appendChild(weak);
+        }
+      }
+      list.appendChild(card);
+    });
+  }
+  function renderAll() {
+    if (linked() && typingNow()) { api.deferred = true; return; }
+    api.deferred = false;
+    computePlan(iso);
+    renderCalendar();
+    renderModeUI();
+    renderLinkBar();
+    renderPlanCards();
+    renderInputs();
+    renderBanner();
+    renderTrend();
+    renderProgress();
+    renderTodaySlot();
+    renderResults();
+    renderFocus();
+  }
+
+  /* ---------- 시험장 연동: /api/state → 화면 모델 어댑터 ---------- */
+  function arr(x) { return Array.isArray(x) ? x : []; }
+  function isoOr(v, d) { return (typeof v === "string" && /^\d{4}-\d{2}-\d{2}$/.test(v)) ? v : d; }
+  function normalizeState(st) {
+    if (!st || typeof st !== "object") { st = {}; }
+    if (!st.plan || typeof st.plan !== "object") { st.plan = {}; }
+    if (!st.review || typeof st.review !== "object") { st.review = {}; }
+    if (!st.checks || typeof st.checks !== "object") { st.checks = {}; }
+    st.exam_running = st.exam_running === true;
+    st.sets = arr(st.sets); st.records = arr(st.records);
+    return st;
+  }
+  function setsFromApi(st) {
+    return st.sets.filter(function(s){ return s && typeof s === "object"; }).map(function(s){
+      return { key: String(s.norm || ""), name: String(s.name || "?"), pdf: s.pdf === true, best: (typeof s.best === "number") ? s.best : null, attempts: (typeof s.attempts === "number") ? s.attempts : 0 };
+    });
+  }
+  function recordsFromApi(st) {
+    return st.records.filter(function(r){ return r && typeof r === "object"; }).map(function(r){
+      var set = (r.set && typeof r.set === "object") ? r.set : null;
+      var passLine = (typeof r.pass_line === "number") ? r.pass_line : 70;
+      var total = (typeof r.total === "number") ? r.total : null;
+      var sheets = arr(r.sheets).filter(function(s){ return s && typeof s.name === "string" && typeof s.alloc === "number" && typeof s.earned === "number"; })
+        .map(function(s){ return { name: s.name, alloc: s.alloc, earned: s.earned }; });
+      var wrong = arr(r.wrong_items).filter(function(w){ return w && typeof w.category === "string" && typeof w.lost === "number"; })
+        .map(function(w){ return { label: (typeof w.label === "string") ? w.label : "", category: w.category, lost: w.lost }; });
+      return { id: String(r.id || ""), date: String(r.date || "").slice(0, 10), time: String(r.time || ""),
+               set: set ? String(set.norm || "") : "", name: (set && set.name) ? String(set.name) : "세트 미지정",
+               mode: (typeof r.mode === "string" && r.mode) ? r.mode : "시험", total: total, target: null, src: "api",
+               pass_line: passLine, passed: (typeof r.passed === "boolean") ? r.passed : (total !== null && total >= passLine),
+               report_html: (typeof r.report_html === "string" && r.report_html) ? r.report_html : null,
+               report_json: (typeof r.report_json === "string" && r.report_json) ? r.report_json : null,
+               sheets: sheets, wrong: wrong };
+    });
+  }
+  function apiDayToJs(d, refToday, end, boost, byDate) {
+    var slots = arr(d.slots);
+    var base = baseCapacity(d.date, end);
+    var promoted = (d.promoted === true) || boost.indexOf(d.date) >= 0;
+    var items = slots.filter(function(s){ return s && typeof s === "object"; }).map(function(s){
+      var set = (s.set && typeof s.set === "object") ? s.set : null;
+      var kind = (s.kind === "first" || s.kind === "redo" || s.kind === "retry" || s.kind === "optional") ? s.kind : (set ? "first" : "retry");
+      return { kind: kind, set: set ? String(set.norm || "") : null, name: set ? String(set.name || "?") : AUTO_NAME,
+               target: (typeof s.goal === "number") ? s.goal : null, auto: !set, why: s.why ? String(s.why) : "",
+               countsAsRetry: s.counts_as_retry === true, mandatory: s.counts_as_retry === true || s.kind === "redo",
+               best: (typeof s.best === "number") ? s.best : null, pdf: !!(set && set.pdf === true), date: d.date };
+    });
+    var cap = (typeof d.capacity === "number") ? d.capacity : (base + (promoted ? 1 : 0));
+    return { date: d.date, wd: weekdayIdx(d.date), base: base, capacity: cap,
+             done: d.date === refToday ? (byDate[d.date] || []).length : 0, remaining: items.length,
+             deadlineDay: (d.deadline === true) || d.date === end, reviewDay: (d.review_day === true) || d.date === addDays(EXAM_DATES[0], 1),
+             promoted: promoted, items: items };
+  }
+  function daysFromApi(days, refToday, start, end, boost, byDate) {
+    return arr(days).filter(function(d){
+      return d && typeof d.date === "string" && d.kind !== "exam" && EXAM_DATES.indexOf(d.date) < 0 && d.date >= start && d.date <= end;
+    }).map(function(d){ return apiDayToJs(d, refToday, end, boost, byDate); });
+  }
+  /* 프로그램 plan → v5 렌더러가 쓰는 plan 객체 (엔진 미러 대신 값만 옮긴다) */
+  function planFromApi(st, todayIso) {
+    var p = st.plan;
+    var seg = segmentFor(todayIso);
+    var kind = (p.kind === "study" || p.kind === "exam" || p.kind === "after") ? p.kind : seg.kind;
+    var phase = kind === "study" ? ((p.seg === 1 || p.seg === 2) ? p.seg : (seg.seg || 0)) : 0;
+    var out = { today: todayIso, kind: kind, phase: phase, ended: kind === "after", examNo: kind === "exam" ? (EXAM_DATES.indexOf(todayIso) + 1) : 0,
+                start: null, deadline: null, exam: null, days: [], promoted: [], optional: [], optionalNames: [], missed: [], reason: "", warning: null, warnings: [],
+                retryTarget: 0, remainingSets: 0, todayRecords: [], doneInPhase: 0, progress: { done: 0, need: 0 }, shrunk: false };
+    if (kind !== "study") { return out; }
+    var segStart = isoOr(p.seg_start, seg.segStart), end = isoOr(p.end, seg.end), start = isoOr(p.start, seg.start);
+    out.start = start; out.deadline = end; out.exam = addDays(end, 1);
+    out.promoted = arr(p.boost_days).filter(function(x){ return typeof x === "string"; });
+    out.optionalNames = arr(p.demoted).map(function(x){ return String(x); });
+    out.optional = out.optionalNames.slice();
+    out.missed = arr(p.missed_days).filter(function(x){ return typeof x === "string"; });
+    out.reason = p.reason ? String(p.reason) : "";
+    out.warning = p.warning ? String(p.warning) : null;
+    out.warnings = out.warning ? [out.warning] : [];
+    if (typeof p.retry_target === "number") { out.retryTarget = p.retry_target; out.shrunk = phase === 1 && p.retry_target < RETRY_MIN_SEG1; }
+    var recs = allRecords();
+    var byDate = {};
+    recs.forEach(function(r){ (byDate[r.date] = byDate[r.date] || []).push(r); });
+    out.todayRecords = byDate[todayIso] || [];
+    out.days = daysFromApi(p.days, todayIso, start, end, out.promoted, byDate);
+    out.remainingSets = (typeof p.remaining === "number") ? p.remaining : out.days.reduce(function(n, d){ return n + d.items.length; }, 0);
+    var done = 0;
+    recs.forEach(function(r){ if (r.date >= segStart && r.date <= end && r.date <= todayIso && EXAM_DATES.indexOf(r.date) < 0) { done++; } });
+    out.doneInPhase = done;
+    out.progress = { done: done, need: done + out.remainingSets };
+    return out;
+  }
+  function previewFromApi(st, cur) {
+    var pv = st.plan.preview;
+    if (!cur || cur.phase !== 1 || !pv || typeof pv !== "object" || !Array.isArray(pv.days)) { return null; }
+    var byDate = {};
+    allRecords().forEach(function(r){ (byDate[r.date] = byDate[r.date] || []).push(r); });
+    return { days: daysFromApi(pv.days, PHASES[1].start, PHASES[1].start, PHASES[1].deadline, arr(pv.boost_days), byDate) };
+  }
+
+  /* ---------- 시험장 연동: 통신 ---------- */
+  function apiFetch(path, opts, timeoutMs, cb) {
+    var ctrl = null, timer = null, done = false;
+    function finish(ok, val) { if (done) { return; } done = true; if (timer) { clearTimeout(timer); } cb(ok, val); }
+    try { if (typeof AbortController === "function") { ctrl = new AbortController(); opts.signal = ctrl.signal; } } catch (e) { ctrl = null; }
+    timer = setTimeout(function(){ if (ctrl) { try { ctrl.abort(); } catch (e) { /* 무시 */ } } finish(false, null); }, timeoutMs);
+    try {
+      opts.cache = "no-store";
+      fetch(path, opts).then(function(res){
+        return res.text().then(function(t){
+          var j = null;
+          try { j = JSON.parse(t); } catch (e) { j = null; }
+          finish(true, { status: res.status, json: (j && typeof j === "object") ? j : null });
+        });
+      }).catch(function(){ finish(false, null); });
+    } catch (e) { finish(false, null); }
+  }
+  function isStateJson(j) { return !!(j && typeof j === "object" && typeof j.today === "string"); }
+  function apiGet(cb) { apiFetch("/api/state", { method: "GET" }, 4000, cb); }
+  /* cb(ok, json): ok = 응답 ok:true. 실패 시 json 은 {ok:false,error} 또는 null */
+  function apiPost(path, body, cb) {
+    apiFetch(path, { method: "POST", headers: { "Content-Type": "application/json", "X-Coco-Token": TOKEN }, body: JSON.stringify(body) }, 10000, function(ok, r){
+      var j = (ok && r) ? r.json : null;
+      if (ok && r && r.status >= 200 && r.status < 300 && j && j.ok === true) { cb(true, j); }
+      else { cb(false, j); }
+    });
+  }
+  function errText(j) { return (j && typeof j.error === "string" && j.error) ? j.error : "시험장 연결을 확인하세요"; }
+  var noticeTimer = null;
+  function notice(msg) {
+    var el = document.getElementById("link-notice");
+    if (!el) { return; }
+    el.textContent = msg;
+    if (noticeTimer) { clearTimeout(noticeTimer); }
+    noticeTimer = setTimeout(function(){ el.textContent = ""; }, 7000);
+  }
+  function typingNow() {
+    var a = document.activeElement;
+    return !!(a && a.tagName === "INPUT" && a.type === "number" && a.value !== "");
+  }
+  /* 새 상태 반영: generated 가 바뀌었을 때(또는 force)만 다시 그린다 */
+  function applyState(st, o) {
+    o = o || {};
+    if (!isStateJson(st)) { return; }
+    var before = linked() ? todayCleared() : false;
+    var changed = !api.st || st.generated !== api.generated || o.force === true;
+    api.st = normalizeState(st);
+    api.generated = st.generated;
+    api.sets = setsFromApi(api.st);
+    api.recs = recordsFromApi(api.st);
+    api.connected = true;
+    api.lastSync = Date.now();
+    if (!changed) { renderLinkBar(); return; }
+    setToday(st.today);
+    computePlan(iso);
+    if (!before && todayCleared()) { lastCleared = plan.today; }
+    if (o.render !== false) { renderAll(); }
+  }
+  function poll(force) {
+    if (api.busy) { return; }
+    api.busy = true;
+    apiGet(function(ok, r){
+      api.busy = false;
+      if (ok && r && r.status === 200 && isStateJson(r.json)) {
+        applyState(r.json, { force: force === true });
+        if (api.deferred && !typingNow()) { renderAll(); }
+      } else {
+        api.connected = false;
+        renderLinkBar();
+      }
+    });
+  }
+  function startPolling() {
+    if (api.timer) { return; }
+    api.timer = setInterval(function(){ poll(false); }, 5000);
+    document.addEventListener("visibilitychange", function(){ if (!document.hidden) { poll(false); } });
+  }
+  function fmtClock(ms) { var d = new Date(ms); return pad(d.getHours()) + ":" + pad(d.getMinutes()) + ":" + pad(d.getSeconds()); }
+  function renderLinkBar() {
+    var bar = document.getElementById("link-bar"), txt = document.getElementById("link-text");
+    if (!bar || !txt) { return; }
+    if (!api.on) {
+      bar.hidden = !(LINK_HOST && !api.probed);
+      bar.className = "link-bar";
+      txt.textContent = "시험장 연결 확인 중…";
+      return;
+    }
+    bar.hidden = false;
+    var cls = "link-bar", s;
+    if (!api.connected) {
+      cls += " off";
+      s = "시험장이 꺼져 있습니다 — 마지막 상태 (" + (api.lastSync ? fmtClock(api.lastSync) + " 동기화" : "동기화 기록 없음") + ") · 다시 연결 중…";
+    } else {
+      s = "시험장 연동 중 · " + ((Date.now() - api.lastSync) < 15000 ? "방금 동기화" : fmtClock(api.lastSync) + " 동기화");
+      if (api.st && api.st.exam_running) { cls += " exam"; s += " · 시험 진행 중 — 제출하면 자동 채점·반영"; }
+    }
+    bar.className = cls;
+    txt.textContent = s;
+  }
+  /* 연동 모드에서 숨기는 UI · 문구 교체 */
+  function renderModeUI() {
+    var on = linked();
+    Array.prototype.slice.call(document.querySelectorAll("[data-fallback-only]")).forEach(function(el){ el.hidden = on; });
+    if (!on) { return; }
+    var ts = document.getElementById("today-sub");
+    if (ts) { ts.textContent = "오늘 배정 카드 — 시험장 일정과 같은 값입니다. 세트를 완주·채점하면 ①~④가 자동으로 체크되고, 밀린 세트는 시험장이 오늘 이후로 재배치합니다."; }
+    var rs = document.getElementById("results-sub");
+    if (rs) { rs.textContent = "시험장에서 채점한 결과가 자동으로 반영됩니다. 시험장 밖에서 푼 세트는 카드의 점수 칸에 수동 기록하세요."; }
+  }
+  function postCheck(key, val, prev) {
+    apiPost("/api/check", { key: key, value: val }, function(ok, j){
+      if (ok) { applyState(j, { force: true }); return; }
+      if (prev === undefined) { delete api.st.checks[key]; } else { api.st.checks[key] = prev; }
+      renderAll();
+      notice("체크 저장 실패 — " + errText(j));
+    });
+  }
+  function postReview(rid, done, prev) {
+    apiPost("/api/review", { record_id: rid, done: done }, function(ok, j){
+      if (ok) { applyState(j, { force: true }); return; }
+      if (prev === undefined) { delete api.st.review[rid]; } else { api.st.review[rid] = prev; }
+      renderAll();
+      notice("오답노트 상태 저장 실패 — " + errText(j));
+    });
+  }
+  function postScore(date, setKey, total, box) {
+    var btn = box ? box.querySelector(".score-btn") : null;
+    if (btn) { btn.disabled = true; }
+    apiPost("/api/score", { date: date, set: setKey, total: total }, function(ok, j){
+      if (btn) { btn.disabled = false; }
+      if (ok) { applyState(j, { force: true }); notice(""); return; }
+      notice("점수 기록 실패 — " + errText(j));
+    });
+  }
+  function postAction(action, setKey, rid, btn) {
+    if (btn) { btn.disabled = true; }
+    apiPost("/api/action", { action: action, set: setKey || null, record_id: rid || null }, function(ok, j){
+      if (btn && document.body.contains(btn)) { btn.disabled = false; }
+      if (ok) { applyState(j, { force: true }); return; }
+      notice("시험장 동작 실패 — " + errText(j));
+    });
+  }
+  function renderResultsApi(list) {
+    var rs = api.recs.slice().sort(function(a, b){ var sa = recStamp(a), sb = recStamp(b); return sa < sb ? 1 : (sa > sb ? -1 : 0); });
+    if (!rs.length) {
+      var empty = document.createElement("p");
+      empty.className = "today-note";
+      empty.textContent = "아직 기록이 없습니다. 시험장에서 첫 세트를 완주하고 제출하면 이곳에 표시되고 일정에 반영됩니다.";
+      list.appendChild(empty);
+      return;
+    }
+    var running = api.st.exam_running === true;
+    var MODE_LABEL = { "시험": "시험", "오답재풀이": "오답 재풀이", "부분연습": "부분 연습", "수동": "수동 기록" };
+    rs.slice(0, 6).forEach(function(r){
+      var card = document.createElement("article");
+      card.className = "result-card";
+      var head = document.createElement("div");
+      head.className = "rc-head";
+      var title = document.createElement("span"); title.className = "rc-title"; title.textContent = r.name;
+      var mode = document.createElement("span"); mode.className = "mode-chip" + (r.mode === "오답재풀이" ? " retry" : ""); mode.textContent = MODE_LABEL[r.mode] || r.mode;
+      var when = document.createElement("span"); when.className = "rc-when"; when.textContent = (r.date ? fmtMD(r.date) : "날짜 없음") + (r.time ? " " + r.time : "");
+      var badge = document.createElement("span");
+      if (typeof r.total === "number") { badge.className = "rc-badge " + (r.passed ? "ok" : "miss"); badge.textContent = r.total + "점 / 합격선 " + r.pass_line + (r.passed ? " · 합격" : " · 미달"); }
+      else { badge.className = "rc-badge miss"; badge.textContent = "채점 실패"; }
+      head.appendChild(title); head.appendChild(mode); head.appendChild(when); head.appendChild(badge);
+      card.appendChild(head);
+      if (r.sheets.length) {
+        var bars = document.createElement("div");
+        bars.className = "rc-bars";
+        r.sheets.forEach(function(s){
+          var row = document.createElement("div"); row.className = "rc-bar-row";
+          var nm = document.createElement("span"); nm.className = "rc-bar-name"; nm.textContent = s.name;
+          var bar = document.createElement("div"); bar.className = "rc-bar";
+          var fill = document.createElement("div");
+          var pct = s.alloc > 0 ? Math.max(0, Math.min(100, Math.round(s.earned / s.alloc * 100))) : 0;
+          fill.className = "rc-fill" + (pct >= 100 ? "" : " part");
+          fill.style.width = pct + "%";
+          bar.appendChild(fill);
+          var val = document.createElement("span"); val.className = "rc-bar-val"; val.textContent = s.earned + "/" + s.alloc;
+          row.appendChild(nm); row.appendChild(bar); row.appendChild(val);
+          bars.appendChild(row);
+        });
+        card.appendChild(bars);
+      }
+      if (r.wrong.length) {
+        var sums = {};
+        r.wrong.forEach(function(w){ sums[w.category] = (sums[w.category] || 0) + w.lost; });
+        var top = Object.keys(sums).sort(function(a, b){ return sums[b] - sums[a]; }).slice(0, 2);
+        if (top.length) {
+          var weak = document.createElement("p");
+          weak.className = "rc-weak";
+          weak.textContent = "취약 유형 — " + top.map(function(c){ return c + " -" + sums[c] + "점"; }).join(" · ");
+          card.appendChild(weak);
+        }
+      } else if (r.report_json) {
+        var perfect = document.createElement("p");
+        perfect.className = "rc-weak";
+        perfect.style.color = "var(--accent-deep)";
+        perfect.textContent = "오답 없음";
+        card.appendChild(perfect);
+      }
+      var acts = reportLink(r) + (r.report_json && r.mode !== "오답재풀이"
+        ? actBtn("open_review", r.set, r.id, "오답노트 열기") + actBtn("start_retry", r.set, r.id, running ? "시험 진행 중" : "오답 재풀이", "", running)
+        : "");
+      if (acts) {
+        var row2 = document.createElement("div");
+        row2.className = "rc-actions";
+        row2.innerHTML = acts;
+        card.appendChild(row2);
+      }
+      list.appendChild(card);
+    });
+  }
+
+  /* ---------- 이벤트 (위임) ---------- */
+  document.addEventListener("change", function(ev){
+    var t = ev.target;
+    if (t && t.type === "checkbox") {
+      if (t.hasAttribute("data-auto")) { return; }
+      var rid = t.getAttribute("data-review");
+      if (rid !== null) {
+        if (!linked()) { return; }
+        var want = t.checked, prevRv = api.st.review[rid];
+        var beforeRv = todayCleared();
+        api.st.review[rid] = { done: want, when: new Date().toISOString().slice(0, 16) };
+        if (!beforeRv && todayCleared()) { lastCleared = plan.today; }
+        renderAll();
+        postReview(rid, want, prevRv);
+        return;
+      }
+      var key = keyOf(t);
+      if (!key) { return; }
+      if (linked()) {
+        var val = t.checked, prevV = api.st.checks[key];
+        api.st.checks[key] = val;
+        renderAll();
+        postCheck(key, val, prevV);
+        return;
+      }
+      trackClear(function(){ state.checks[key] = t.checked; });
+      save();
+      renderAll();
+    }
+  });
+  document.addEventListener("click", function(ev){
+    var btn = ev.target && ev.target.closest ? ev.target.closest("button") : null;
+    if (!btn) { return; }
+    if (btn.classList.contains("score-btn")) {
+      var box = btn.closest("[data-score-ui]");
+      if (!box) { return; }
+      var parts = box.getAttribute("data-score-ui").split("|");
+      var date = parts[0];
+      var input = box.querySelector('input[type="number"]');
+      var v = input ? parseInt(input.value, 10) : NaN;
+      if (isNaN(v) || v < 0 || v > 100) {
+        if (input) { input.value = ""; input.focus(); }
+        return;
+      }
+      var setKey = null, name = "세트 미지정", target = null;
+      if (parts[1] === "SELECT") {
+        var sel = box.querySelector("select.rec-set");
+        setKey = sel && sel.value ? sel.value : null;
+        name = sel && sel.selectedIndex >= 0 ? sel.options[sel.selectedIndex].textContent : name;
+      } else {
+        setKey = parts[1] || null;
+        target = parts[2] ? parseInt(parts[2], 10) : null;
+        name = box.getAttribute("data-name") || setName(setKey, name);
+      }
+      if (linked()) {
+        if (!setKey) { notice("세트를 선택하세요"); return; }
+        postScore(date, setKey, v, box);
+        return;
+      }
+      trackClear(function(){
+        state.manual.push({ date: date, set: setKey, name: name, total: v, target: target, src: "manual" });
+      });
+      save();
+      if (input) { input.value = ""; }
+      renderAll();
+    } else if (btn.hasAttribute("data-action")) {
+      if (!linked()) { return; }
+      postAction(btn.getAttribute("data-action"), btn.getAttribute("data-set") || null, btn.getAttribute("data-rid") || null, btn);
+    } else if (btn.id === "link-sync") {
+      if (api.on) { poll(true); }
+    } else if (btn.id === "link-show") {
+      if (linked()) { postAction("show", null, null, btn); }
+    } else if (btn.id === "recalc-btn") {
+      computePlan(iso);
+      renderAll();
+      var rem = document.getElementById("plan-remaining");
+      if (rem) { rem.textContent = "일정을 다시 계산했습니다 · " + rem.textContent; }
+    } else if (btn.id === "focus-exit") {
+      state.focus = false;
+      lastCleared = null;
+      save();
+      renderAll();
+    } else if (btn.id === "start-btn") {
+      state.focus = true;
+      save();
+      renderAll();
+      window.scrollTo(0, 0);
+    }
+  });
+
+  /* ---------- 함수 퀴즈: 채점·진단 (순수 함수) ---------- */
+  /* __QUIZ_PURE_START__ */
+  function normalizeFormula(s) {
+    var t = String(s || "").trim();
+    if (t.charAt(0) === "=") { t = t.slice(1); }
+    var out = "", inStr = false;
+    for (var i = 0; i < t.length; i++) {
+      var ch = t.charAt(i);
+      if (ch === '"') { inStr = !inStr; out += ch; continue; }
+      if (inStr) { out += ch; continue; }
+      if (ch === " " || ch === "\t") { continue; }
+      if (ch === "$") { continue; }
+      out += ch.toUpperCase();
+    }
+    return out;
+  }
+  function checkFormula(user, answers) {
+    var u = normalizeFormula(user);
+    if (!u) { return false; }
+    for (var i = 0; i < answers.length; i++) {
+      if (normalizeFormula(answers[i]) === u) { return true; }
+    }
+    return false;
+  }
+  function fnNamesOf(formula) {
+    var m = normalizeFormula(formula).match(/[A-Z][A-Z0-9.]*(?=\()/g) || [];
+    var seen = {}, out = [];
+    m.forEach(function(f){ if (!seen[f]) { seen[f] = true; out.push(f); } });
+    return out;
+  }
+  function diagnoseFormula(user, canonical) {
+    var u = normalizeFormula(user);
+    if (!u) { return "수식을 입력하세요. = 는 붙여도, 생략해도 됩니다."; }
+    var c = normalizeFormula(canonical);
+    var uf = fnNamesOf(user), cf = fnNamesOf(canonical);
+    var missing = cf.filter(function(f){ return uf.indexOf(f) < 0; });
+    var extra = uf.filter(function(f){ return cf.indexOf(f) < 0; });
+    if (missing.length) {
+      var msg = "지정 함수 " + missing.join(", ") + " 이(가) 빠졌어요.";
+      if (extra.length) { msg += " 대신 " + extra.join(", ") + " 을(를) 썼네요 — 실전에서는 문제가 제시한 함수만 인정됩니다."; }
+      return msg;
+    }
+    if (extra.length) {
+      return "필요 없는 함수 " + extra.join(", ") + " 이(가) 들어갔어요 — 문제가 제시한 함수만 사용하세요.";
+    }
+    if (/,(0|FALSE)\)/.test(c) && !/,(0|FALSE)\)/.test(u)) {
+      return "함수는 맞아요 — 정확 일치 인수(FALSE 또는 0)를 확인하세요.";
+    }
+    var cq = c.match(/"[^"]*"/g) || [];
+    for (var i = 0; i < cq.length; i++) {
+      if (u.indexOf(cq[i]) < 0) {
+        return "함수는 맞아요 — 문자열 " + cq[i] + " 부분(철자·따옴표)을 확인하세요.";
+      }
+    }
+    return "함수 구성은 맞아요 — 인수 순서·범위·쉼표 위치를 정답과 대조해 보세요.";
+  }
+  /* __QUIZ_PURE_END__ */
+
+  var QUIZ_BANK = [
+    { id:"q01", cat:"판정", q:'B2 점수가 점수 범위에서 3번째로 큰 값 이상이면 "우수", 아니면 빈칸을 D2에 표시하시오. (IF, LARGE)', ctx:"이름 A2:A10 · 점수 B2:B10", ans:['=IF(B2>=LARGE($B$2:$B$10,3),"우수","")'], hint:'"3번째로 큰 값"이 LARGE(범위,3). 빈칸은 "" 로.', exp:"상위 n위 판정 골격. 실전에서는 기준 범위를 절대참조($)로 고정해야 채우기 시 어긋나지 않는다." },
+    { id:"q02", cat:"판정", q:'국어 B2, 영어 C2 중 하나라도 90 이상이면 "합격", 아니면 "불합격". (IF, OR)', ctx:"국어 B2:B10 · 영어 C2:C10", ans:['=IF(OR(B2>=90,C2>=90),"합격","불합격")'], hint:'"하나라도"는 OR.', exp:"OR는 조건 중 하나만 참이어도 TRUE. \"모두\"라면 AND." },
+    { id:"q03", cat:"판정", q:'국어 B2와 영어 C2가 모두 80 이상이면 "통과", 아니면 빈칸. (IF, AND)', ctx:"국어 B2:B10 · 영어 C2:C10", ans:['=IF(AND(B2>=80,C2>=80),"통과","")'], hint:'"모두"는 AND.', exp:"AND는 모든 조건이 참일 때만 TRUE." },
+    { id:"q04", cat:"판정", q:'점수 B2가 90 이상 "A", 80 이상 "B", 그 외 "C". (IF 중첩 또는 IFS)', ctx:"점수 B2:B10", ans:['=IF(B2>=90,"A",IF(B2>=80,"B","C"))','=IFS(B2>=90,"A",B2>=80,"B",TRUE,"C")'], hint:"3단 분기는 IF 안에 IF를 중첩.", exp:"거짓 자리에 다음 IF를 넣는 중첩 구조. IFS는 마지막 조건을 TRUE로." },
+    { id:"q05", cat:"판정", q:'주민번호 C2의 8번째 글자(1~4)에 따라 "남","여","남","여"를 표시. (CHOOSE, MID)', ctx:"주민번호 C2:C10", ans:['=CHOOSE(MID(C2,8,1),"남","여","남","여")'], hint:"MID로 1글자를 뽑아 CHOOSE의 번호로.", exp:"CHOOSE의 인덱스는 1부터. MID 결과가 문자여도 CHOOSE가 숫자로 해석한다." },
+    { id:"q06", cat:"판정", q:'기록 B2가 기록 범위에서 2번째로 작은 값 이하면 "결선", 아니면 빈칸. (IF, SMALL)', ctx:"기록 B2:B10 — 작을수록 상위", ans:['=IF(B2<=SMALL($B$2:$B$10,2),"결선","")'], hint:"작을수록 상위인 종목은 SMALL이 기준.", exp:"기록 경기는 SMALL(범위,n) 이하 판정. LARGE와 방향을 헷갈리지 말 것." },
+    { id:"q07", cat:"판정", q:"기록 B2의 순위를 구하시오 — 작을수록 1등. (RANK.EQ)", ctx:"기록 B2:B10", ans:['=RANK.EQ(B2,$B$2:$B$10,1)'], hint:"셋째 인수가 정렬 방향.", exp:"RANK.EQ 셋째 인수 1 = 오름차순(작을수록 1등). 생략·0은 내림차순." },
+    { id:"q08", cat:"참조", q:"코드 A2를 참조표에서 찾아 2열의 값을 가져오시오 — 정확 일치. (VLOOKUP)", ctx:"참조표 F2:G5 (1열 코드, 2열 품명)", ans:['=VLOOKUP(A2,$F$2:$G$5,2,FALSE)','=VLOOKUP(A2,$F$2:$G$5,2,0)'], hint:"넷째 인수를 잊지 말 것.", exp:"정확 일치는 FALSE(=0). 생략하면 근사 일치가 되어 엉뚱한 값이 나온다." },
+    { id:"q09", cat:"참조", q:"코드 A2의 앞 2글자로 참조표에서 2열 값을 가져오시오 — 정확 일치. (VLOOKUP, LEFT)", ctx:"참조표 F2:G5", ans:['=VLOOKUP(LEFT(A2,2),$F$2:$G$5,2,FALSE)','=VLOOKUP(LEFT(A2,2),$F$2:$G$5,2,0)'], hint:"LEFT(A2,2)를 찾을 값 자리에.", exp:"추출 → 참조 연결 골격. 참조표 1열의 형식(문자/숫자)과 추출 결과 형식이 같아야 한다." },
+    { id:"q10", cat:"참조", q:'앞 문제의 수식이 오류일 때 "코드오류"를 표시하도록 감싸시오. (IFERROR, VLOOKUP, LEFT)', ctx:"참조표 F2:G5", ans:['=IFERROR(VLOOKUP(LEFT(A2,2),$F$2:$G$5,2,FALSE),"코드오류")','=IFERROR(VLOOKUP(LEFT(A2,2),$F$2:$G$5,2,0),"코드오류")'], hint:"IFERROR(수식, 대체값).", exp:"참조 실패(#N/A) 처리 단골 패턴. 대체 문구는 문제 지문 그대로." },
+    { id:"q11", cat:"참조", q:"등급 B2를 가로 참조표에서 찾아 2행의 값을 가져오시오 — 정확 일치. (HLOOKUP)", ctx:"참조표 F1:I2 (1행 등급, 2행 수당)", ans:['=HLOOKUP(B2,$F$1:$I$2,2,FALSE)','=HLOOKUP(B2,$F$1:$I$2,2,0)'], hint:"가로 표는 HLOOKUP + 행 번호.", exp:"표가 가로로 누워 있으면 HLOOKUP. 셋째 인수는 열이 아니라 행 번호." },
+    { id:"q12", cat:"참조", q:"점수가 가장 높은 사람의 이름을 구하시오. (INDEX, MATCH, MAX)", ctx:"이름 A2:A10 · 점수 C2:C10", ans:['=INDEX(A2:A10,MATCH(MAX(C2:C10),C2:C10,0))'], hint:"MAX로 값 → MATCH로 위치 → INDEX로 이름.", exp:"최댓값 보유자 찾기 3단 골격. MATCH 셋째 인수 0(정확 일치) 필수." },
+    { id:"q13", cat:"참조", q:'"서울"이 지역 범위에서 몇 번째에 있는지 위치 번호를 구하시오. (MATCH)', ctx:"지역 A2:A10", ans:['=MATCH("서울",A2:A10,0)'], hint:"MATCH(값, 범위, 0).", exp:"MATCH는 값이 아니라 위치 번호를 돌려준다." },
+    { id:"q14", cat:"참조", q:"표에서 3행 2열에 있는 값을 구하시오. (INDEX)", ctx:"표 A2:C10", ans:['=INDEX(A2:C10,3,2)'], hint:"INDEX(배열, 행, 열).", exp:"INDEX는 좌표로 값을 꺼낸다. MATCH와 짝을 이뤄 자주 출제." },
+    { id:"q15", cat:"시간날짜", q:'입실 B2, 퇴실 C2의 이용 시간을 구하되 30분 이상은 1시간으로 올리고 뒤에 "시간"을 붙이시오. (HOUR, IF, MINUTE)', ctx:"입실 B2:B10 · 퇴실 C2:C10", ans:['=HOUR(C2-B2)+IF(MINUTE(C2-B2)>=30,1,0)&"시간"'], hint:"HOUR(차이) + IF(MINUTE(차이)>=30,1,0).", exp:'30분 올림 단골 패턴. 마지막에 &"시간" 문자열 연결.' },
+    { id:"q16", cat:"시간날짜", q:"입사일 B2로 올해 기준 근속연수를 구하시오. (YEAR, TODAY)", ctx:"입사일 B2:B10", ans:['=YEAR(TODAY())-YEAR(B2)'], hint:"올해 연도 - 입사 연도.", exp:"TODAY()는 인수가 없다. YEAR를 두 번 써서 빼는 구조." },
+    { id:"q17", cat:"시간날짜", q:"년 A2, 월 B2, 일 C2를 합쳐 날짜를 만드시오. (DATE)", ctx:"년 A2 · 월 B2 · 일 C2", ans:['=DATE(A2,B2,C2)'], hint:"DATE(년, 월, 일).", exp:"흩어진 년·월·일을 날짜로 조립하는 함수." },
+    { id:"q18", cat:"시간날짜", q:"날짜 A2의 요일 번호를 구하시오 — 월요일이 1. (WEEKDAY)", ctx:"날짜 A2:A10", ans:['=WEEKDAY(A2,2)'], hint:"둘째 인수(옵션)가 기준.", exp:"옵션 1: 일=1 / 2: 월=1 / 3: 월=0. 지문의 기준 요일을 보고 고른다." },
+    { id:"q19", cat:"시간날짜", q:"날짜 A2에서 1개월 뒤 달의 말일을 구하시오. (EOMONTH)", ctx:"날짜 A2:A10", ans:['=EOMONTH(A2,1)'], hint:"EOMONTH(날짜, 개월).", exp:"EOMONTH는 말일, EDATE는 같은 날. 결과 셀 서식이 숫자면 날짜 서식으로." },
+    { id:"q20", cat:"시간날짜", q:'출근 B2, 퇴근 C2의 근무 시간(시 단위)에 "시간"을 붙여 표시하시오. (HOUR)', ctx:"출근 B2:B10 · 퇴근 C2:C10", ans:['=HOUR(C2-B2)&"시간"'], hint:"차이에서 HOUR만 뽑아 연결.", exp:"퇴근-출근 순서 주의. 분까지 요구하면 MINUTE를 추가 연결." },
+    { id:"q21", cat:"문자열", q:"문자열 A2의 왼쪽 3글자를 추출하시오. (LEFT)", ctx:"A2:A10", ans:['=LEFT(A2,3)'], hint:"LEFT(문자열, 개수).", exp:"왼쪽부터 n글자. 오른쪽은 RIGHT." },
+    { id:"q22", cat:"문자열", q:"문자열 A2의 4번째 글자부터 2글자를 추출하시오. (MID)", ctx:"A2:A10", ans:['=MID(A2,4,2)'], hint:"MID(문자열, 시작, 개수).", exp:"시작 위치와 개수 두 인수를 지문과 대조." },
+    { id:"q23", cat:"문자열", q:'영문 이름 A2를 단어 첫 글자만 대문자로 바꾸고 "님"을 붙이시오. (PROPER)', ctx:"이름 A2:A10", ans:['=PROPER(A2)&"님"'], hint:"PROPER + & 연결.", exp:"PROPER는 각 단어의 첫 글자만 대문자. 전부 대문자는 UPPER." },
+    { id:"q24", cat:"문자열", q:"문자열 A2를 전부 대문자로 바꾸시오. (UPPER)", ctx:"A2:A10", ans:['=UPPER(A2)'], hint:"UPPER 하나면 된다.", exp:"UPPER/LOWER/PROPER 3형제 구분이 포인트." },
+    { id:"q25", cat:"문자열", q:'문자열 A2에서 "부산"이 시작되는 위치를 구하시오 — 대소문자 구분 없음. (SEARCH)', ctx:"A2:A10", ans:['=SEARCH("부산",A2)'], hint:"찾을 값이 먼저, 대상이 나중.", exp:"SEARCH는 대소문자 무시, FIND는 구분. 인수 순서(찾을값, 문자열)에 주의." },
+    { id:"q26", cat:"문자열", q:"코드 A2의 3번째부터 2글자를 뽑아 숫자로 만드시오. (MID)", ctx:"코드 A2:A10", ans:['=MID(A2,3,2)*1','=VALUE(MID(A2,3,2))'], hint:"문자열 추출 결과에 *1.", exp:"문자열 함수의 결과는 문자 — 계산에 쓰려면 *1 (또는 VALUE)로 숫자 변환." },
+    { id:"q27", cat:"DB", q:"조건 범위를 만족하는 행의 판매량 합계를 구하시오. (DSUM)", ctx:"표 A1:E11 (4열 판매량) · 조건 G1:G2", ans:['=DSUM(A1:E11,4,G1:G2)','=DSUM(A1:E11,"판매량",G1:G2)'], hint:"D함수(전체 표, 필드, 조건 범위).", exp:"전체 표와 조건 범위 모두 필드명(머리글)을 포함해야 한다." },
+    { id:"q28", cat:"DB", q:"조건을 만족하는 행의 판매량 평균을 구하시오. (DAVERAGE)", ctx:"표 A1:E11 (4열 판매량) · 조건 G1:G2", ans:['=DAVERAGE(A1:E11,4,G1:G2)','=DAVERAGE(A1:E11,"판매량",G1:G2)'], hint:"DSUM과 인수 구조가 같다.", exp:"모든 D함수는 (데이터베이스, 필드, 조건범위) 공통 구문." },
+    { id:"q29", cat:"DB", q:"조건을 만족하는 판매량의 최대값과 최소값의 차이를 구하시오. (DMAX, DMIN)", ctx:"표 A1:E11 (4열 판매량) · 조건 G1:G2", ans:['=DMAX(A1:E11,4,G1:G2)-DMIN(A1:E11,4,G1:G2)'], hint:"DMAX(...) - DMIN(...).", exp:"두 D함수를 빼는 단골 조합. 인수 3개를 똑같이 두 번." },
+    { id:"q30", cat:"DB", q:"조건을 만족하는 인원수를 이름 열 기준으로 세시오. (DCOUNTA)", ctx:"표 A1:E11 (2열 이름) · 조건 G1:G2", ans:['=DCOUNTA(A1:E11,2,G1:G2)','=DCOUNTA(A1:E11,"이름",G1:G2)'], hint:"문자 열을 세려면 DCOUNTA.", exp:"DCOUNT는 숫자 셀만, DCOUNTA는 비어 있지 않은 셀을 센다." },
+    { id:"q31", cat:"DB", q:"조건을 만족하는 판매량 평균을 소수 첫째 자리까지 반올림하시오. (ROUND, DAVERAGE)", ctx:"표 A1:E11 (4열 판매량) · 조건 G1:G2", ans:['=ROUND(DAVERAGE(A1:E11,4,G1:G2),1)'], hint:"ROUND(안에 D함수, 1).", exp:"자릿수 1 = 소수 첫째 자리까지. 정수 자리는 음수." },
+    { id:"q32", cat:"DB", q:"조건을 만족하는 행 중 판매량이 숫자인 셀의 개수를 구하시오. (DCOUNT)", ctx:"표 A1:E11 (4열 판매량) · 조건 G1:G2", ans:['=DCOUNT(A1:E11,4,G1:G2)','=DCOUNT(A1:E11,"판매량",G1:G2)'], hint:"숫자 개수는 DCOUNT.", exp:"DCOUNT ↔ DCOUNTA 구분이 이 유형의 함정." },
+    { id:"q33", cat:"DB", q:"조건을 만족하는 판매량 합계를 일의 자리에서 버려 십 단위까지 표시하시오. (ROUNDDOWN, DSUM)", ctx:"표 A1:E11 (4열 판매량) · 조건 G1:G2", ans:['=ROUNDDOWN(DSUM(A1:E11,4,G1:G2),-1)'], hint:"자릿수 인수가 음수.", exp:"ROUND 계열 자릿수: 양수=소수 자리, 음수=정수 자리(-1=십 단위)." },
+    { id:"q34", cat:"통계조건", q:'지역 범위에서 "서울"의 개수를 구하시오. (COUNTIF)', ctx:"지역 B2:B10", ans:['=COUNTIF(B2:B10,"서울")'], hint:"COUNTIF(범위, 조건).", exp:"조건이 하나면 COUNTIF, 둘 이상이면 COUNTIFS." },
+    { id:"q35", cat:"통계조건", q:'지역이 "서울"이고 점수가 90 이상인 인원수에 "명"을 붙여 표시하시오. (COUNTIFS)', ctx:"지역 B2:B10 · 점수 C2:C10", ans:['=COUNTIFS(B2:B10,"서울",C2:C10,">=90")&"명"'], hint:'조건은 "범위, 조건" 쌍 · 비교 조건은 따옴표.', exp:'">=90"처럼 비교 조건은 따옴표로 묶는다. 마지막 &"명" 잊지 말 것.' },
+    { id:"q36", cat:"통계조건", q:'지역이 "서울"인 행의 판매량 합계를 구하시오. (SUMIF)', ctx:"지역 B2:B10 · 판매량 C2:C10", ans:['=SUMIF(B2:B10,"서울",C2:C10)'], hint:"SUMIF(조건범위, 조건, 합계범위).", exp:"SUMIF는 합계 범위가 마지막 인수 — SUMIFS와 순서가 다르다." },
+    { id:"q37", cat:"통계조건", q:'지역이 "서울"이고 수량이 10 이상인 행의 판매량 합계를 구하시오. (SUMIFS)', ctx:"판매량 C2:C10 · 지역 B2:B10 · 수량 D2:D10", ans:['=SUMIFS(C2:C10,B2:B10,"서울",D2:D10,">=10")'], hint:"SUMIFS는 더할 범위가 첫 인수.", exp:"SUMIF와 인수 순서가 반대라는 점이 최대 함정." },
+    { id:"q38", cat:"통계조건", q:'지역이 "서울"인 행의 점수 평균을 구하시오. (AVERAGEIF)', ctx:"지역 B2:B10 · 점수 C2:C10", ans:['=AVERAGEIF(B2:B10,"서울",C2:C10)'], hint:"SUMIF와 같은 인수 순서.", exp:"AVERAGEIF는 (조건범위, 조건, 평균범위) — AVERAGEIFS는 평균 범위가 먼저." },
+    { id:"q39", cat:"통계조건", q:"점수 범위에서 빈 셀의 개수를 구하시오. (COUNTBLANK)", ctx:"점수 C2:C10", ans:['=COUNTBLANK(C2:C10)'], hint:"인수는 범위 하나.", exp:"COUNT(숫자)·COUNTA(비어 있지 않음)·COUNTBLANK(빈 셀) 3형제 구분." },
+    { id:"q40", cat:"통계조건", q:"점수 범위의 중앙값을 구하시오. (MEDIAN)", ctx:"점수 C2:C10", ans:['=MEDIAN(C2:C10)'], hint:"평균이 아니라 가운데 값.", exp:"MEDIAN은 정렬했을 때 한가운데 값. 최빈값은 MODE.SNGL." }
+  ];
+
+  var CAT_LABEL = { "판정":"판정", "참조":"참조", "시간날짜":"시간·날짜", "문자열":"문자열", "DB":"DB 함수", "통계조건":"통계·조건" };
+  var quizList = QUIZ_BANK.slice();
+  var quizIdx = 0;
+
+  function quizFiltered(mode) {
+    if (mode === "wrong") { return QUIZ_BANK.filter(function(q){ return state.quiz[q.id] === "wrong"; }); }
+    if (mode && mode !== "all") { return QUIZ_BANK.filter(function(q){ return q.cat === mode; }); }
+    return QUIZ_BANK.slice();
+  }
+  function renderQuizStats() {
+    var ok = 0, wrong = 0;
+    QUIZ_BANK.forEach(function(q){
+      if (state.quiz[q.id] === "ok") { ok++; }
+      else if (state.quiz[q.id] === "wrong") { wrong++; }
+    });
+    var el = document.getElementById("quiz-stats");
+    if (el) { el.textContent = "정답 " + ok + " · 오답 " + wrong + " · 미응시 " + (QUIZ_BANK.length - ok - wrong) + " / " + QUIZ_BANK.length + "문제"; }
+  }
+  function quizEls() {
+    return {
+      cat: document.getElementById("quiz-cat"),
+      no: document.getElementById("quiz-no"),
+      st: document.getElementById("quiz-state"),
+      q: document.getElementById("quiz-q"),
+      ctx: document.getElementById("quiz-ctx"),
+      input: document.getElementById("quiz-input"),
+      grade: document.getElementById("quiz-grade"),
+      fb: document.getElementById("quiz-feedback"),
+      hint: document.getElementById("quiz-hint"),
+      ansBox: document.getElementById("quiz-answer"),
+      ansCode: document.getElementById("quiz-answer-code"),
+      explain: document.getElementById("quiz-explain")
+    };
+  }
+  function renderQuizState(q) {
+    var el = quizEls().st;
+    if (!el) { return; }
+    var s = q ? state.quiz[q.id] : null;
+    if (s === "ok") { el.textContent = "정답 처리됨"; el.className = "quiz-state ok"; }
+    else if (s === "wrong") { el.textContent = "오답 — 다시 풀기"; el.className = "quiz-state wrong"; }
+    else { el.textContent = "미응시"; el.className = "quiz-state"; }
+  }
+  function renderQuiz() {
+    var e = quizEls();
+    if (!e.q) { return; }
+    var q = quizList[quizIdx];
+    if (!q) {
+      e.cat.textContent = "-";
+      e.no.textContent = "";
+      e.q.textContent = "이 필터에 해당하는 문제가 없습니다. 유형을 바꾸거나 전체로 돌아가세요.";
+      e.ctx.textContent = "";
+      e.input.value = "";
+      e.input.disabled = true;
+      e.grade.disabled = true;
+      e.fb.textContent = "";
+      e.fb.className = "quiz-feedback";
+      e.hint.hidden = true;
+      e.ansBox.hidden = true;
+      renderQuizState(null);
+      return;
+    }
+    e.input.disabled = false;
+    e.grade.disabled = false;
+    e.cat.textContent = CAT_LABEL[q.cat] || q.cat;
+    e.no.textContent = (quizIdx + 1) + " / " + quizList.length;
+    e.q.textContent = q.q;
+    e.ctx.textContent = q.ctx ? "[범위] " + q.ctx : "";
+    e.input.value = "";
+    e.fb.textContent = "";
+    e.fb.className = "quiz-feedback";
+    e.hint.hidden = true;
+    e.hint.textContent = q.hint;
+    e.ansBox.hidden = true;
+    e.ansCode.textContent = q.ans[0];
+    e.explain.textContent = q.exp;
+    renderQuizState(q);
+  }
+  function gradeQuiz() {
+    var e = quizEls();
+    var q = quizList[quizIdx];
+    if (!q || !e.fb) { return; }
+    var raw = e.input.value;
+    if (checkFormula(raw, q.ans)) {
+      state.quiz[q.id] = "ok";
+      var okMsg = "정답!";
+      if (q.ans[0].indexOf("$") >= 0 && raw.indexOf("$") < 0) {
+        okMsg += " (실전에서는 기준 범위를 절대참조 $로 고정하는 걸 권장)";
+      }
+      e.fb.textContent = okMsg;
+      e.fb.className = "quiz-feedback ok";
+    } else {
+      state.quiz[q.id] = "wrong";
+      e.fb.textContent = diagnoseFormula(raw, q.ans[0]);
+      e.fb.className = "quiz-feedback wrong";
+    }
+    save();
+    renderQuizStats();
+    renderQuizState(q);
+  }
+  (function initQuiz(){
+    var e = quizEls();
+    if (!e.q) { return; }
+    var filterSel = document.getElementById("quiz-filter");
+    if (filterSel) {
+      filterSel.addEventListener("change", function(){
+        quizList = quizFiltered(filterSel.value);
+        quizIdx = 0;
+        renderQuiz();
+      });
+    }
+    var randomBtn = document.getElementById("quiz-random");
+    if (randomBtn) {
+      randomBtn.addEventListener("click", function(){
+        if (quizList.length) {
+          quizIdx = Math.floor(Math.random() * quizList.length);
+          renderQuiz();
+        }
+      });
+    }
+    var nextBtn = document.getElementById("quiz-next");
+    if (nextBtn) {
+      nextBtn.addEventListener("click", function(){
+        if (quizList.length) {
+          quizIdx = (quizIdx + 1) % quizList.length;
+          renderQuiz();
+        }
+      });
+    }
+    if (e.grade) { e.grade.addEventListener("click", gradeQuiz); }
+    if (e.input) {
+      e.input.addEventListener("keydown", function(ev){
+        if (ev.key === "Enter") { ev.preventDefault(); gradeQuiz(); }
+      });
+    }
+    var hintBtn = document.getElementById("quiz-hint-btn");
+    if (hintBtn) {
+      hintBtn.addEventListener("click", function(){
+        var h = quizEls().hint;
+        if (h) { h.hidden = !h.hidden; }
+      });
+    }
+    var revealBtn = document.getElementById("quiz-reveal");
+    if (revealBtn) {
+      revealBtn.addEventListener("click", function(){
+        var box = quizEls().ansBox;
+        if (box) { box.hidden = false; }
+      });
+    }
+    renderQuiz();
+    renderQuizStats();
+  })();
+
+  /* ---------- 채점결과 JSON 가져오기 (전부 클라이언트 사이드 — 네트워크 요청 없음) ---------- */
+  function setImportStatus(msg, isErr) {
+    Array.prototype.slice.call(document.querySelectorAll(".import-status")).forEach(function(el){
+      el.textContent = msg;
+      el.classList.toggle("err", !!isErr);
+    });
+  }
+
+  /* 세 경로(클립보드·폴더·파일)가 공유하는 가져오기 파이프라인 */
+  function importTexts(items, label) {
+    var scored = 0, kept = 0, dups = 0, errors = [];
+    items.forEach(function(it){
+      var p = parseResultText(it.text);
+      if (!p.ok) { errors.push(it.name + " — " + p.error); return; }
+      p.list.forEach(function(j){
+        var v = validateResult(j);
+        if (!v.ok) { errors.push(it.name + " — 누락 필드: " + v.missing.join(", ")); return; }
+        var outcome = ingestResult(v.rec);
+        if (outcome === "dup") { dups++; }
+        else if (outcome === "scored") { scored++; }
+        else { kept++; }
+      });
+    });
+    save();
+    renderAll();
+    var parts = [];
+    if (scored) { parts.push(scored + "건 기록 추가 — 일정 자동 재계산"); }
+    if (kept) { parts.push(kept + "건 보관만(날짜 없음)"); }
+    if (dups) { parts.push(dups + "건 중복 무시"); }
+    var msg = (label ? label + " " : "") + (parts.length ? "가져오기 완료 — " + parts.join(" · ") : "새로 가져온 항목이 없습니다");
+    if (errors.length) { msg += " · 오류 " + errors.length + "건: " + errors.join(" / "); }
+    setImportStatus(msg, errors.length > 0);
+    return { scored: scored, kept: kept, dups: dups, errors: errors };
+  }
+
+  function handleImportFiles(fileList) {
+    var files = Array.prototype.slice.call(fileList || []);
+    if (!files.length) { return; }
+    var pending = files.length;
+    var items = [];
+    files.forEach(function(f){
+      var reader = new FileReader();
+      reader.onload = function(){
+        items.push({ name: f.name, text: String(reader.result) });
+        pending--;
+        if (pending === 0) { importTexts(items, "파일"); }
+      };
+      reader.onerror = function(){
+        items.push({ name: f.name, text: "" });
+        pending--;
+        if (pending === 0) { importTexts(items, "파일"); }
+      };
+      reader.readAsText(f);
+    });
+  }
+
+  /* --- 경로 1 · 클립보드 (주 경로) --- */
+  function importClipboardText(text) {
+    importTexts([{ name: "클립보드", text: text }], "클립보드");
+  }
+  function readClipboardAndImport() {
+    /* readText가 되는 환경은 원클릭, 차단·부재·빈 클립보드는 붙여넣기 모달로 폴백 */
+    var supported = false;
+    try { supported = !!(navigator.clipboard && navigator.clipboard.readText); } catch (e) { supported = false; }
+    if (!supported) { openPasteModal(); return; }
+    try {
+      navigator.clipboard.readText().then(function(text){
+        if (!String(text || "").trim()) { openPasteModal(); return; }
+        importClipboardText(text);
+      }).catch(function(){ openPasteModal(); });
+    } catch (e) { openPasteModal(); }
+  }
+
+  /* --- 붙여넣기 모달 (권한 정책이 clipboard.readText를 막는 뷰어 환경 폴백) --- */
+  var pasteModalOpener = null;
+  function pasteModalEls() {
+    return {
+      back: document.getElementById("paste-modal"),
+      ta: document.getElementById("paste-modal-text"),
+      imp: document.getElementById("paste-modal-import"),
+      close: document.getElementById("paste-modal-close"),
+      err: document.getElementById("paste-modal-error")
+    };
+  }
+  function openPasteModal() {
+    var e = pasteModalEls();
+    if (!e.back) { return; }
+    pasteModalOpener = document.activeElement;
+    e.back.hidden = false;
+    if (e.err) { e.err.textContent = ""; }
+    if (e.ta) { e.ta.value = ""; e.ta.focus(); }
+  }
+  function closePasteModal() {
+    var e = pasteModalEls();
+    if (!e.back || e.back.hidden) { return; }
+    e.back.hidden = true;
+    if (pasteModalOpener && typeof pasteModalOpener.focus === "function") {
+      try { pasteModalOpener.focus(); } catch (e2) { /* 무시 */ }
+    }
+    pasteModalOpener = null;
+  }
+  function handleModalText(text) {
+    var d = modalPasteDecision(text);
+    if (d.action === "error") {
+      var e = pasteModalEls();
+      if (e.err) { e.err.textContent = d.message; }
+      return;
+    }
+    closePasteModal();
+    importClipboardText(text);
+  }
+  (function initPasteModal(){
+    var e = pasteModalEls();
+    if (!e.back) { return; }
+    e.back.addEventListener("click", function(ev){
+      if (ev.target === e.back) { closePasteModal(); }
+    });
+    e.back.addEventListener("keydown", function(ev){
+      if (ev.key === "Escape") { ev.preventDefault(); closePasteModal(); return; }
+      if (ev.key === "Tab") {
+        var focusables = [e.ta, e.imp, e.close].filter(Boolean);
+        if (!focusables.length) { return; }
+        var idx = focusables.indexOf(document.activeElement);
+        var next;
+        if (ev.shiftKey) { next = (idx <= 0) ? focusables[focusables.length - 1] : focusables[idx - 1]; }
+        else { next = (idx === -1 || idx === focusables.length - 1) ? focusables[0] : focusables[idx + 1]; }
+        ev.preventDefault();
+        next.focus();
+      }
+    });
+    if (e.ta) {
+      e.ta.addEventListener("paste", function(ev){
+        var text = ev.clipboardData ? ev.clipboardData.getData("text") : "";
+        if (text) {
+          ev.preventDefault();
+          e.ta.value = text;
+          handleModalText(text); /* 붙여넣는 즉시 자동 가져오기 */
+        }
+        /* clipboardData가 없으면 기본 붙여넣기를 허용하고 [가져오기] 버튼으로 처리 */
+      });
+    }
+    if (e.imp) { e.imp.addEventListener("click", function(){ handleModalText(e.ta ? e.ta.value : ""); }); }
+    if (e.close) { e.close.addEventListener("click", closePasteModal); }
+  })();
+
+  /* --- 경로 2 · 폴더 연결 (File System Access 지원 브라우저만, 실패 시 조용히 숨김) --- */
+  var FS_OK = false;
+  try { FS_OK = (typeof window.showDirectoryPicker === "function"); } catch (e) { FS_OK = false; }
+
+  var IDB_NAME = "cca-routine-fs", IDB_STORE = "handles";
+  function idbOpen(cb) {
+    try {
+      var req = indexedDB.open(IDB_NAME, 1);
+      req.onupgradeneeded = function(){
+        try { req.result.createObjectStore(IDB_STORE); } catch (e) { /* 이미 존재 */ }
+      };
+      req.onsuccess = function(){ cb(req.result); };
+      req.onerror = function(){ cb(null); };
+    } catch (e) { cb(null); }
+  }
+  function idbSet(key, val) {
+    idbOpen(function(db){
+      if (!db) { return; }
+      try {
+        db.transaction(IDB_STORE, "readwrite").objectStore(IDB_STORE).put(val, key);
+      } catch (e) { /* 저장 불가 무시 */ }
+    });
+  }
+  function idbGet(key, cb) {
+    idbOpen(function(db){
+      if (!db) { cb(null); return; }
+      try {
+        var rq = db.transaction(IDB_STORE, "readonly").objectStore(IDB_STORE).get(key);
+        rq.onsuccess = function(){ cb(rq.result || null); };
+        rq.onerror = function(){ cb(null); };
+      } catch (e) { cb(null); }
+    });
+  }
+
+  function setFolderState(msg) {
+    Array.prototype.slice.call(document.querySelectorAll(".folder-state")).forEach(function(el){
+      el.textContent = msg;
+    });
+  }
+  function updateFolderUI() {
+    Array.prototype.slice.call(document.querySelectorAll("[data-folder-row]")).forEach(function(row){
+      row.hidden = !FS_OK;
+      var connectBtn = row.querySelector(".folder-connect");
+      var scanBtn = row.querySelector(".folder-scan");
+      if (connectBtn) { connectBtn.textContent = state.folderLinked ? "폴더 다시 연결" : "채점결과 폴더 연결"; }
+      if (scanBtn) { scanBtn.hidden = !state.folderLinked; }
+    });
+  }
+  function hideFolderRows() {
+    FS_OK = false;
+    Array.prototype.slice.call(document.querySelectorAll("[data-folder-row]")).forEach(function(row){
+      row.hidden = true;
+    });
+  }
+
+  function scanFolderHandle(handle, interactive) {
+    function runScan(h) {
+      var items = [];
+      var it;
+      try { it = h.values(); } catch (e) { setFolderState("폴더에 접근할 수 없어요 — 다시 연결해 주세요."); return; }
+      function step() {
+        it.next().then(function(r){
+          if (r.done) { finishScan(items); return; }
+          var entry = r.value;
+          if (entry && entry.kind === "file" && /\.json$/i.test(entry.name)) {
+            entry.getFile().then(function(f){ return f.text(); }).then(function(text){
+              items.push({ name: entry.name, text: text });
+              step();
+            }).catch(step);
+          } else { step(); }
+        }).catch(function(){ finishScan(items); });
+      }
+      step();
+    }
+    function finishScan(items) {
+      if (!items.length) { setFolderState("폴더에 JSON 파일이 없습니다."); return; }
+      var res = importTexts(items, "폴더 자동");
+      var fresh = res.scored + res.kept;
+      setFolderState(fresh > 0 ? "새 성적 " + fresh + "건 자동 반영" : "새 성적 없음 (" + res.dups + "건은 이미 반영됨)");
+    }
+    try {
+      handle.queryPermission({ mode: "read" }).then(function(p){
+        if (p === "granted") { runScan(handle); return; }
+        if (!interactive) { setFolderState("[새 성적 확인]을 누르면 폴더를 다시 읽어 옵니다."); return; }
+        handle.requestPermission({ mode: "read" }).then(function(p2){
+          if (p2 === "granted") { runScan(handle); }
+          else { setFolderState("폴더 권한이 거부되어 자동 확인을 건너뛰었어요."); }
+        }).catch(function(){ setFolderState("폴더 권한을 확인할 수 없어요 — 다시 연결해 주세요."); });
+      }).catch(function(){ setFolderState("폴더에 접근할 수 없어요 — 다시 연결해 주세요."); });
+    } catch (e) { setFolderState("폴더에 접근할 수 없어요 — 다시 연결해 주세요."); }
+  }
+
+  function connectFolder() {
+    if (!FS_OK) { return; }
+    try {
+      window.showDirectoryPicker({ mode: "read" }).then(function(handle){
+        idbSet("resultsDir", handle);
+        state.folderLinked = true;
+        save();
+        updateFolderUI();
+        scanFolderHandle(handle, true);
+      }).catch(function(err){
+        if (err && err.name === "AbortError") { return; } /* 사용자가 취소 — 그대로 둔다 */
+        hideFolderRows(); /* 샌드박스 차단 등 — 조용히 숨기고 클립보드 경로만 남김 */
+      });
+    } catch (e) { hideFolderRows(); }
+  }
+  function scanFromSaved(interactive) {
+    idbGet("resultsDir", function(handle){
+      if (handle && typeof handle.queryPermission === "function") {
+        scanFolderHandle(handle, interactive === true);
+      } else if (interactive === true) {
+        connectFolder();
+      }
+    });
+  }
+
+  Array.prototype.slice.call(document.querySelectorAll("[data-import]")).forEach(function(box){
+    var pasteBtn = box.querySelector(".paste-btn");
+    if (pasteBtn) { pasteBtn.addEventListener("click", readClipboardAndImport); }
+    var connectBtn = box.querySelector(".folder-connect");
+    if (connectBtn) { connectBtn.addEventListener("click", connectFolder); }
+    var scanBtn = box.querySelector(".folder-scan");
+    if (scanBtn) { scanBtn.addEventListener("click", function(){ scanFromSaved(true); }); }
+    var zone = box.querySelector(".drop-zone");
+    var input = box.querySelector(".import-input");
+    if (!zone || !input) { return; }
+    zone.addEventListener("click", function(ev){
+      if (ev.target !== input) { input.click(); }
+    });
+    zone.addEventListener("keydown", function(ev){
+      if (ev.key === "Enter" || ev.key === " ") {
+        ev.preventDefault();
+        input.click();
+      }
+    });
+    ["dragenter", "dragover"].forEach(function(type){
+      zone.addEventListener(type, function(ev){
+        ev.preventDefault();
+        zone.classList.add("drag-on");
+      });
+    });
+    ["dragleave", "drop"].forEach(function(type){
+      zone.addEventListener(type, function(ev){
+        ev.preventDefault();
+        zone.classList.remove("drag-on");
+      });
+    });
+    zone.addEventListener("drop", function(ev){
+      if (ev.dataTransfer && ev.dataTransfer.files) { handleImportFiles(ev.dataTransfer.files); }
+    });
+    input.addEventListener("change", function(){
+      handleImportFiles(input.files);
+      input.value = "";
+    });
+  });
+
+  /* Ctrl+V 붙여넣기: 성적 섹션이 있는 두 탭에서 동작 (입력 칸 제외) */
+  ["panel-today", "panel-grading"].forEach(function(pid){
+    var panel = document.getElementById(pid);
+    if (!panel) { return; }
+    panel.addEventListener("paste", function(ev){
+      if (linked()) { return; }
+      if (ev.target && ev.target.closest && ev.target.closest("input, textarea")) { return; }
+      var text = ev.clipboardData ? ev.clipboardData.getData("text") : "";
+      if (text) {
+        ev.preventDefault();
+        importClipboardText(text);
+      }
+    });
+  });
+
+  /* ---------- 부팅: 연동 감지(로컬 http 에서만 /api/state 1회 조회) → 폴백 또는 연동 모드 ---------- */
+  function boot() {
+    if (!api.on) {
+      /* 폴더 연결 초기화: 지원 브라우저에서만 노출, 연결돼 있으면 로드 시 자동 확인 */
+      updateFolderUI();
+      if (FS_OK && state.folderLinked) { scanFromSaved(false); }
+    }
+    renderAll();
+    if (api.on) { startPolling(); }
+  }
+  if (LINK_HOST) {
+    Array.prototype.slice.call(document.querySelectorAll("[data-fallback-only]")).forEach(function(el){ el.hidden = true; });
+    renderLinkBar();
+    var probeDone = false;
+    function probeResult(ok, r) {
+      if (probeDone) { return; }
+      probeDone = true;
+      api.probed = true;
+      if (ok && r && r.status === 200 && isStateJson(r.json)) {
+        api.on = true;
+        applyState(r.json, { render: false });
+      }
+      boot();
+    }
+    apiFetch("/api/state", { method: "GET" }, 2500, probeResult);
+  } else {
+    boot();
+  }
+})();
+</script>
