@@ -10,14 +10,19 @@
 → 채점 → 오답노트 → 오답 재풀이. 기록.json 기준으로 매번 재계산해 밀린 날의
 세트를 자동 재배치하고, 시험 전날까지 전 세트 완주를 보장하도록 용량을 올립니다.
 
+v2.2.1: Excel 실행 강화 — Windows에서 EXCEL.EXE를 직접 찾아 실행하고 5초 뒤
+프로세스를 확인해 안 떴으면 재열기 안내, 타이머 [풀이 파일 열기], 시작 로그
+(채점결과/시험장_시작로그.txt), 문제지 PDF 회차 검증, 시작·재시작 안정화.
+
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "2.2.0"
+__version__ = "2.2.1"
 
 import argparse
 import json
 import os
+import platform
 import re
 import shutil
 import subprocess
@@ -59,6 +64,8 @@ RECORDS_DIR = os.path.join(BASE_DIR, "채점결과")
 RECORDS_PATH = os.path.join(RECORDS_DIR, "기록.json")
 _OLD_RECORDS_PATH = os.path.join(BASE_DIR, "기록.json")
 ERROR_LOG_PATH = os.path.join(RECORDS_DIR, "시험장_오류.log")
+STARTUP_LOG_PATH = os.path.join(RECORDS_DIR, "시험장_시작로그.txt")
+STARTUP_LOG_KEEP = 200          # 시작 로그 최근 줄 수
 
 
 def _ensure_records_home():
@@ -70,6 +77,43 @@ def _ensure_records_home():
             shutil.move(_OLD_RECORDS_PATH, RECORDS_PATH)
     except OSError:
         pass
+
+def startup_log(message, path=None, keep=STARTUP_LOG_KEEP):
+    """시작 로그 1줄 append (채점결과/시험장_시작로그.txt, 최근 keep줄 유지).
+
+    프로그램 시작·세트 선택·사본 생성·Excel/PDF 실행·예외처럼 "무슨 일이
+    있었는지"를 pythonw(콘솔 없음)에서도 남깁니다. 실패는 조용히 무시.
+    반환: 기록한 한 줄.
+    """
+    stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    line = f"[{stamp}] {__version__} " + str(message).replace("\n", " | ")
+    p = path or STARTUP_LOG_PATH
+    try:
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        old = []
+        if os.path.isfile(p):
+            with open(p, encoding="utf-8", errors="replace") as f:
+                old = f.read().splitlines()
+        old.append(line)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write("\n".join(old[-keep:]) + "\n")
+    except Exception:
+        pass
+    return line
+
+
+def read_startup_log(path=None):
+    """시작 로그 전체 텍스트 (없으면 안내문)."""
+    p = path or STARTUP_LOG_PATH
+    try:
+        with open(p, encoding="utf-8", errors="replace") as f:
+            body = f.read().strip()
+    except OSError:
+        body = ""
+    head = (f"[코코 시험장 시작 로그] {__version__} · "
+            f"{datetime.now().strftime('%Y-%m-%d %H:%M')}\n파일: {p}\n")
+    return head + "\n" + (body or "(아직 기록이 없습니다)")
+
 
 def log_error(context, exc=None, path=None):
     """오류를 채점결과/시험장_오류.log에 append (pythonw에서도 흔적 보존).
@@ -95,6 +139,9 @@ def log_error(context, exc=None, path=None):
             f.write(text + "-" * 60 + "\n")
     except Exception:
         pass
+    if path is None:   # 시작 로그에도 한 줄 요약 (흐름 추적용)
+        last = detail.strip().splitlines()[-1] if detail.strip() else ""
+        startup_log(f"예외: {context}" + (f" — {last}" if last else ""))
     return text
 
 
@@ -194,16 +241,27 @@ def _token_conflict(a, b):
     return False
 
 
-def match_pdf_for_set(toks, pdf_paths):
-    """토큰 우선순위 매칭으로 유일한 문제지 PDF 찾기. 복수/0개면 None."""
+def _pdf_score(toks, pt):
+    """세트 토큰과 PDF 토큰의 일치 점수 (회차·형·연도 충돌이면 0)."""
+    return 0 if _token_conflict(toks, pt) else len(toks & pt)
+
+
+def match_pdf_for_set(toks, pdf_paths, others=()):
+    """토큰 우선순위 매칭으로 유일한 문제지 PDF 찾기. 복수/0개면 None.
+
+    others: 다른 세트들의 토큰 집합 목록. PDF가 다른 세트와 같은 점수로
+    맞으면(예: '2024 상시 문제지.pdf'가 상시 1회·2회 모두에 맞음) 어느
+    세트의 문제지인지 알 수 없으므로 연결하지 않습니다.
+    """
     scored = []
     for p in pdf_paths:
         pt = set_tokens(os.path.basename(p))
-        if _token_conflict(toks, pt):
+        shared = _pdf_score(toks, pt)
+        if shared < 1:
             continue
-        shared = len(toks & pt)
-        if shared >= 1:
-            scored.append((shared, p))
+        if any(_pdf_score(ot, pt) >= shared for ot in others):
+            continue           # 다른 세트에도 똑같이 맞는 애매한 PDF
+        scored.append((shared, p))
     if not scored:
         return None
     best = max(s for s, _p in scored)
@@ -211,13 +269,38 @@ def match_pdf_for_set(toks, pdf_paths):
     return matched[0] if len(matched) == 1 else None
 
 
+_CFG_DICT_KEYS = ("_슬롯매핑", "_진행", "_자동선택", "_설정")
+
+
+def normalize_set_config(data):
+    """세트설정.json 내용을 방어적으로 정규화: 최상위는 dict, 세트 항목과
+    '_슬롯매핑/_진행/_자동선택/_설정'은 dict만 남김(깨진 항목은 버림)."""
+    if not isinstance(data, dict):
+        return {}
+    out = {}
+    for k, v in data.items():
+        k = str(k)
+        if k in _CFG_DICT_KEYS or not k.startswith("_"):
+            if isinstance(v, dict):
+                out[k] = v
+        else:
+            out[k] = v
+    return out
+
+
+def _cfg_section(cfg, key):
+    """설정의 하위 dict (없거나 dict가 아니면 빈 dict)."""
+    v = (cfg or {}).get(key)
+    return v if isinstance(v, dict) else {}
+
+
 def load_set_config(path=SET_CONFIG_PATH):
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(path, encoding="utf-8-sig") as f:
             data = json.load(f)
-        return data if isinstance(data, dict) else {}
     except Exception:
         return {}
+    return normalize_set_config(data)
 
 
 def save_set_config(config, path=SET_CONFIG_PATH):
@@ -241,33 +324,83 @@ def remember_set(s, path=SET_CONFIG_PATH):
         "key": os.path.abspath(s["key"]) if s.get("key") else None,
         "pdf": os.path.abspath(s["pdf"]) if s.get("pdf") else None,
     })
+    if s.get("pdf") and s.get("pdf_확인됨"):
+        ent["pdf_확인됨"] = True      # 회차가 달라도 사용자가 확인한 연결
+    else:
+        ent.pop("pdf_확인됨", None)
     return save_set_config(cfg, path)
 
 
+PDF_MISMATCH_WARNING = ("⚠ 문제지 회차가 세트와 다릅니다 — [문제지 연결]로 "
+                        "바로잡으세요")
+
+
+def pdf_conflicts_with_set(s, pdf=None):
+    """연결(저장)된 문제지 PDF의 회차·형·연도 토큰이 세트와 충돌하는지.
+
+    예: '2024년 상시2회' 세트에 '…상시1회 문제지.pdf' → True.
+    토큰이 없는 PDF(예: 'aaa.pdf')는 충돌로 보지 않습니다.
+    """
+    pdf = pdf or s.get("pdf")
+    if not pdf:
+        return False
+    try:
+        return _token_conflict(_set_tokens_of(s),
+                               set_tokens(os.path.basename(str(pdf))))
+    except Exception:
+        return False
+
+
+def _attach_saved_pdf(s, pdf, confirmed, origin):
+    """저장된 PDF 연결을 세트에 반영 — 회차 충돌이면 무시하고 로그+경고 표시.
+    사용자가 [문제지 연결]에서 확인한 연결(pdf_확인됨)은 그대로 존중."""
+    if not (isinstance(pdf, str) and pdf and os.path.isfile(pdf)):
+        return False
+    if not confirmed and pdf_conflicts_with_set(s, pdf):
+        s["pdf_warning"] = (f"저장된 문제지 연결({os.path.basename(pdf)})의 "
+                            "회차·형·연도가 세트와 달라 무시했습니다")
+        startup_log(f"문제지 연결 무시(회차 불일치, {origin}): "
+                    f"세트 '{s.get('name')}' ← {pdf}")
+        return False
+    s["pdf"] = pdf
+    if confirmed:
+        s["pdf_확인됨"] = True
+    return True
+
+
 def apply_set_config(sets, config):
-    """저장된 세트 구성 반영. 사라진 경로는 무시."""
+    """저장된 세트 구성 반영. 사라진 경로·깨진 항목·회차가 다른 PDF는 무시."""
     by_key = {s["norm"]: s for s in sets}
     for k, ent in (config or {}).items():
-        if not isinstance(ent, dict):
+        if not isinstance(ent, dict) or str(k).startswith("_"):
             continue
         pdf, keyj = ent.get("pdf"), ent.get("key")
+        if not isinstance(pdf, str):
+            pdf = None
+        if not isinstance(keyj, str):
+            keyj = None
+        confirmed = bool(ent.get("pdf_확인됨"))
         if k in by_key:
             s = by_key[k]
-            if pdf and os.path.isfile(pdf):
-                s["pdf"] = pdf
+            if pdf:
+                _attach_saved_pdf(s, pdf, confirmed, "세트설정")
             if keyj and os.path.isfile(keyj):
                 s["key"] = keyj
             continue
         prob, ans = ent.get("problem"), ent.get("answer")
-        if prob and ans and os.path.isfile(prob) and os.path.isfile(ans):
-            sets.append({
-                "name": ent.get("name") or display_name(prob),
+        if isinstance(prob, str) and isinstance(ans, str) and prob and ans \
+                and os.path.isfile(prob) and os.path.isfile(ans):
+            s = {
+                "name": str(ent.get("name") or display_name(prob)),
                 "norm": k, "dir": os.path.dirname(prob),
                 "problem": prob, "answer": ans,
                 "key": keyj if keyj and os.path.isfile(keyj) else None,
-                "pdf": pdf if pdf and os.path.isfile(pdf) else None,
+                "pdf": None,
                 "saved": True,
-            })
+            }
+            if pdf:
+                _attach_saved_pdf(s, pdf, confirmed, "세트설정")
+            sets.append(s)
     return sets
 
 
@@ -331,7 +464,9 @@ def scan_sets(root, config=None):
         if s["pdf"]:
             continue
         toks = set_tokens(s["name"]) | set_tokens(os.path.basename(s["dir"]))
-        cand = match_pdf_for_set(toks, [p for p in all_pdfs if p not in used])
+        others = [_set_tokens_of(o) for o in sets if o is not s]
+        cand = match_pdf_for_set(toks, [p for p in all_pdfs if p not in used],
+                                 others=others)
         if cand:
             s["pdf"] = cand
             used.add(cand)
@@ -366,21 +501,112 @@ def build_direct_set(problem, answer, pdf=None):
     }
 
 
+def _coerce_score(v):
+    """점수 값 정규화: 숫자 → 그대로, 숫자 문자열("85", "85.0", "85점") →
+    숫자, 그 외(None, "채점 실패", bool …) → None."""
+    if isinstance(v, bool):
+        return None
+    if isinstance(v, (int, float)):
+        return v
+    if isinstance(v, str):
+        m = re.search(r"-?\d+(?:\.\d+)?", v)
+        if m:
+            f = float(m.group())
+            return int(f) if f.is_integer() else f
+    return None
+
+
+def normalize_record(r):
+    """기록 1건을 현재 스키마로 방어적 정규화. dict가 아니면 None.
+
+    구버전(v1.x) 기록에는 mode/day/루틴 키가 없고(=시험 모드로 취급),
+    손으로 고친 파일에는 점수가 문자열이거나 세트명이 빠져 있을 수
+    있습니다 — 어느 경우에도 죽지 않고 읽을 수 있는 만큼만 살립니다.
+    """
+    if not isinstance(r, dict):
+        return None
+    out = dict(r)
+    name = r.get("세트명") or r.get("set") or r.get("세트")
+    out["세트명"] = str(name) if name is not None else "?"
+    when = r.get("일시") or r.get("date") or r.get("when")
+    out["일시"] = str(when) if when is not None else "?"
+    out["점수"] = _coerce_score(r.get("점수", r.get("score")))
+    if "mode" in out and out["mode"] is not None \
+            and not isinstance(out["mode"], str):
+        out["mode"] = str(out["mode"])
+    if out.get("만점") is not None:
+        out["만점"] = _coerce_score(out["만점"])
+    for k in ("소요시간", "리포트", "영역", "day", "루틴"):
+        if out.get(k) is not None and not isinstance(out[k], str):
+            out[k] = str(out[k])
+    return out
+
+
+def normalize_records(data):
+    """기록.json 내용(어떤 형태든) → 정규화된 기록 리스트.
+
+    리스트가 정상 형태. dict면 {"기록": [...]} 또는 {세트명: 기록dict}로
+    간주해 최대한 살립니다.
+    """
+    if isinstance(data, dict):
+        inner = next((data[k] for k in ("기록", "records", "items")
+                      if isinstance(data.get(k), list)), None)
+        if inner is None:
+            inner = []
+            for k, v in data.items():
+                if isinstance(v, dict):
+                    v = dict(v)
+                    v.setdefault("세트명", str(k))
+                    inner.append(v)
+                elif isinstance(v, list):
+                    inner.extend(x for x in v if isinstance(x, dict))
+        data = inner
+    if not isinstance(data, list):
+        return []
+    out = []
+    for r in data:
+        n = normalize_record(r)
+        if n is not None:
+            out.append(n)
+    return out
+
+
 def load_records(path=RECORDS_PATH):
+    """기록.json 로드 (없음/깨짐/옛 스키마여도 절대 예외 없이 리스트 반환)."""
     if path == RECORDS_PATH:
         _ensure_records_home()
     try:
-        with open(path, encoding="utf-8") as f:
+        with open(path, encoding="utf-8-sig") as f:
             data = json.load(f)
-        return data if isinstance(data, list) else []
     except Exception:
         return []
+    try:
+        return normalize_records(data)
+    except Exception as e:
+        log_error("기록.json 정규화", e)
+        return []
+
+
+def _backup_corrupt_json(path):
+    """파싱 불가한 JSON을 덮어쓰기 전에 .corrupt-<일시> 사본으로 보존."""
+    try:
+        if os.path.isfile(path) and os.path.getsize(path) > 0:
+            with open(path, encoding="utf-8-sig") as f:
+                json.load(f)
+    except Exception:
+        try:
+            stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            shutil.copy2(path, f"{path}.corrupt-{stamp}")
+            startup_log(f"깨진 JSON 백업: {path}.corrupt-{stamp}")
+        except OSError:
+            pass
 
 
 def append_record(record, path=RECORDS_PATH):
     """기록.json에 응시 기록 1건 추가. 전체 목록 반환."""
     if path == RECORDS_PATH:
         _ensure_records_home()
+    _backup_corrupt_json(path)
     records = load_records(path)
     records.append(record)
     with open(path, "w", encoding="utf-8") as f:
@@ -415,22 +641,86 @@ XLSX_MAIN_CT = ("application/vnd.openxmlformats-officedocument."
 XLSM_MAIN_CT = "application/vnd.ms-excel.sheet.macroEnabled.main+xml"
 
 
+CONTENT_TYPES_NAME = "[Content_Types].xml"
+ZIP_FLAG_DATA_DESCRIPTOR = 0x08
+
+
 def convert_xlsx_to_xlsm(src, dst):
     """xlsx -> xlsm ZIP 수준 변환.
 
     [Content_Types].xml의 워크북 메인 파트 content-type만 교체하고 그 외
     모든 파트는 바이트 무손실 복사 (openpyxl 재저장 없음 — 서식·차트 보존).
+    항목마다 새 ZipInfo(이름·날짜·DEFLATED)로 깨끗하게 다시 씁니다 —
+    원본 ZipInfo를 재사용하면 data descriptor 비트(0x08)·extra 필드 같은
+    Office가 싫어하는 흔적이 그대로 전파될 수 있습니다. [Content_Types].xml은
+    항상 첫 항목, 디렉터리·중복 항목은 버립니다.
     """
     import zipfile
-    with zipfile.ZipFile(src) as zin, \
-            zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
-        for item in zin.infolist():
-            data = zin.read(item.filename)
-            if item.filename == "[Content_Types].xml":
-                data = data.replace(XLSX_MAIN_CT.encode("utf-8"),
-                                    XLSM_MAIN_CT.encode("utf-8"))
-            zout.writestr(item, data)
+    with zipfile.ZipFile(src) as zin:
+        items = [i for i in zin.infolist() if not i.is_dir()]
+        names = [i.filename for i in items]
+        if CONTENT_TYPES_NAME not in names:
+            raise ValueError("[Content_Types].xml이 없어 Excel 파일이 아닙니다")
+        order = ([i for i in items if i.filename == CONTENT_TYPES_NAME]
+                 + [i for i in items if i.filename != CONTENT_TYPES_NAME])
+        seen = set()
+        with zipfile.ZipFile(dst, "w", zipfile.ZIP_DEFLATED) as zout:
+            for item in order:
+                if item.filename in seen:
+                    continue
+                seen.add(item.filename)
+                data = zin.read(item.filename)
+                if item.filename == CONTENT_TYPES_NAME:
+                    data = data.replace(XLSX_MAIN_CT.encode("utf-8"),
+                                        XLSM_MAIN_CT.encode("utf-8"))
+                    if XLSM_MAIN_CT.encode("utf-8") not in data:
+                        raise ValueError("워크북 content-type을 찾지 못해 "
+                                         "xlsm으로 바꿀 수 없습니다")
+                dt = item.date_time
+                if not dt or dt[0] < 1980:
+                    dt = (1980, 1, 1, 0, 0, 0)
+                info = zipfile.ZipInfo(item.filename, date_time=dt)
+                info.compress_type = zipfile.ZIP_DEFLATED
+                zout.writestr(info, data)
     return dst
+
+
+def verify_xlsm_copy(path, load_openpyxl=True):
+    """변환된 사본 검증. (통과 여부, 설명) 반환.
+
+    zipfile.testzip 통과 + [Content_Types].xml이 첫 항목 + 어떤 항목에도
+    data descriptor 비트(0x08) 없음 + 매크로 content-type 포함 + (있으면)
+    openpyxl 로드.
+    """
+    import zipfile
+    try:
+        with zipfile.ZipFile(path) as zf:
+            bad = zf.testzip()
+            if bad:
+                return False, f"손상된 항목: {bad}"
+            infos = zf.infolist()
+            if not infos or infos[0].filename != CONTENT_TYPES_NAME:
+                return False, "[Content_Types].xml이 첫 항목이 아님"
+            dd = [i.filename for i in infos
+                  if i.flag_bits & ZIP_FLAG_DATA_DESCRIPTOR]
+            if dd:
+                return False, f"data descriptor 비트 항목: {dd[:3]}"
+            ct = zf.read(CONTENT_TYPES_NAME)
+            if XLSM_MAIN_CT.encode("utf-8") not in ct:
+                return False, "매크로 content-type 없음"
+    except Exception as e:
+        return False, f"ZIP 검사 실패: {e}"
+    note = f"ZIP 검사 통과({len(infos)}항목)"
+    if load_openpyxl:
+        try:
+            import openpyxl
+            openpyxl.load_workbook(path).close()
+            note += ", openpyxl 로드 OK"
+        except ImportError:
+            note += ", openpyxl 없음(로드 생략)"
+        except Exception as e:
+            return False, f"openpyxl 로드 실패: {e}"
+    return True, note
 
 
 def _strip_motw(path):
@@ -454,20 +744,21 @@ def _unique_stem(d, stem):
 def copy_as_macro_enabled(source, dst_stem):
     """사본을 매크로 저장 가능한 .xlsm으로 생성.
 
-    원본이 .xlsx면 ZIP 수준 변환(무결성 스모크 실패 시 원본 확장자로
-    폴백), .xlsm이면 그대로 복사. 사본의 MotW도 제거.
+    원본이 .xlsx면 ZIP 수준 변환 후 verify_xlsm_copy 검증(실패 시 원본
+    확장자 .xlsx로 그대로 복사해 폴백), .xlsm이면 그대로 복사. 사본의
+    MotW도 제거. 결과(경로·크기·변환 성공 여부)를 시작 로그에 남깁니다.
     """
     ext = os.path.splitext(source)[1].lower()
+    note = ""
     if ext == ".xlsx":
         dst = dst_stem + ".xlsm"
         try:
             convert_xlsx_to_xlsm(source, dst)
-            try:  # 무결성 스모크 (openpyxl 없으면 생략)
-                import openpyxl
-                openpyxl.load_workbook(dst).close()
-            except ImportError:
-                pass
-        except Exception:
+            ok, why = verify_xlsm_copy(dst)
+            if not ok:
+                raise RuntimeError(why)
+            note = f"xlsx→xlsm 변환 성공 ({why})"
+        except Exception as e:
             try:
                 if os.path.isfile(dst):
                     os.remove(dst)
@@ -475,10 +766,17 @@ def copy_as_macro_enabled(source, dst_stem):
                 pass
             dst = dst_stem + ".xlsx"
             shutil.copy2(source, dst)
+            note = f"xlsx→xlsm 변환 실패({e}) → .xlsx 그대로 복사"
     else:
         dst = dst_stem + (ext or ".xlsm")
         shutil.copy2(source, dst)
+        note = f"{ext or '.xlsm'} 원본 그대로 복사"
     _strip_motw(dst)
+    try:
+        size = os.path.getsize(dst)
+    except OSError:
+        size = -1
+    startup_log(f"사본 생성: {dst} ({size:,} bytes) · {note} · 원본={source}")
     return dst
 
 
@@ -495,7 +793,7 @@ def make_attempt_copy(problem, set_name, when=None):
 
 def get_app_setting(name, default=None, path=None):
     cfg = load_set_config(path or SET_CONFIG_PATH)
-    return (cfg.get("_설정") or {}).get(name, default)
+    return _cfg_section(cfg, "_설정").get(name, default)
 
 
 def set_app_setting(name, value, path=None):
@@ -644,6 +942,225 @@ def open_file(path):
         return True, ""
     except Exception as e:
         return False, str(e)
+
+
+# --- Excel 직접 실행 · 실행 확인 (Windows) ---
+
+CREATE_NO_WINDOW = 0x08000000
+DETACHED_PROCESS = 0x00000008
+CREATE_NEW_PROCESS_GROUP = 0x00000200
+EXCEL_OPEN_DELAY_MS = 1000      # PDF를 먼저 열고 Excel은 이만큼 뒤에 (맨 앞에 오게)
+EXCEL_CHECK_DELAY_MS = 5000     # Excel 실행 후 프로세스 확인까지 대기
+_EXCEL_EXE_CACHE = [None, False]   # [경로, 탐색했는지]
+
+
+def _exe_from_command(cmd):
+    """레지스트리 shell\\Open\\command 값 → 실행 파일 경로.
+    예: '"C:\\...\\EXCEL.EXE" /dde' 또는 'C:\\...\\EXCEL.EXE "%1"'."""
+    text = str(cmd or "").strip()
+    if not text:
+        return None
+    if text.startswith('"'):
+        end = text.find('"', 1)
+        cand = text[1:end] if end > 0 else text[1:]
+    else:
+        m = re.match(r"(.+?\.exe)(?=\s|$)", text, re.IGNORECASE)
+        cand = m.group(1) if m else text.split()[0]
+    cand = os.path.expandvars(cand.strip())
+    return cand or None
+
+
+def _excel_registry_candidates():
+    """Windows 레지스트리에서 EXCEL.EXE 후보 경로 (winreg는 Windows 전용)."""
+    try:
+        import winreg
+    except ImportError:
+        return []
+    out = []
+
+    def read(root, key, value=""):
+        try:
+            with winreg.OpenKey(root, key) as k:
+                v, _t = winreg.QueryValueEx(k, value)
+                return str(v)
+        except OSError:
+            return None
+
+    for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+        for key in (r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths"
+                    r"\excel.exe",
+                    r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion"
+                    r"\App Paths\excel.exe"):
+            v = read(root, key)
+            if v:
+                out.append(os.path.expandvars(v.strip('"')))
+    cur = read(winreg.HKEY_CLASSES_ROOT, r"Excel.Application\CurVer")
+    progids = [cur] if cur else []
+    progids += ["Excel.Application.16", "Excel.Application.15",
+                "Excel.Sheet.12", "Excel.SheetMacroEnabled.12", "Excel.Sheet.8"]
+    for pid in progids:
+        exe = _exe_from_command(
+            read(winreg.HKEY_CLASSES_ROOT, rf"{pid}\shell\Open\command"))
+        if exe:
+            out.append(exe)
+    for ver in ("16.0", "15.0", "14.0"):
+        for root in (winreg.HKEY_LOCAL_MACHINE, winreg.HKEY_CURRENT_USER):
+            v = read(root, rf"SOFTWARE\Microsoft\Office\{ver}\Excel"
+                     r"\InstallRoot", "Path")
+            if v:
+                out.append(os.path.join(v, "EXCEL.EXE"))
+    return out
+
+
+def _excel_common_paths():
+    """흔한 설치 경로 후보 (Program Files[ (x86)]\\Microsoft Office\\…)."""
+    out = []
+    subs = (r"Microsoft Office\root\Office16", r"Microsoft Office\Office16",
+            r"Microsoft Office\root\Office15", r"Microsoft Office\Office15",
+            r"Microsoft Office 15\root\Office15", r"Microsoft Office\Office14")
+    for var in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432"):
+        root = os.environ.get(var)
+        if root:
+            out.extend(os.path.join(root, sub, "EXCEL.EXE") for sub in subs)
+    la = os.environ.get("LOCALAPPDATA")
+    if la:   # 스토어판 Office의 앱 실행 별칭
+        out.append(os.path.join(la, r"Microsoft\WindowsApps\excel.exe"))
+    return out
+
+
+def find_excel_exe(refresh=False):
+    """Windows에서 EXCEL.EXE 경로 탐색: App Paths → ProgID command →
+    InstallRoot → 흔한 경로 → PATH. 못 찾으면(또는 Windows 아님) None."""
+    if sys.platform != "win32":
+        return None
+    if _EXCEL_EXE_CACHE[1] and not refresh:
+        return _EXCEL_EXE_CACHE[0]
+    found = None
+    try:
+        for cand in _excel_registry_candidates() + _excel_common_paths():
+            if cand and os.path.isfile(cand):
+                found = os.path.abspath(cand)
+                break
+        if not found:
+            w = shutil.which("excel") or shutil.which("EXCEL.EXE")
+            if w:
+                found = os.path.abspath(w)
+    except Exception as e:
+        log_error("Excel 경로 탐색", e)
+    _EXCEL_EXE_CACHE[:] = [found, True]
+    return found
+
+
+def open_workbook(path, prefer_excel=True):
+    """풀이 파일 열기. (성공, 방법, 오류, Popen 또는 None) 반환.
+
+    Windows에서 EXCEL.EXE를 찾으면 subprocess.Popen([excel, path])로 직접
+    실행(어느 프로그램이 열었는지·즉시 죽었는지 알 수 있음), 못 찾거나 실행
+    실패면 os.startfile(기본 프로그램) 폴백. 다른 OS는 open_file.
+    """
+    path = os.path.abspath(path)
+    err = ""
+    if sys.platform == "win32" and prefer_excel:
+        exe = find_excel_exe()
+        if exe:
+            try:
+                proc = subprocess.Popen([exe, path], close_fds=True)
+                return True, f"Excel 직접 실행 ({exe})", "", proc
+            except Exception as e:
+                err = f"Excel 직접 실행 실패({exe}): {e}"
+        else:
+            err = "EXCEL.EXE를 찾지 못함"
+    ok, err2 = open_file(path)
+    method = "기본 프로그램(os.startfile)" if sys.platform == "win32" \
+        else "기본 프로그램"
+    return ok, method, "; ".join(x for x in (err, err2) if x), None
+
+
+def excel_running():
+    """EXCEL.EXE 프로세스가 있는지 (Windows: tasklist). 알 수 없으면 None."""
+    if sys.platform != "win32":
+        return None
+    try:
+        proc = subprocess.run(
+            ["tasklist", "/FI", "IMAGENAME eq EXCEL.EXE", "/FO", "CSV",
+             "/NH"], capture_output=True, text=True, encoding="utf-8",
+            errors="replace", timeout=10, creationflags=CREATE_NO_WINDOW)
+        return "excel.exe" in (proc.stdout or "").lower()
+    except Exception:
+        return None
+
+
+def workbook_lock_file(path):
+    """Excel이 파일을 열면 같은 폴더에 만드는 '~$이름' 잠금 파일 경로.
+    (긴 이름은 앞 글자가 잘리므로 뒷부분 일치로 찾음) 없으면 None."""
+    d, base = os.path.split(os.path.abspath(path))
+    try:
+        for fn in os.listdir(d):
+            if not fn.startswith("~$"):
+                continue
+            tail = fn[2:]
+            if tail and base.endswith(tail) and len(tail) >= len(base) - 3:
+                return os.path.join(d, fn)
+    except OSError:
+        pass
+    return None
+
+
+def check_workbook_open(path, proc=None):
+    """Excel이 파일을 열었는지 판정. ('open'|'closed'|'unknown', 설명) 반환.
+
+    잠금 파일(~$…)이 있으면 열림. 없으면 EXCEL.EXE 프로세스 존재 여부와
+    직접 실행한 프로세스의 종료 코드로 판단합니다. (이미 떠 있던 Excel에
+    파일을 넘기면 새 프로세스는 곧바로 끝나므로 종료 코드 0만으로는
+    실패로 보지 않습니다.)
+    """
+    lock = workbook_lock_file(path)
+    if lock:
+        return "open", f"잠금 파일 확인({os.path.basename(lock)})"
+    rc = None
+    if proc is not None:
+        try:
+            rc = proc.poll()
+        except Exception:
+            rc = None
+    running = excel_running()
+    rc_note = f"직접 실행 프로세스 종료 코드 {rc}" if rc is not None else ""
+    if running is True:
+        return "open", "EXCEL.EXE 실행 중" + (f" ({rc_note})" if rc_note else "")
+    if running is False:
+        return "closed", "EXCEL.EXE 프로세스 없음" + (
+            f", {rc_note}" if rc_note else "")
+    if rc is not None and rc != 0:
+        return "closed", rc_note
+    return "unknown", "확인 불가 (Windows 외 환경)"
+
+
+def restart_command(argv=None, executable=None, base_dir=None):
+    """재시작 명령 (args, Popen kwargs). 래퍼(코코시험장.pyw)로 시작했으면
+    래퍼를, 아니면 시험장.py를 같은 인터프리터로 실행합니다.
+
+    Windows: 콘솔이 튀지 않게 pythonw면 DETACHED_PROCESS, python.exe면
+    CREATE_NO_WINDOW (+ CREATE_NEW_PROCESS_GROUP, 부모 종료와 분리).
+    """
+    argv = list(sys.argv if argv is None else argv)
+    exe = executable or sys.executable
+    base_dir = base_dir or BASE_DIR
+    entry = os.path.join(base_dir, "시험장.py")
+    a0 = os.path.abspath(argv[0]) if argv and argv[0] else ""
+    if a0.lower().endswith(".pyw") and os.path.isfile(a0):
+        entry = a0
+    args = [exe, entry] + [a for a in argv[1:] if a != "--smoke"]
+    kwargs = {"cwd": base_dir, "close_fds": True}
+    if sys.platform == "win32":
+        flags = CREATE_NEW_PROCESS_GROUP
+        if os.path.basename(exe).lower().startswith("pythonw"):
+            flags |= DETACHED_PROCESS
+        else:
+            flags |= CREATE_NO_WINDOW
+        kwargs["creationflags"] = flags
+    else:
+        kwargs["start_new_session"] = True
+    return args, kwargs
 
 
 MANUAL_PIP = ("수동 설치: 명령 프롬프트에서  py -m pip install openpyxl\n"
@@ -1013,9 +1530,10 @@ def find_set_for_tokens(sets, text):
 
 
 def load_slot_mapping(path=None):
-    """세트설정.json '_슬롯매핑': {슬롯 문구: {problem, answer, pdf}}."""
+    """세트설정.json '_슬롯매핑': {슬롯 문구: {problem, answer, pdf}}.
+    (저장된 pdf의 회차 충돌 검증은 set_from_mapping에서)"""
     cfg = load_set_config(path or SET_CONFIG_PATH)
-    raw = cfg.get("_슬롯매핑") or {}
+    raw = _cfg_section(cfg, "_슬롯매핑")
     return {k: v for k, v in raw.items() if isinstance(v, dict)}
 
 
@@ -1036,14 +1554,17 @@ def set_from_mapping(ent):
     """매핑 항목 -> 세트 dict (파일이 없으면 None)."""
     try:
         prob, ans = ent.get("problem"), ent.get("answer")
-        if not (prob and ans and os.path.isfile(prob) and os.path.isfile(ans)):
+        if not (isinstance(prob, str) and isinstance(ans, str) and prob
+                and ans and os.path.isfile(prob) and os.path.isfile(ans)):
             return None
-        pdf = ent.get("pdf")
-        s = build_direct_set(prob, ans, pdf=pdf if pdf and
-                             os.path.isfile(pdf) else None)
+        s = build_direct_set(prob, ans)
         if ent.get("name"):
-            s["name"] = ent["name"]
+            s["name"] = str(ent["name"])
         s["direct"] = True
+        pdf = ent.get("pdf")
+        if isinstance(pdf, str) and pdf and os.path.isfile(pdf):
+            # 저장된 PDF가 회차·형·연도 충돌이면 무시 (같은 키 자동 감지 유지)
+            _attach_saved_pdf(s, pdf, bool(ent.get("pdf_확인됨")), "슬롯매핑")
         return s
     except Exception:
         return None
@@ -1095,10 +1616,15 @@ def scan_diagnosis_text(root, config=None, specs=None, sets=None):
     lines.append("== 인식된 세트 ==")
     lines.append("세트명 | 토큰 | 문제 | 정답 | PDF | 기대값")
     for s in sets:
+        pdf_col = os.path.basename(s["pdf"]) if s.get("pdf") else "-"
+        if s.get("pdf") and pdf_conflicts_with_set(s):
+            pdf_col += " ⚠회차불일치"
+        elif s.get("pdf_warning"):
+            pdf_col += f" (⚠ {s['pdf_warning']})"
         lines.append(f"{s['name']} | {','.join(sorted(_set_tokens_of(s)))} | "
                      f"{os.path.basename(s['problem'])} | "
                      f"{os.path.basename(s['answer'])} | "
-                     f"{os.path.basename(s['pdf']) if s.get('pdf') else '-'} | "
+                     f"{pdf_col} | "
                      f"{os.path.basename(s['key']) if s.get('key') else '-'}")
     if not sets:
         lines.append("(인식된 세트 없음 — 같은 폴더에 '…문제.xlsx'와 '…정답.xlsm' "
@@ -1111,7 +1637,7 @@ def scan_diagnosis_text(root, config=None, specs=None, sets=None):
             for spec in ROUTINE_PLAN.get(no, {}).get("세트") or []:
                 if spec != AUTO and spec not in specs:
                     specs.append(spec)
-    mapping = {k: v for k, v in (config.get("_슬롯매핑") or {}).items()
+    mapping = {k: v for k, v in _cfg_section(config, "_슬롯매핑").items()
                if isinstance(v, dict)}
     for spec in specs:
         s, how = match_slot(sets, spec)
@@ -1203,7 +1729,9 @@ def pick_set_for_retry(sets, records, count=1, today=None, exclude=()):
 def load_auto_picks(day_tag, path=None):
     """세트설정.json '_자동선택'에 저장된 오늘 자동 선택 [{세트, 이유}]."""
     cfg = load_set_config(path or SET_CONFIG_PATH)
-    raw = (cfg.get("_자동선택") or {}).get(day_tag) or []
+    raw = _cfg_section(cfg, "_자동선택").get(day_tag) or []
+    if not isinstance(raw, (list, tuple)):
+        raw = []
     out = []
     for x in raw:
         if isinstance(x, dict) and x.get("세트"):
@@ -1724,7 +2252,11 @@ def _progress_key(day_tag):
 def load_step_progress(day_tag, path=None):
     """세트설정.json '_진행'에서 완료 스텝 번호 집합 로드."""
     cfg = load_set_config(path or SET_CONFIG_PATH)
-    raw = (cfg.get("_진행") or {}).get(_progress_key(day_tag)) or []
+    raw = _cfg_section(cfg, "_진행").get(_progress_key(day_tag)) or []
+    if isinstance(raw, dict):
+        raw = list(raw.keys())
+    elif not isinstance(raw, (list, tuple, set)):
+        raw = []
     out = set()
     for x in raw:
         try:
@@ -2013,11 +2545,17 @@ def record_review_state(norm_key, json_name, checks,
     점수 기록(기록.json)에는 아무것도 남기지 않습니다."""
     cfg = load_set_config(path)
     ent = cfg.setdefault(norm_key, {})
-    rv = ent.setdefault("오답연습", {})
+    if not isinstance(ent.get("오답연습"), dict):
+        ent["오답연습"] = {}
+    rv = ent["오답연습"]
     if count_up:
-        rv["횟수"] = int(rv.get("횟수") or 0) + 1
-    rv.setdefault("이해체크", {})[str(json_name)] = \
-        sorted(int(i) for i in checks)
+        try:
+            rv["횟수"] = int(rv.get("횟수") or 0) + 1
+        except (TypeError, ValueError):
+            rv["횟수"] = 1
+    if not isinstance(rv.get("이해체크"), dict):
+        rv["이해체크"] = {}
+    rv["이해체크"][str(json_name)] = sorted(int(i) for i in checks)
     return save_set_config(cfg, path)
 
 
@@ -2415,7 +2953,16 @@ if HAS_TK:
                       relief="flat", bg=BRAND, fg="white",
                       activebackground=BRAND_DARK,
                       command=self.submit).pack(side="left", padx=5)
+            self.reopen_btn = tk.Button(
+                btns, text="풀이 파일 열기", width=12, font=UI_FONT,
+                relief="flat", bg="#2C4A38", fg="white",
+                activebackground="#3A5F49", command=self.reopen_file)
+            self.reopen_btn.pack(side="left", padx=5)
             self._tick()
+
+        def reopen_file(self):
+            """풀이 파일을 Excel로 다시 열기 (창이 사라졌을 때 언제든)."""
+            self.app.reopen_student(self.exam)
 
         def _fmt(self):
             m, s = divmod(max(0, self.remaining), 60)
@@ -2516,6 +3063,98 @@ if HAS_TK:
             except Exception:
                 pass
             self.app.exam_closed()
+
+
+    class ExcelWarnWindow(tk.Toplevel):
+        """Excel 창이 확인되지 않을 때 뜨는 비모달 안내 창 (타이머 위).
+
+        사용자의 흐름을 막지 않도록 grab 없이 항상 위에 띄우고, [다시
+        열기(Excel 직접)] [기본 프로그램으로 열기] [폴더 열기]를 제공합니다.
+        """
+
+        def __init__(self, app, exam, detail=""):
+            super().__init__(app)
+            self.app = app
+            self.exam = exam
+            self.title(f"{APP_TITLE} - Excel 확인")
+            self.configure(bg=BG)
+            self.attributes("-topmost", True)
+            self.resizable(False, False)
+            student = exam.get("student") or "(풀이 파일 없음)"
+            frm = tk.Frame(self, bg=BG, padx=16, pady=14)
+            frm.pack(fill="both", expand=True)
+            tk.Label(frm, text="Excel 창이 열리지 않은 것 같습니다",
+                     bg=BG, fg=RED, font=("Malgun Gothic", 12, "bold")).pack(
+                anchor="w")
+            tk.Label(frm, text=(
+                "풀이 파일이 Excel에서 열려 있으면 이 창은 그냥 닫으면 됩니다.\n"
+                "Excel이 깜빡하고 사라졌거나 아예 안 떴다면 아래 버튼으로 "
+                "다시 열어 보세요.\n(작업 표시줄의 Excel 아이콘·PDF 뷰어 뒤에 "
+                "숨은 창도 확인해 주세요)"),
+                bg=BG, fg=INK, font=UI_FONT, justify="left",
+                wraplength=540).pack(anchor="w", pady=(6, 0))
+            tk.Label(frm, text=f"파일: {student}", bg=BG, fg=SUB,
+                     font=("Malgun Gothic", 9), justify="left",
+                     wraplength=540).pack(anchor="w", pady=(6, 0))
+            self.detail_lbl = tk.Label(frm, text="", bg=BG, fg=SUB,
+                                       font=("Malgun Gothic", 9),
+                                       justify="left", wraplength=540)
+            self.detail_lbl.pack(anchor="w")
+            self.update_detail(detail)
+            btns = tk.Frame(frm, bg=BG)
+            btns.pack(fill="x", pady=(12, 0))
+            self.buttons = []
+            for text, cmd, primary in (
+                    ("다시 열기(Excel 직접)", self.reopen_excel, True),
+                    ("기본 프로그램으로 열기", self.reopen_default, False),
+                    ("폴더 열기", self.open_folder, False)):
+                b = tk.Button(
+                    btns, text=text, command=cmd, padx=10, pady=4,
+                    font=UI_FONT_BOLD if primary else UI_FONT,
+                    relief="flat" if primary else "groove",
+                    bg=BRAND if primary else "SystemButtonFace"
+                    if sys.platform == "win32" else CARD,
+                    fg="white" if primary else INK,
+                    activebackground=BRAND_DARK if primary else BRAND_SOFT)
+                b.pack(side="left", padx=(0, 6))
+                self.buttons.append(b)
+            tk.Button(btns, text="닫기", font=UI_FONT, relief="groove",
+                      padx=10, pady=4, command=self.destroy).pack(side="right")
+            self.status_lbl = tk.Label(frm, text="", bg=BG, fg=BRAND_DARK,
+                                       font=("Malgun Gothic", 9), anchor="w",
+                                       wraplength=540, justify="left")
+            self.status_lbl.pack(fill="x", pady=(8, 0))
+
+        def update_detail(self, detail):
+            self.detail_lbl.configure(
+                text=f"확인 결과: {detail}" if detail else "")
+
+        def _status(self, text):
+            try:
+                self.status_lbl.configure(text=text)
+            except Exception:
+                pass
+
+        def reopen_excel(self):
+            ok, method, err = self.app.reopen_student(self.exam,
+                                                      prefer_excel=True)
+            self._status(("다시 열었습니다: " + method + " — 5초 뒤 다시 확인합니다")
+                         if ok else f"열지 못했습니다: {err}")
+
+        def reopen_default(self):
+            ok, method, err = self.app.reopen_student(self.exam,
+                                                      prefer_excel=False)
+            self._status(("기본 프로그램으로 열었습니다 — 5초 뒤 다시 확인합니다")
+                         if ok else f"열지 못했습니다: {err}")
+
+        def open_folder(self):
+            student = self.exam.get("student") or ""
+            folder = os.path.dirname(os.path.abspath(student)) if student \
+                else (self.exam.get("set") or {}).get("dir") or BASE_DIR
+            ok, err = open_file(folder)
+            startup_log(f"폴더 열기: {'성공' if ok else '실패 ' + err} · {folder}")
+            self._status(f"폴더를 열었습니다: {folder}" if ok
+                         else f"폴더를 열지 못했습니다: {err}")
 
 
     class ReviewWindow(tk.Toplevel):
@@ -2767,18 +3406,19 @@ if HAS_TK:
     class DiagnosisWindow(tk.Toplevel):
         """세트 인식 진단 결과 표시 + 클립보드 복사."""
 
-        def __init__(self, app, text):
+        def __init__(self, app, text, title=None, hint=None):
             super().__init__(app)
             self.text_value = text
-            self.title(f"{APP_TITLE} - 세트 인식 진단")
+            self.title(title or f"{APP_TITLE} - 세트 인식 진단")
             self.configure(bg=BG)
             self.geometry("760x520")
             frm = tk.Frame(self, bg=BG, padx=14, pady=10)
             frm.pack(fill="both", expand=True)
-            tk.Label(frm, text="파일명 → 정규화 키 → 역할 → 세트 → 일정 슬롯 "
-                     "매칭 결과입니다. [복사]해서 채팅에 붙여넣으면 진단해 "
-                     "드립니다.", bg=BG, fg=INK, font=("Malgun Gothic", 9),
-                     wraplength=720, justify="left").pack(anchor="w")
+            tk.Label(frm, text=hint or (
+                "파일명 → 정규화 키 → 역할 → 세트 → 일정 슬롯 매칭 결과입니다. "
+                "[복사]해서 채팅에 붙여넣으면 진단해 드립니다."),
+                bg=BG, fg=INK, font=("Malgun Gothic", 9),
+                wraplength=720, justify="left").pack(anchor="w")
             self.text = tk.Text(frm, font=("Consolas", 9), wrap="none",
                                 bg=CARD, fg=INK)
             self.text.insert("1.0", text)
@@ -3378,9 +4018,16 @@ if HAS_TK:
             self.adaptive = None              # 적응형 일정 (recompute_plan)
             self._pending_plan = None
             self.step_guide = None            # 단계 가이드 창 (열려 있으면)
+            self._current_exam = None         # 진행 중 시험 dict
+            self._excel_warn = None           # Excel 확인 안내 창
             self._build_ui()
             self.refresh_sets()
             self.refresh_records()
+            excel = find_excel_exe()
+            startup_log(f"시작 화면 준비: 스캔 루트={self.scan_root} · "
+                        f"세트 {len(self.sets)}개 · "
+                        f"grade.py={self.grade_py or '못 찾음'} · "
+                        f"Excel 실행 파일={excel or '못 찾음(기본 프로그램으로 엶)'}")
             threading.Thread(target=self._bg_update_check,
                              daemon=True).start()
             self.after(1200, self._update_poll)
@@ -3458,13 +4105,20 @@ if HAS_TK:
             tk.Label(body, text="세트 정보", bg=BG, fg=INK,
                      font=UI_FONT_BOLD).grid(row=0, column=1, sticky="w",
                                              padx=(12, 0))
+            infofrm = tk.Frame(body, bg=CARD, highlightbackground=LINE,
+                               highlightthickness=1)
+            infofrm.grid(row=1, column=1, sticky="nsew", padx=(12, 0),
+                         pady=(4, 8))
             self.info_lbl = tk.Label(
-                body, text="왼쪽 목록에서 세트를 선택하세요.", bg=CARD,
+                infofrm, text="왼쪽 목록에서 세트를 선택하세요.", bg=CARD,
                 fg=SUB, font=UI_FONT, justify="left", anchor="nw",
-                padx=10, pady=8, highlightbackground=LINE,
-                highlightthickness=1, wraplength=230)
-            self.info_lbl.grid(row=1, column=1, sticky="nsew",
-                               padx=(12, 0), pady=(4, 8))
+                padx=10, pady=8, wraplength=230)
+            self.info_lbl.pack(fill="both", expand=True)
+            # 문제지 PDF 회차 충돌 경고 (충돌 시에만 표시)
+            self.pdf_warn_lbl = tk.Label(
+                infofrm, text="", bg="#FDECEA", fg=RED,
+                font=("Malgun Gothic", 9, "bold"), justify="left",
+                anchor="w", padx=10, pady=6, wraplength=230)
 
             ctrl = tk.Frame(body, bg=BG)
             ctrl.grid(row=2, column=0, columnspan=2, sticky="ew")
@@ -3503,6 +4157,9 @@ if HAS_TK:
                 ctrl, text="세트 인식 진단", font=UI_FONT, relief="groove",
                 padx=10, pady=4, command=self.show_scan_diagnosis)
             self.diag_btn.pack(side="left", padx=4)
+            tk.Button(ctrl, text="시작 로그 보기", font=UI_FONT, relief="groove",
+                      padx=10, pady=4, command=self.show_startup_log).pack(
+                side="left", padx=4)
             tk.Button(ctrl, text="업데이트 확인", font=UI_FONT, relief="groove",
                       padx=10, pady=4,
                       command=self.manual_update_check).pack(
@@ -3560,7 +4217,8 @@ if HAS_TK:
                 if r.get("mode") in ("부분연습", "오답재풀이"):
                     mx = r.get("만점")
                     score_s = (f"{score}/{mx:g}점" if score is not None
-                               and mx else score_s)
+                               and isinstance(mx, (int, float)) and mx
+                               else score_s)
                     score_s += f" [{r.get('mode')} · {r.get('영역', '?')}]"
                 lines.append(f"{r.get('일시', '?')}  |  {r.get('세트명', '?')}"
                              f"  |  {score_s}  |  {r.get('소요시간', '-')}")
@@ -3584,12 +4242,13 @@ if HAS_TK:
             summ = records_summary(load_records()).get(s["name"], {})
             best = summ.get("best")
             recent = summ.get("recent") or []
+            pdf = s.get("pdf")
             lines = [
                 f"세트: {s['name']}",
-                f"폴더: {s['dir']}",
+                f"폴더: {s.get('dir', '')}",
                 f"정답 파일: 있음",
-                f"기대값 JSON: {'있음' if s['key'] else '없음'}",
-                "문제지 PDF: " + (os.path.basename(s["pdf"]) if s["pdf"]
+                f"기대값 JSON: {'있음' if s.get('key') else '없음'}",
+                "문제지 PDF: " + (os.path.basename(pdf) if pdf
                                 else "미연결 ([문제지 연결]로 지정 가능)"),
                 "",
                 f"응시 기록: {len(recs)}회",
@@ -3598,6 +4257,19 @@ if HAS_TK:
                 + (" → ".join(str(x) for x in recent) if recent else "-"),
             ]
             self.info_lbl.configure(text="\n".join(lines), fg=INK)
+            # 문제지 회차·형·연도가 세트와 다르면(또는 달라서 무시했으면) 경고
+            warn = ""
+            if pdf and pdf_conflicts_with_set(s):
+                warn = PDF_MISMATCH_WARNING
+                if s.get("pdf_확인됨"):
+                    warn += " (사용자 확인 연결)"
+            elif s.get("pdf_warning"):
+                warn = "⚠ " + s["pdf_warning"] + " — [문제지 연결]로 바로잡으세요"
+            if warn:
+                self.pdf_warn_lbl.configure(text=warn)
+                self.pdf_warn_lbl.pack(fill="x", side="bottom")
+            else:
+                self.pdf_warn_lbl.pack_forget()
 
         # ---------------- 자동 업데이트 ----------------
 
@@ -3634,9 +4306,10 @@ if HAS_TK:
             ok, msg = apply_update(info)
             prog.destroy()
             if ok:
+                startup_log(f"업데이트 적용: {msg}")
                 messagebox.showinfo(
-                    APP_TITLE, msg + "\n\n프로그램을 다시 시작해 주세요.",
-                    parent=self)
+                    APP_TITLE, msg + "\n\n[확인]을 누르면 새 버전으로 다시 "
+                    "시작합니다.", parent=self)
                 self._try_restart()
             else:
                 CollapsibleErrorDialog(
@@ -3644,17 +4317,31 @@ if HAS_TK:
                     "업데이트에 실패해 기존 버전을 유지합니다.", msg)
 
         def _try_restart(self):
+            """새 프로세스를 먼저 띄운 뒤 현재 창 종료 (성공 여부 반환).
+
+            os.execl은 Windows에서 새 프로세스를 띄우고 현재 프로세스를 즉시
+            끝내는 방식이라 자식이 부모 종료·콘솔 문제를 겪을 수 있어
+            분리된 Popen으로 대체. 실패하면 직접 실행 안내.
+            """
             if self.exam_running:
-                return  # 시험 중에는 재시작하지 않음
-            script = os.path.join(BASE_DIR, "시험장.py")
+                return False  # 시험 중에는 재시작하지 않음
+            args, kwargs = restart_command()
+            try:
+                subprocess.Popen(args, **kwargs)
+                startup_log(f"재시작 실행: {args}")
+            except Exception as e:
+                log_error("재시작", e)
+                messagebox.showwarning(
+                    APP_TITLE,
+                    f"자동 재시작에 실패했습니다 ({e}).\n\n이 창을 닫고 "
+                    "코코시험장.pyw(또는 시험장.py)를 직접 다시 실행해 "
+                    "주세요.", parent=self)
+                return False
             try:
                 self.destroy()
             except Exception:
                 pass
-            try:
-                os.execl(sys.executable, sys.executable, script)
-            except Exception:
-                pass
+            return True
 
         def manual_update_check(self):
             info = fetch_update_info()
@@ -3680,8 +4367,22 @@ if HAS_TK:
                 filetypes=[("PDF 파일", "*.pdf"), ("모든 파일", "*.*")])
             if not path:
                 return
-            s["pdf"] = os.path.abspath(path)
+            path = os.path.abspath(path)
+            confirmed = False
+            if pdf_conflicts_with_set(s, path):
+                if not messagebox.askyesno(
+                        APP_TITLE,
+                        "선택한 문제지 파일명의 회차·형·연도가 세트와 다릅니다.\n"
+                        f"세트: {s['name']}\n문제지: {os.path.basename(path)}\n\n"
+                        "그래도 이 문제지를 연결할까요?", parent=self):
+                    return
+                confirmed = True
+            s["pdf"] = path
+            s["pdf_확인됨"] = confirmed
+            s.pop("pdf_warning", None)
             remember_set(s)
+            startup_log(f"문제지 연결: 세트 '{s['name']}' ← {path}"
+                        + (" (회차 불일치 — 사용자 확인)" if confirmed else ""))
             sel = self.listbox.curselection()
             self.refresh_sets()
             if sel:
@@ -3792,6 +4493,9 @@ if HAS_TK:
                         "저장할 때는 반드시 .xlsm 형식을 유지하세요 "
                         "(풀이 사본은 자동으로 .xlsm으로 만들어 드립니다).",
                         parent=self)
+            mode = (practice.get("mode") or "부분연습") if practice else "시험"
+            startup_log(f"세트 선택: '{s['name']}' · 모드={mode} · "
+                        f"문제={s['problem']} · PDF={s.get('pdf') or '없음'}")
             try:
                 if practice and practice.get("mode") == "오답재풀이":
                     student = make_retry_copy(s["problem"], s["name"])
@@ -3801,22 +4505,12 @@ if HAS_TK:
                 else:
                     student = make_attempt_copy(s["problem"], s["name"])
             except Exception as e:
-                log_error(f"풀이 사본 생성: {s.get('name')}", e)
+                text = log_error(f"풀이 사본 생성: {s.get('name')}", e)
                 CollapsibleErrorDialog(
                     self, APP_TITLE,
                     f"'{s.get('name')}' 세트를 시작하지 못했습니다: 풀이 사본을 "
-                    f"만들 수 없습니다 ({e})", log_error("", e))
+                    f"만들 수 없습니다 ({e})", text)
                 return
-            ok, err = open_file(student)
-            if not ok:
-                CollapsibleErrorDialog(
-                    self, APP_TITLE,
-                    "풀이 파일을 Excel로 열지 못했습니다.\n"
-                    "Excel(또는 호환 프로그램)이 설치되어 있는지 확인한 뒤,\n"
-                    "아래 파일을 직접 열어 풀이를 진행하세요:\n\n" + student,
-                    err)
-            if s["pdf"]:
-                open_file(s["pdf"])
             if practice:
                 minutes = int(practice.get("minutes")
                               or practice_minutes([]))
@@ -3829,13 +4523,104 @@ if HAS_TK:
                 "started": datetime.now(),
                 "practice_info": practice,
                 "plan": day_plan,
+                "excel_proc": None,
+                "closed": False,
             }
+            self._current_exam = exam
             self.exam_running = True
             self.start_btn.configure(state="disabled", text="진행 중")
+            # 문제지 PDF를 먼저 열고 → 잠시 후 Excel (Excel 창이 맨 앞에 오게)
+            delay = 0
+            if s.get("pdf"):
+                ok_pdf, err_pdf = open_file(s["pdf"])
+                startup_log(f"PDF 실행: {'성공' if ok_pdf else '실패 ' + err_pdf}"
+                            f" · {s['pdf']}")
+                delay = EXCEL_OPEN_DELAY_MS
+            self.after(delay, lambda: self._launch_workbook(exam))
             TimerWindow(self, exam)
+
+        def _launch_workbook(self, exam, prefer_excel=True, verify=True,
+                             source="시험 시작"):
+            """풀이 파일을 Excel로 열고 로그 + (verify면) 5초 뒤 실행 확인.
+            반환 (성공, 방법, 오류)."""
+            student = exam.get("student") or ""
+            if not student or not os.path.isfile(student):
+                err = f"풀이 파일이 없습니다: {student or '(경로 없음)'}"
+                startup_log(f"Excel 실행({source}): 실패 · {err}")
+                messagebox.showwarning(APP_TITLE, err, parent=self)
+                return False, "", err
+            ok, method, err, proc = open_workbook(student,
+                                                  prefer_excel=prefer_excel)
+            exam["excel_proc"] = proc
+            startup_log(f"Excel 실행({source}): {'성공' if ok else '실패'} · "
+                        f"방법={method}" + (f" · 오류={err}" if err else "")
+                        + f" · 파일={student}")
+            if not ok:
+                self._show_excel_warning(exam, f"실행 실패 — {err}")
+                return False, method, err
+            if verify:
+                self.after(EXCEL_CHECK_DELAY_MS,
+                           lambda: self._verify_excel(exam, 0))
+            return True, method, err
+
+        def _verify_excel(self, exam, tries):
+            """Excel 실행 후 확인: 잠금 파일/EXCEL.EXE 프로세스. 두 번(5초+3초)
+            확인해도 없으면 안내 창 (Windows 외에서는 판단하지 않음)."""
+            if exam.get("closed") or not exam.get("student"):
+                return
+            try:
+                status, detail = check_workbook_open(exam["student"],
+                                                     exam.get("excel_proc"))
+            except Exception as e:
+                log_error("Excel 실행 확인", e)
+                return
+            startup_log(f"Excel 확인({tries + 1}차): {status} · {detail}")
+            if status in ("open", "unknown"):
+                return
+            if tries < 1:
+                self.after(3000, lambda: self._verify_excel(exam, tries + 1))
+                return
+            self._show_excel_warning(exam, detail)
+
+        def _show_excel_warning(self, exam, detail):
+            w = self._excel_warn
+            if w is not None and w.winfo_exists():
+                w.update_detail(detail)
+                w.lift()
+                return w
+            self._excel_warn = ExcelWarnWindow(self, exam, detail)
+            return self._excel_warn
+
+        def reopen_student(self, exam, prefer_excel=True):
+            """[풀이 파일 열기]/[다시 열기]: 언제든 풀이 파일 재오픈.
+            반환 (성공, 방법, 오류)."""
+            return self._launch_workbook(
+                exam, prefer_excel=prefer_excel, verify=True,
+                source="다시 열기(Excel 직접)" if prefer_excel
+                else "기본 프로그램으로 열기")
+
+        def show_startup_log(self):
+            """[시작 로그 보기] — 시작 로그 텍스트 창 + 클립보드 복사."""
+            return DiagnosisWindow(
+                self, read_startup_log(),
+                title=f"{APP_TITLE} - 시작 로그",
+                hint=("프로그램 시작·세트 선택·사본 생성·Excel/PDF 실행 결과가 "
+                      f"시간순으로 기록된 파일입니다 ({STARTUP_LOG_PATH}). "
+                      "[클립보드 복사]해서 채팅에 붙여넣으면 진단해 드립니다."))
 
         def exam_closed(self):
             self.exam_running = False
+            exam = self._current_exam
+            if exam is not None:
+                exam["closed"] = True
+            self._current_exam = None
+            w = self._excel_warn
+            if w is not None and w.winfo_exists():
+                try:
+                    w.destroy()
+                except Exception:
+                    pass
+            self._excel_warn = None
             self.start_btn.configure(state="normal", text="시험 시작")
             self.refresh_records()
             self._show_info()
@@ -4460,6 +5245,62 @@ def run_smoke():
     app.update()
     assert "일정 슬롯 매칭" in diag.text_value and diag.copy() is True
     diag.destroy()
+    # v2.2.1: 시작 로그 창 / Excel 확인 안내 창 / 타이머 [풀이 파일 열기]
+    startup_log("스모크 테스트 줄")
+    logw = app.show_startup_log()
+    app.update_idletasks()
+    app.update()
+    assert "시작 로그" in logw.title() and "스모크 테스트 줄" in logw.text_value
+    logw.destroy()
+    assert timer.reopen_btn.cget("text") == "풀이 파일 열기"
+    warn = app._show_excel_warning(exam, "테스트 상세")
+    app.update_idletasks()
+    app.update()
+    assert warn.winfo_exists() and "테스트 상세" in warn.detail_lbl.cget("text")
+    assert [b.cget("text") for b in warn.buttons] == [
+        "다시 열기(Excel 직접)", "기본 프로그램으로 열기", "폴더 열기"]
+    assert app._show_excel_warning(exam, "갱신") is warn      # 창 재사용
+    assert "갱신" in warn.detail_lbl.cget("text")
+    _orig_warn = messagebox.showwarning
+    warned = []
+    messagebox.showwarning = lambda *a, **k: warned.append(a)
+    try:
+        ok_re, _m, err_re = app.reopen_student(exam)      # student="" → 안내만
+    finally:
+        messagebox.showwarning = _orig_warn
+    assert ok_re is False and "풀이 파일이 없습니다" in err_re and warned
+    app._current_exam = exam
+    app.exam_closed()                       # 안내 창 정리 + closed 표시
+    assert exam["closed"] is True and not warn.winfo_exists()
+    app._verify_excel(exam, 0)              # closed면 아무것도 안 함
+    # 세트 정보 패널: 문제지 회차 충돌 경고
+    bad = {"name": "2024년 상시2회 2급", "norm": "smoke상시2회", "dir": BASE_DIR,
+           "problem": "p", "answer": "a", "key": None,
+           "pdf": os.path.join(BASE_DIR, "2024 상시1회 문제지.pdf")}
+    saved_sets = app.sets
+    app.sets = [bad]
+    app.listbox.delete(0, "end")
+    app.listbox.insert("end", " x")
+    app.listbox.selection_set(0)
+    app._show_info()
+    assert app.pdf_warn_lbl.winfo_manager(), "충돌 경고 표시"
+    assert PDF_MISMATCH_WARNING in app.pdf_warn_lbl.cget("text")
+    bad["pdf"] = None
+    bad["pdf_warning"] = "저장된 문제지 연결(x.pdf)의 회차·형·연도가 세트와 달라 무시했습니다"
+    app._show_info()
+    assert app.pdf_warn_lbl.winfo_manager() and \
+        "무시했습니다" in app.pdf_warn_lbl.cget("text")
+    bad["pdf_warning"] = None
+    app._show_info()
+    assert not app.pdf_warn_lbl.winfo_manager()
+    app.sets = saved_sets
+    app.listbox.delete(0, "end")
+    for s_ in app.sets:
+        app.listbox.insert("end", " " + s_["name"])
+    # 재시작 명령은 만들기만 (실행하지 않음)
+    r_args, r_kw = restart_command(argv=["시험장.py"])
+    assert r_args[0] == sys.executable and r_args[1].endswith("시험장.py") \
+        and r_kw["cwd"] == BASE_DIR, (r_args, r_kw)
     # 스텝 실행 매핑 (세트 없는 환경 -> 모의는 missing, 채점은 info)
     kind, _p = resolve_step_action(plan_for_day(1)["스텝"][0], saved_sets)
     assert kind in ("exam", "missing")
@@ -4478,7 +5319,7 @@ def run_smoke():
     app.destroy()
     print("SMOKE OK: 창 생성/위젯 렌더/타이머/오답노트 패널/단계 가이드(세트 "
           "자동 선택·바꾸기·미발견 직접 선택)/오류 대화상자·로그/진단 창/"
-          "파괴 정상")
+          "시작 로그 창/Excel 확인 안내 창/PDF 회차 경고/파괴 정상")
 
 
 def _notify_no_tk():
@@ -4501,20 +5342,74 @@ def _notify_no_tk():
             pass
 
 
+def _show_fatal(title, msg):
+    """치명적 시작 오류 표시: tkinter messagebox → ctypes MessageBoxW → stderr.
+    (pythonw에서는 stderr가 없어 창으로 보여 주지 않으면 아무것도 안 보임)"""
+    shown = False
+    if HAS_TK:
+        try:
+            root = tk.Tk()
+            root.withdraw()
+            messagebox.showerror(title, msg)
+            root.destroy()
+            shown = True
+        except Exception:
+            shown = False
+    if not shown:
+        try:
+            import ctypes
+            ctypes.windll.user32.MessageBoxW(None, str(msg), str(title), 0x10)
+            shown = True
+        except Exception:
+            pass
+    if not shown:
+        try:
+            sys.__stderr__.write(f"{title}: {msg}\n")
+        except Exception:
+            pass
+
+
+def _platform_text():
+    try:
+        return platform.platform()
+    except Exception:
+        return sys.platform
+
+
 def main():
     ap = argparse.ArgumentParser(description=APP_TITLE)
     ap.add_argument("--scan-root", help="모의고사 스캔 폴더 (기본: 상위 폴더)")
     ap.add_argument("--smoke", action="store_true",
                     help="GUI 스모크 테스트 후 종료 (개발용)")
     args = ap.parse_args()
+    startup_log(f"프로그램 시작 v{__version__} · python={sys.executable} · "
+                f"{_platform_text()} · 실행 파일={sys.argv[0] if sys.argv else ''}"
+                f" · 옵션={sys.argv[1:]}")
     if not HAS_TK:
+        startup_log("tkinter 없음 — 종료")
         _notify_no_tk()
         return 1
     if args.smoke:
         run_smoke()
         return 0
-    app = ExamApp(scan_root=args.scan_root)
-    app.mainloop()
+    try:
+        app = ExamApp(scan_root=args.scan_root)
+    except Exception as e:
+        text = log_error("시작 화면 생성", e)
+        _show_fatal(f"{APP_TITLE} - 시작 오류",
+                    "시작 화면을 만들지 못했습니다.\n오류 내용은 "
+                    f"{ERROR_LOG_PATH}에 기록되었습니다. 이 내용을 복사해 "
+                    "채팅에 붙여넣어 주세요.\n\n" + text[-1500:])
+        return 1
+    try:
+        app.mainloop()
+    except Exception as e:
+        text = log_error("메인 루프", e)
+        _show_fatal(f"{APP_TITLE} - 오류",
+                    "프로그램이 예기치 않게 중단되었습니다.\n오류 내용은 "
+                    f"{ERROR_LOG_PATH}에 기록되었습니다.\n\n" + text[-1500:])
+        return 1
+    startup_log("정상 종료")
     return 0
 
 
