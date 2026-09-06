@@ -13,11 +13,13 @@
 v2.2.1: Excel 실행 강화 — Windows에서 EXCEL.EXE를 직접 찾아 실행하고 5초 뒤
 프로세스를 확인해 안 떴으면 재열기 안내, 타이머 [풀이 파일 열기], 시작 로그
 (채점결과/시험장_시작로그.txt), 문제지 PDF 회차 검증, 시작·재시작 안정화.
+v2.2.2: 세트 기대값 JSON 퍼지 연결 — 파일명 키가 달라도 연도·회차 토큰이 같은
+'*기대값*.json'을 문제지 PDF와 같은 규칙(유일할 때만)으로 세트에 연결.
 
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "2.2.1"
+__version__ = "2.2.3"
 
 import argparse
 import json
@@ -414,6 +416,7 @@ def scan_sets(root, config=None):
     """
     sets = []
     all_pdfs = []
+    all_keys = []
     groups = {}
     if root and os.path.isdir(root):
         for dirpath, dirnames, filenames in os.walk(root):
@@ -431,6 +434,8 @@ def scan_sets(root, config=None):
                     continue
                 if ext == ".pdf":
                     all_pdfs.append(path)
+                elif ext == ".json":
+                    all_keys.append(path)
                 k = norm_set_key(fn)
                 if not k:
                     continue
@@ -470,6 +475,19 @@ def scan_sets(root, config=None):
         if cand:
             s["pdf"] = cand
             used.add(cand)
+    # 같은 키 기대값 JSON이 없는 세트: 토큰 퍼지 매칭 (문제지 PDF와 같은 규칙,
+    # 유일할 때만) — 예: '2026_1회_기대값.json' ↔ '2026 … 1회_문제.xlsm'
+    used_k = {s["key"] for s in sets if s.get("key")}
+    for s in sets:
+        if s.get("key"):
+            continue
+        toks = set_tokens(s["name"]) | set_tokens(os.path.basename(s["dir"]))
+        others = [_set_tokens_of(o) for o in sets if o is not s]
+        cand = match_pdf_for_set(toks, [p for p in all_keys if p not in used_k],
+                                 others=others)
+        if cand:
+            s["key"] = cand
+            used_k.add(cand)
     apply_set_config(sets, config if config is not None else load_set_config())
     sets.sort(key=lambda s: s["name"])
     return sets
@@ -481,6 +499,7 @@ def build_direct_set(problem, answer, pdf=None):
     k = norm_set_key(problem)
     key = None
     auto_pdf = None
+    key_cands = []
     try:
         for fn in os.listdir(d):
             if fn.startswith("풀이_"):
@@ -488,10 +507,19 @@ def build_direct_set(problem, answer, pdf=None):
             ext = os.path.splitext(fn)[1].lower()
             if ext == ".json" and "기대값" in fn and norm_set_key(fn) == k:
                 key = os.path.join(d, fn)
+            elif ext == ".json" and "기대값" in fn:
+                key_cands.append(os.path.join(d, fn))
             elif ext == ".pdf" and norm_set_key(fn) == k:
                 auto_pdf = os.path.join(d, fn)
     except OSError:
         pass
+    if key is None and key_cands:
+        # 같은 키가 없으면 토큰(연도·회차·형) 퍼지 매칭 — 유일하고 토큰이
+        # 2개 이상(예: 2026·1회) 겹칠 때만 (직접 선택은 다른 세트 정보가 없음)
+        toks = set_tokens(display_name(problem)) | set_tokens(os.path.basename(d))
+        cand = match_pdf_for_set(toks, key_cands)
+        if cand and _pdf_score(toks, set_tokens(os.path.basename(cand))) >= 2:
+            key = cand
     return {
         "name": display_name(problem), "norm": k, "dir": d,
         "problem": os.path.abspath(problem),
