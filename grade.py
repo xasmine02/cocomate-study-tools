@@ -13,6 +13,26 @@
 의존성: Python 3.8+ / openpyxl (표준 라이브러리 외 유일한 의존성)
 
 변경 이력:
+    2.0.2  이의제기 5건 반영 (2026 상시 복원 1회 리포트 — 공식 문제지 PDF 기준)
+           - 기대값(--key) 확장: exclude(정답 파일 잔여 서식 등 채점 제외
+             목록: 시트별 {range, kinds, why}), chart(차트 축 지시를 명시:
+             axes [{axis: primary|secondary, max, min, major_unit}] — 나열한
+             속성만 채점). 세트별 보정을 채점기 코드 수정 없이 기대값 파일로.
+           - 계산작업: 정답이 수식이 아닌 셀(자료 셀, 예: '미응시' 같은 데이터
+             차이)은 계산 문제로 묶지 않고 채점 제외 — 계산작업은 수식 답만
+             채점. 문제 파일 오염 감지 확장: 정답 수식 위치에 '정답과 다른'
+             수식이 이미 있으면(이전 풀이 흔적) 문제 수와 무관하게 경고 +
+             리포트 상단 배너.
+           - 차트 축: 정답이 '자동'인 속성은 지시가 아니므로 채점 제외(학생의
+             부수 설정 무시), 축을 기본/보조 역할로 짝지어 속성 단위 비교
+             (문제에 없던 보조 축은 기준선 '자동'), 최소 0 명시 vs 자동은 자동
+             결과가 0이면 동일 처리, 숫자 표기(4e+07 → 40,000,000).
+           - 기본작업-3: 셀 값 기준(cellIs) 규칙을 '셀 값 >= 0.7'처럼 연산자
+             포함 표기(기존 '=0.7'로만 보여 오해), 연산자만 다른 경우 '규칙
+             유형 불일치' 대신 '비교 연산자 불일치(이상/초과)'로 설명 + 경계값
+             셀 유무 안내.
+           - 기본작업-2 정의된 이름: 내 답에 학생 파일의 실제 이름·참조 표기
+             ('없음 또는 다른 범위' 대신), 다중 영역 이름의 영역 수 차이 설명.
     2.0.1  이의제기 3건 반영 (2024 상공회의소 샘플 A형 리포트)
            - 기본작업-1: 정답 셀의 표시 형식으로 렌더한 결과가 같은 숫자
              (예: 0.00% → 0.5714와 4/7 모두 57.14%)는 정답 처리. 자료 입력은
@@ -35,7 +55,7 @@
     2.0.0  리포트 이의제기 기능(카드별 [이의제기] + 복사 텍스트) 및 학습 로그
 """
 
-__version__ = "2.0.1"
+__version__ = "2.0.2"
 
 import argparse
 import html as html_mod
@@ -1091,6 +1111,35 @@ CF_TYPE_KO = {
     "containsErrors": "오류", "timePeriod": "발생 날짜",
 }
 
+# 셀 값 기준(cellIs) 규칙의 비교 연산자: (기호, 한국어)
+CF_OP_KO = {
+    "lessThan": ("<", "미만"), "lessThanOrEqual": ("<=", "이하"),
+    "equal": ("=", "같음"), "notEqual": ("<>", "같지 않음"),
+    "greaterThanOrEqual": (">=", "이상"), "greaterThan": (">", "초과"),
+    "between": ("between", "사이"), "notBetween": ("notBetween", "사이 아님"),
+}
+
+
+def _cf_op_text(op):
+    """연산자 -> '>= (이상)' 표기."""
+    sym, ko = CF_OP_KO.get(op or "", (op or "?", ""))
+    return f"{sym} ({ko})" if ko else str(sym)
+
+
+def _cf_cond_text(rule):
+    """규칙의 조건 표기: 수식형은 '=수식', 셀 값 기준은 '셀 값 >= 0.7'."""
+    fs = rule.get("formulas") or []
+    if rule.get("type") == "cellIs":
+        op = rule.get("operator")
+        if op in ("between", "notBetween") and len(fs) >= 2:
+            return f"셀 값 {fs[0]} ~ {fs[1]} {CF_OP_KO[op][1]}"
+        sym = CF_OP_KO.get(op or "", (op or "?", ""))[0]
+        return f"셀 값 {sym} {fs[0] if fs else '?'}"
+    if fs:
+        return "=" + fs[0]
+    return f"({CF_TYPE_KO.get(rule.get('type'), rule.get('type'))})"
+
+
 CF_ROW_PRINCIPLE = (
     "'행 전체'에 서식을 적용하려면 ① 적용 범위는 표 전체(예: A4:H18)를 선택한 "
     "뒤 규칙을 만들고 ② 수식은 열만 고정한 혼합참조(예: =LEFT($A4,4)=\"2019\")"
@@ -1269,8 +1318,8 @@ def cf_compare_rule(rule, rules_s, map_s):
     반환 dict: ok, missing(규칙 없는 셀), type_bad, formula_bad, dxf_bad,
     fallback(셀 전개 불가로 집합 비교한 경우).
     """
-    out = {"ok": False, "missing": [], "type_bad": [], "formula_bad": [],
-           "dxf_bad": [], "fallback": False}
+    out = {"ok": False, "missing": [], "type_bad": [], "operator_bad": [],
+           "formula_bad": [], "dxf_bad": [], "fallback": False}
     anchor, cells, over = _cf_rule_cells(rule)
     if over or anchor is None:
         out["fallback"] = True
@@ -1282,11 +1331,22 @@ def cf_compare_rule(rule, rules_s, map_s):
         if not entries:
             out["missing"].append((r, c))
             continue
-        same_type = [e for e in entries
-                     if e[0] == rule["type"]
-                     and (e[1] or None) == (rule["operator"] or None)]
-        if not same_type:
+        same_kind = [e for e in entries if e[0] == rule["type"]]
+        if not same_kind:
             out["type_bad"].append((r, c))
+            continue
+        same_type = [e for e in same_kind
+                     if (e[1] or None) == (rule["operator"] or None)]
+        if not same_type:
+            # 유형·수식(경계값)은 같은데 비교 연산자만 다름 (예: >= 대신 >)
+            same_f_other_op = [e for e in same_kind if e[2] == eff]
+            if same_f_other_op:
+                out["operator_bad"].append((r, c))
+                for e in same_f_other_op:
+                    if e[1] not in out.setdefault("operators", []):
+                        out["operators"].append(e[1])
+            else:
+                out["formula_bad"].append((r, c))
             continue
         same_f = [e for e in same_type if e[2] == eff]
         if not same_f:
@@ -1294,15 +1354,13 @@ def cf_compare_rule(rule, rules_s, map_s):
             continue
         if not any(_dxf_compatible(rule["dxf"], e[3]) for e in same_f):
             out["dxf_bad"].append((r, c))
-    out["ok"] = not (out["missing"] or out["type_bad"] or out["formula_bad"]
-                     or out["dxf_bad"])
+    out["ok"] = not (out["missing"] or out["type_bad"] or out["operator_bad"]
+                     or out["formula_bad"] or out["dxf_bad"])
     return out
 
 
 def _cf_rule_text(rule):
-    f = ("=" + rule["formulas"][0]) if rule["formulas"] else \
-        f"({CF_TYPE_KO.get(rule['type'], rule['type'])})"
-    return f"{rule['sqref']}: {f} · {_dxf_desc(rule['dxf'])}"
+    return f"{rule['sqref']}: {_cf_cond_text(rule)} · {_dxf_desc(rule['dxf'])}"
 
 
 def cf_rule_set(ws):
@@ -1480,6 +1538,30 @@ def _size_matches(a, b):
     return abs(a - b) <= 0.5
 
 
+def _book_defined_name(book, name):
+    """통합 문서 스코프 이름의 정규화 참조 (시트 무관). 없으면 None."""
+    try:
+        for nm, dn in book.raw.defined_names.items():
+            if str(nm) == str(name):
+                return norm_ref(dn.value)
+    except Exception:
+        pass
+    return None
+
+
+def _ref_areas(ref):
+    """정규화 참조 '기본작업-2!A4:A10,기본작업-2!C4:C10' -> ['A4:A10', 'C4:C10']."""
+    if not ref:
+        return []
+    out = []
+    for part in str(ref).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        out.append(part.rsplit("!", 1)[-1])
+    return out
+
+
 def defined_names_for_sheet(book, sheet_name):
     """이 시트를 참조 대상에 포함하는 정의된 이름 {이름: 정규화참조}.
 
@@ -1645,7 +1727,110 @@ def normalize_key(key):
     for k, v in (key.get("format_checks") or {}).items():
         if isinstance(v, list):
             out["format_checks"][norm_sheet_name(k)] = v
+    # exclude: 시트별 채점 제외 목록 (정답 파일 잔여 서식 등, 문제지에 없는 차이)
+    #   {"기본작업-2": [{"range": "F2", "kinds": ["alignment"], "why": "..."}]}
+    #   kinds 생략 = 서식 전부(값 제외). "F2" 문자열만 적어도 됨.
+    out["exclude"] = {}
+    for k, v in (key.get("exclude") or {}).items():
+        items = []
+        for it in (v if isinstance(v, list) else [v]):
+            if isinstance(it, str):
+                it = {"range": it}
+            if not isinstance(it, dict) or not it.get("range"):
+                continue
+            kinds = it.get("kinds")
+            if isinstance(kinds, str):
+                kinds = [kinds]
+            items.append({"range": str(it["range"]).strip(),
+                          "kinds": [str(x) for x in kinds] if kinds else None,
+                          "why": it.get("why")})
+        if items:
+            out["exclude"][norm_sheet_name(k)] = items
+    # chart: 차트 지시 명시 — {"차트작업": {"axes": [{"axis": "secondary",
+    #   "max": 12000, "major_unit": 1500}]}} (나열한 축 속성만 채점)
+    out["chart"] = {}
+    for k, v in (key.get("chart") or {}).items():
+        if isinstance(v, dict):
+            out["chart"][norm_sheet_name(k)] = v
     return out
+
+
+EXCLUDE_FMT_KINDS = ("number_format", "font", "fill", "alignment", "border",
+                     "merge", "rowheight", "colwidth")
+EXCLUDE_KIND_KO = {"number_format": "표시 형식", "font": "글꼴", "fill": "채우기",
+                   "alignment": "맞춤", "border": "테두리", "merge": "병합",
+                   "rowheight": "행 높이", "colwidth": "열 너비", "value": "값"}
+
+
+def apply_key_exclusions(vdiffs, fdiffs, items):
+    """--key exclude 항목을 diff에서 제거. 반환: (vdiffs, fdiffs, 안내문 목록).
+
+    문제지에 지시가 없는데 정답 파일에만 남은 서식(제작자의 잔여 서식)을
+    세트 기대값으로 채점에서 빼는 용도. 값(value)은 kinds에 명시할 때만 제외.
+    """
+    from openpyxl.utils import get_column_letter
+    notes = []
+    for it in items or []:
+        try:
+            cells = set(expand_ref(it["range"]))
+        except Exception:
+            continue
+        kinds = it.get("kinds") or list(EXCLUDE_FMT_KINDS)
+        coords = {f"{get_column_letter(c)}{r}" for (r, c) in cells}
+        removed = []
+        for kind in kinds:
+            if kind == "value":
+                before = len(vdiffs)
+                vdiffs = [d for d in vdiffs if (d[0], d[1]) not in cells]
+                if len(vdiffs) != before:
+                    removed.append(kind)
+            elif kind in CELL_FMT_KINDS and fdiffs.get(kind):
+                keep = [co for co in fdiffs[kind] if co not in coords]
+                if len(keep) != len(fdiffs[kind]):
+                    removed.append(kind)
+                fdiffs[kind] = keep
+            elif kind == "border" and fdiffs.get("border"):
+                keep = [co for co in fdiffs["border"] if co not in coords]
+                if len(keep) != len(fdiffs["border"]):
+                    removed.append(kind)
+                fdiffs["border"] = keep
+                fdiffs["border_edges"] = {
+                    co: e for co, e in (fdiffs.get("border_edges") or {}).items()
+                    if co not in coords}
+            elif kind == "merge":
+                for mk in ("merge", "merge_del"):
+                    if not fdiffs.get(mk):
+                        continue
+                    keep = []
+                    for rng in fdiffs[mk]:
+                        try:
+                            anchor = expand_ref(rng)[0]
+                        except Exception:
+                            anchor = None
+                        if anchor in cells:
+                            removed.append(kind)
+                        else:
+                            keep.append(rng)
+                    fdiffs[mk] = keep
+            elif kind == "rowheight" and fdiffs.get("rowheight"):
+                rows = {r for (r, _c) in cells}
+                keep = [x for x in fdiffs["rowheight"] if x[0] not in rows]
+                if len(keep) != len(fdiffs["rowheight"]):
+                    removed.append(kind)
+                fdiffs["rowheight"] = keep
+            elif kind == "colwidth" and fdiffs.get("colwidth"):
+                cols = {get_column_letter(c) for (_r, c) in cells}
+                keep = [x for x in fdiffs["colwidth"] if x[0] not in cols]
+                if len(keep) != len(fdiffs["colwidth"]):
+                    removed.append(kind)
+                fdiffs["colwidth"] = keep
+        if removed:
+            kinds_ko = ", ".join(dict.fromkeys(
+                EXCLUDE_KIND_KO.get(k, k) for k in removed))
+            why = f" — {it['why']}" if it.get("why") else ""
+            notes.append(f"세트 기대값에 따라 채점 제외: {it['range']} "
+                         f"{kinds_ko}{why}")
+    return vdiffs, fdiffs, notes
 
 
 # ---------------------------------------------------------------------------
@@ -1781,23 +1966,158 @@ def chart_features(book, sheet_name):
     legend = root.find("c:chart/c:legend/c:legendPos", NS)
     legend_pos = legend.get("val") if legend is not None else (
         "r" if root.find("c:chart/c:legend", NS) is not None else None)
+    # 축별로 그려지는 계열 값(캐시 → 없으면 참조 셀) — 자동 최소값 판단용
+    ax_values = {}
+    for child in plot:
+        tag = child.tag.split("}")[1]
+        if not tag.endswith("Chart"):
+            continue
+        ids = [e.get("val") for e in child.findall("c:axId", NS)]
+        vals = []
+        for ser in child.findall("c:ser", NS):
+            got = []
+            for path in ("c:val//c:numCache//c:pt/c:v",
+                         "c:yVal//c:numCache//c:pt/c:v"):
+                for v in ser.findall(path, NS):
+                    try:
+                        got.append(float(v.text))
+                    except (TypeError, ValueError):
+                        pass
+            if not got:
+                for path in ("c:val//c:f", "c:yVal//c:f"):
+                    e = ser.find(path, NS)
+                    if e is not None and e.text:
+                        got = _range_values_from_ref(book, e.text)
+                        break
+            vals.extend(got)
+        for i in ids:
+            ax_values.setdefault(i, []).extend(vals)
     axes = []
+    axes_detail = []
     for ax in root.findall(".//c:valAx", NS):
         mx = ax.find("c:scaling/c:max", NS)
         mn = ax.find("c:scaling/c:min", NS)
         mju = ax.find("c:majorUnit", NS)
-        axes.append((
+        tup = (
             float(mx.get("val")) if mx is not None else None,
             float(mn.get("val")) if mn is not None else None,
             float(mju.get("val")) if mju is not None else None,
-        ))
+        )
+        axes.append(tup)
+        axid = ax.find("c:axId", NS)
+        pos = ax.find("c:axPos", NS)
+        crosses = ax.find("c:crosses", NS)
+        deleted = ax.find("c:delete", NS)
+        axes_detail.append({
+            "max": tup[0], "min": tup[1], "unit": tup[2],
+            "id": axid.get("val") if axid is not None else None,
+            "pos": pos.get("val") if pos is not None else None,
+            "crosses": crosses.get("val") if crosses is not None else None,
+            "deleted": deleted is not None and deleted.get("val") in ("1", "true"),
+            "values": ax_values.get(axid.get("val") if axid is not None else None,
+                                    []),
+        })
     return {
         "types": sorted(types),
         "title": title,
         "series": series,
         "legend": legend_pos,
         "axes": axes,
+        "axes_detail": axes_detail,
     }
+
+
+def _range_values_from_ref(book, ref):
+    """'시트명!$B$5:$F$5' 참조 범위의 숫자 값 목록 (캐시값 우선). 실패 시 []."""
+    try:
+        s = str(ref).strip().replace("$", "")
+        if "!" not in s:
+            return []
+        sheet, rng = s.rsplit("!", 1)
+        sheet = sheet.strip("'")
+        real = book.norm_map.get(norm_sheet_name(sheet))
+        if real is None:
+            return []
+        out = []
+        for (r, c) in expand_ref(rng):
+            v = book.cached[real].cell(r, c).value
+            if v is None:
+                v = book.raw[real].cell(r, c).value
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                out.append(float(v))
+        return out
+    except Exception:
+        return []
+
+
+AXIS_ROLE_KO = {"primary": "기본 축", "secondary": "보조 축"}
+AXIS_ATTR_KO = {"max": "최대", "min": "최소", "unit": "주 단위"}
+
+
+def _axes_by_role(feat):
+    """차트 특성 -> {'primary': 축 dict, 'secondary': 축 dict}.
+
+    보조 축은 crosses='max'(반대쪽에서 교차) 또는 오른쪽/위 위치로 판별.
+    같은 역할이 겹치면 문서 순서대로 기본 → 보조.
+    """
+    out = {}
+    if not feat:
+        return out
+    for ax in feat.get("axes_detail") or []:
+        role = "secondary" if (ax.get("crosses") == "max"
+                               or ax.get("pos") in ("r", "t")) else "primary"
+        if role in out:
+            role = "secondary" if "secondary" not in out else \
+                f"axis{len(out) + 1}"
+        out[role] = ax
+    return out
+
+
+def _axis_role_name(v):
+    s = str(v or "primary").strip().lower()
+    if s in ("secondary", "보조", "보조축", "보조 축", "2", "1"):
+        return "secondary"
+    return "primary"
+
+
+def _num_txt(v):
+    """축 값 표기: 자동 / 12,000 / 0.5 (4e+07 같은 표기 방지)."""
+    if v is None:
+        return "자동"
+    try:
+        f = float(v)
+        return f"{int(f):,}" if f.is_integer() else f"{f:g}"
+    except (TypeError, ValueError):
+        return str(v)
+
+
+def _auto_min_zero(values):
+    """Excel 자동 최소값이 0이 되는가: 값이 모두 0 이상이고, 최대-최소 차이가
+    최대의 1/6보다 클 때(값이 좁게 몰리면 0에서 시작하지 않음)."""
+    vals = [v for v in values if isinstance(v, (int, float))]
+    if not vals:
+        return False
+    lo, hi = min(vals), max(vals)
+    if lo < 0 or hi <= 0:
+        return False
+    return (hi - lo) > hi / 6.0
+
+
+def _axis_attr_ok(attr, want, have, ax_s, lenient_unit=False):
+    """축 속성 1개 판정. 자동(None)도 화면 결과가 같으면 정답:
+    주 단위 — 문제·학생 모두 자동이면 통과(기존), 최소 0 — 자동 최소가 0."""
+    if have is not None and want is not None:
+        try:
+            return abs(float(have) - float(want)) <= 1e-9 * max(1.0, abs(float(want)))
+        except (TypeError, ValueError):
+            return False
+    if have is None:
+        if attr == "unit" and lenient_unit:
+            return True
+        if attr == "min" and want == 0 and \
+                _auto_min_zero((ax_s or {}).get("values") or []):
+            return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -2262,16 +2582,44 @@ def grade_basic2(res, ctx):
             if not missing:
                 passed += 1
             else:
+                # 내 답: 학생 파일의 실제 정의(같은 이름이 다른 시트를 가리키는
+                # 경우 포함) — '없음 또는 다른 범위' 대신 구체 표기 (v2.0.2)
+                props = []
+                notes_nm = []
+                for nm in missing[:5]:
+                    exp_ref = str(payload[nm])
+                    got_ref = stu_names.get(nm) or _book_defined_name(book_s, nm)
+                    got_txt = f"'{nm}' = {got_ref}" if got_ref else \
+                        f"'{nm}' 이름 없음"
+                    props.append({"name": "정의된 이름",
+                                  "expected": f"'{nm}' = {exp_ref}",
+                                  "got": got_txt})
+                    ea, ga = _ref_areas(exp_ref), _ref_areas(got_ref)
+                    if got_ref and len(ea) > 1 and len(ga) < len(ea):
+                        notes_nm.append(
+                            f"'{nm}'의 정답 참조는 영역 {len(ea)}개"
+                            f"({', '.join(ea)})를 쉼표로 이은 것인데 내 답은 "
+                            f"{len(ga)}개({', '.join(ga) or '없음'})뿐입니다 — "
+                            "Ctrl을 누른 채 영역을 모두 선택한 뒤 이름을 "
+                            "정의해야 합니다.")
+                    elif got_ref and ea != ga:
+                        notes_nm.append(
+                            f"'{nm}'의 참조 범위가 다릅니다: 정답 "
+                            f"{', '.join(ea)} / 내 답 {', '.join(ga)}.")
                 res.details.append("[정의된 이름] 불일치 (이름 "
-                                   + ", ".join(missing[:5]) + ")")
+                                   + ", ".join(missing[:5]) + "): "
+                                   + "; ".join(p["got"] for p in props))
                 add_card(res, "서식 - 정의된 이름", per, "format",
                          cells=[{"coord": nm} for nm in missing[:5]],
-                         props=[{"name": "정의된 이름",
-                                 "expected": f"'{missing[0]}' = "
-                                             + str(payload[missing[0]]),
-                                 "got": "없음 또는 다른 범위"}],
+                         props=props,
                          hint="범위를 선택한 뒤 이름 상자(수식 입력줄 왼쪽)에 "
-                              "이름을 입력하고 Enter를 누릅니다.")
+                              "이름을 입력하고 Enter를 누릅니다. 떨어진 영역 "
+                              "두 개를 한 이름으로 정의하려면 첫 영역을 드래그한 "
+                              "뒤 Ctrl을 누른 채 둘째 영역을 드래그하고 이름 "
+                              "상자에 입력합니다 (수식 탭 → 이름 정의 → 참조 "
+                              "대상에 =시트!$A$4:$A$10,시트!$C$4:$C$10 도 가능).")
+                if notes_nm:
+                    res.wrong[-1]["diff_notes"] = notes_nm
         elif kind == "key_rowheight":
             bad = []
             for r, want in sorted(payload.items()):
@@ -2560,6 +2908,30 @@ def compare_result_block(ga, gs):
     return False, msgs or ["결과 행이 정답과 다릅니다"], False
 
 
+def _cf_boundary_note(rule, book_s, ssheet):
+    """셀 값 기준 규칙에서 경계값과 정확히 같은 셀이 적용 범위에 있는지 안내."""
+    try:
+        if rule.get("type") != "cellIs" or not rule.get("formulas") or not ssheet:
+            return ""
+        thr = float(str(rule["formulas"][0]).rstrip("%")) / (
+            100.0 if str(rule["formulas"][0]).endswith("%") else 1.0)
+        ws = book_s.cached[ssheet]
+        hits = []
+        for rng in rule.get("ranges") or []:
+            for (r, c) in expand_ref(rng):
+                v = ws.cell(r, c).value
+                if isinstance(v, (int, float)) and not isinstance(v, bool) \
+                        and abs(float(v) - thr) < 1e-9:
+                    hits.append(ws.cell(r, c).coordinate)
+        if hits:
+            return (f" 이 표에는 경계값 {thr:g}과 같은 셀({', '.join(hits[:4])})이 "
+                    "있어 화면 결과도 달라집니다.")
+        return (f" 이 표에는 경계값 {thr:g}과 정확히 같은 셀이 없어 화면 결과는 "
+                "같아 보이지만, 실제 시험은 규칙 자체를 채점하므로 오답입니다.")
+    except Exception:
+        return ""
+
+
 def grade_basic3(res, ctx):
     """기본작업-3: 조건부 서식 규칙 비교, 없으면 값 diff.
 
@@ -2602,6 +2974,13 @@ def grade_basic3(res, ctx):
             exp_f = ("=" + rule["formulas"][0]) if rule["formulas"] else None
             stu_f = next((("=" + s["formulas"][0]) for s in rules_s
                           if s["formulas"]), None)
+            # 조건 표기: 수식형 '=수식', 셀 값 기준 '셀 값 >= 0.7' (연산자 포함)
+            exp_c = _cf_cond_text(rule)
+            # 내 답 조건: 경계값(수식)이 같은 내 규칙이 있으면 그것만, 없으면 전부
+            same_thr = [s for s in rules_s if s["key"][3] == rule["key"][3]]
+            stu_c = " / ".join(_cf_cond_text(s) for s in (same_thr or rules_s)) \
+                or "(규칙 없음)"
+            is_cellis = typ == "cellIs"
             diffs = []
             if not rules_s:
                 diffs.append("내 시트에 조건부 서식 규칙이 없습니다 (문제 파일에 "
@@ -2620,6 +2999,15 @@ def grade_basic3(res, ctx):
                                     for s in rules_s})
                 diffs.append(f"규칙 유형 불일치: 정답 '{typ_ko}' / 내 답 "
                              f"'{', '.join(got_types)}'")
+            op_got = None
+            if v["operator_bad"]:
+                ops = [o for o in (v.get("operators") or []) if o]
+                op_got = ", ".join(_cf_op_text(o) for o in ops) or "(없음)"
+                diffs.append(
+                    f"비교 연산자 불일치: 정답 {_cf_op_text(rule['operator'])} / "
+                    f"내 답 {op_got} — '이상/이하'는 그 값을 포함하므로 >= / <=, "
+                    f"'초과/미만'은 포함하지 않으므로 > / < 입니다."
+                    + _cf_boundary_note(rule, book_s, ssheet))
             if v["formula_bad"]:
                 anchoring = stu_f is not None and exp_f is not None and \
                     norm_formula(stu_f) == norm_formula(exp_f)
@@ -2629,6 +3017,9 @@ def grade_basic3(res, ctx):
                         f"정답 {exp_f}. 행마다 기준 열을 검사하려면 열만 고정한 "
                         "혼합참조($A4)여야 합니다 — A4(상대)는 B열에서 B4를 "
                         "검사하고, $A$4(절대)는 모든 행이 4행만 검사합니다.")
+                elif is_cellis:
+                    diffs.append(f"조건 불일치: 정답 {exp_c} / 내 답 {stu_c} "
+                                 f"({_rng_txt(v['formula_bad'])})")
                 else:
                     diffs.append(f"수식 불일치: 정답 {exp_f} / 내 답 "
                                  f"{stu_f or '(수식 없음)'} "
@@ -2639,18 +3030,14 @@ def grade_basic3(res, ctx):
                              f"/ 내 답 {got_d}")
             stu_txt = " / ".join(_cf_rule_text(s) for s in rules_s) or "(규칙 없음)"
             res.details.append(
-                f"[조건부 서식] 누락/불일치: 범위 {sq}, 유형 {typ_ko}"
-                + (f", 수식 {exp_f}" if exp_f else "")
+                f"[조건부 서식] 누락/불일치: 범위 {sq}, 유형 {typ_ko}, 조건 {exp_c}"
                 + f" / 내 규칙: {stu_txt}"
                 + (" — " + " ".join(diffs) if diffs else ""))
             props = [
                 {"name": "적용 범위", "expected": sq,
                  "got": " / ".join(s["sqref"] for s in rules_s) or "(규칙 없음)"},
-                {"name": "수식", "expected": exp_f or f"({typ_ko})",
-                 "got": " / ".join(
-                     (("=" + s["formulas"][0]) if s["formulas"]
-                      else f"({CF_TYPE_KO.get(s['type'], s['type'])})")
-                     for s in rules_s) or "(규칙 없음)"},
+                {"name": "조건" if is_cellis else "수식", "expected": exp_c,
+                 "got": stu_c},
                 {"name": "적용 서식", "expected": _dxf_desc(rule["dxf"]),
                  "got": " / ".join(_dxf_desc(s["dxf"]) for s in rules_s)
                  or "(규칙 없음)"},
@@ -2660,20 +3047,43 @@ def grade_basic3(res, ctx):
                               "got": ", ".join(sorted(
                                   {CF_TYPE_KO.get(s["type"], s["type"])
                                    for s in rules_s})) or "(규칙 없음)"})
+            if v["operator_bad"]:
+                props.append({"name": "비교 연산자",
+                              "expected": _cf_op_text(rule["operator"]),
+                              "got": op_got})
+            if is_cellis:
+                hint = ("홈 탭 → 조건부 서식 → 새 규칙 → '다음을 포함하는 셀만 "
+                        "서식 지정' → '셀 값' / 연산자(이상 = >=, 초과 = >, "
+                        "이하 = <=, 미만 = <) / 값 입력 → [서식]에서 채우기·"
+                        "글꼴 지정. 규칙 수만큼 새 규칙을 반복합니다.")
+                point = ("'70% 이상'은 70%를 포함하므로 '>=' (이상), '70% 초과'는 "
+                         "포함하지 않으므로 '>' 입니다. 실제 시험은 화면 결과가 "
+                         "아니라 규칙(연산자·값·서식) 자체를 채점합니다.")
+            else:
+                hint = ("홈 탭 → 조건부 서식 → 새 규칙 → '수식을 사용하여 "
+                        "서식을 지정할 셀 결정'. 포인트: 행 전체에 적용하려면 "
+                        "표 전체 범위를 먼저 선택하고, 수식은 열만 고정하는 "
+                        "혼합참조($A4)를 쓰며, 텍스트 비교는 큰따옴표"
+                        "(\"...\")로 감쌉니다.")
+                point = CF_ROW_PRINCIPLE
             add_card(res, "조건부 서식", res.alloc / len(target), "cf",
-                     formula=exp_f, props=props,
+                     formula=None if is_cellis else exp_f, props=props,
                      note=f"정답 규칙: 적용 범위 {sq} / 유형 {typ_ko}"
-                          + (f" / 수식 {exp_f}" if exp_f else "")
+                          + f" / 조건 {exp_c}"
                           + f" / {_dxf_desc(rule['dxf'])} ‖ 내 규칙: {stu_txt}",
-                     hint="홈 탭 → 조건부 서식 → 새 규칙 → '수식을 사용하여 "
-                          "서식을 지정할 셀 결정'. 포인트: 행 전체에 적용하려면 "
-                          "표 전체 범위를 먼저 선택하고, 수식은 열만 고정하는 "
-                          "혼합참조($A4)를 쓰며, 텍스트 비교는 큰따옴표"
-                          "(\"...\")로 감쌉니다.")
+                     hint=hint)
             card = res.wrong[-1]
             card["diff_notes"] = diffs
             card["student_formula"] = stu_f
-            card["point"] = CF_ROW_PRINCIPLE
+            card["point"] = point
+            if is_cellis:
+                card["explain"] = [
+                    f"① {sq} 범위를 선택하고 홈 탭 → 조건부 서식 → 새 규칙",
+                    "② 규칙 유형 '다음을 포함하는 셀만 서식 지정' → '셀 값' 선택",
+                    f"③ 조건: {exp_c} "
+                    f"(연산자 {_cf_op_text(rule['operator'])})",
+                    f"④ [서식] 단추 → {_dxf_desc(rule['dxf'])} → 확인",
+                ]
         res.earned = int(round(res.alloc * matched / len(target)))
         return
     diffs = ctx["vdiffs"]
@@ -2795,6 +3205,21 @@ def grade_calc(res, ctx):
         return
     judge = ctx["judge"]
     key_groups = (ctx["key"].get("groups") or {}).get(norm_sheet_name(res.name))
+    sha = ctx["book_a"].raw[ctx["asheet"]]
+    # 계산작업은 수식으로 답하는 문제만 채점: 정답이 수식이 아닌 diff 셀(자료
+    # 셀 — 예: 정답 파일 B35 '미응시' vs 문제 파일 0)은 문제로 묶지 않음
+    if not key_groups:
+        f_diffs = [(r, c, co) for (r, c, co) in diffs
+                   if formula_text(sha.cell(r, c).value) is not None]
+        d_diffs = [d for d in diffs if d not in f_diffs]
+        if f_diffs and d_diffs:
+            dc = compress_coords([co for (_r, _c, co) in d_diffs])
+            res.notes.append(
+                "정답이 수식이 아닌 셀 " + ", ".join(dc[:4])
+                + (" 외" if len(dc) > 4 else "")
+                + "은(는) 자료(데이터) 셀로 보아 계산 문제에서 제외했습니다 — "
+                  "계산작업은 수식으로 답하는 문제만 채점합니다.")
+            diffs = f_diffs
     if key_groups:
         from openpyxl.utils import get_column_letter
         groups = []
@@ -2811,25 +3236,35 @@ def grade_calc(res, ctx):
         groups = [[(r, c, co[(r, c)]) for (r, c) in cl] for cl in clusters]
     n = len(groups)
     per = res.alloc / n
-    # 문제 파일 오염 감지: 정답 수식이 문제 파일에 이미 같은 수식으로 들어 있음
+    # 문제 파일 오염 감지
+    #  - contaminated: 정답 수식이 문제 파일에 이미 같은 수식으로 들어 있음
+    #    (문제 수가 표준보다 적을 때만 — 문제가 미리 채워 준 수식과 구분 불가)
+    #  - contaminated_diff: 정답 수식 위치에 '정답과 다른' 수식이 이미 있음
+    #    (이전 풀이 흔적 — 원본 문제에는 없는 것이므로 문제 수와 무관하게 경고)
     contaminated = []
-    if not key_groups and n < CALC_GROUP_TARGET:
-        try:
-            sha = ctx["book_a"].raw[ctx["asheet"]]
-            shp = ctx["book_p"].raw[ctx["psheet"]]
-            diff_set = {(r, c) for (r, c, _) in diffs}
-            for row in sha.iter_rows(max_row=min(sha.max_row or 1, MAX_SCAN_ROWS),
-                                     max_col=min(sha.max_column or 1,
-                                                 MAX_SCAN_COLS)):
-                for cell in row:
-                    fa = formula_text(cell.value)
-                    if fa is None or (cell.row, cell.column) in diff_set:
-                        continue
-                    fp = formula_text(shp.cell(cell.row, cell.column).value)
-                    if fp is not None and norm_formula(fp) == norm_formula(fa):
-                        contaminated.append(cell.coordinate)
-        except Exception:
-            contaminated = []
+    contaminated_diff = []
+    try:
+        shp = ctx["book_p"].raw[ctx["psheet"]]
+        diff_set = {(r, c) for (r, c, _) in ctx["vdiffs"]}
+        for row in sha.iter_rows(max_row=min(sha.max_row or 1, MAX_SCAN_ROWS),
+                                 max_col=min(sha.max_column or 1,
+                                             MAX_SCAN_COLS)):
+            for cell in row:
+                fa = formula_text(cell.value)
+                if fa is None:
+                    continue
+                fp = formula_text(shp.cell(cell.row, cell.column).value)
+                if fp is None:
+                    continue
+                if (cell.row, cell.column) in diff_set:
+                    if norm_formula(fp) != norm_formula(fa):
+                        contaminated_diff.append(cell.coordinate)
+                elif norm_formula(fp) == norm_formula(fa):
+                    contaminated.append(cell.coordinate)
+    except Exception:
+        contaminated, contaminated_diff = [], []
+    if key_groups or n >= CALC_GROUP_TARGET:
+        contaminated = []
     passed = 0
     for gi, cells in enumerate(groups, 1):
         wrong = [(r, c, co) for (r, c, co) in cells if not judge.judge(r, c)[0]]
@@ -2879,6 +3314,20 @@ def grade_calc(res, ctx):
             "덮어써진 것(문제 파일 오염) 같습니다. 이 상태에서는 남은 부분만 "
             f"문제로 인식돼 배점이 {n}개 문제에 몰립니다(문제당 {per:.0f}점). "
             "원본 문제 파일을 다시 받아 채점하세요.")
+    if contaminated_diff:
+        cc = compress_coords(contaminated_diff)
+        res.notes.append(
+            f"주의: 문제 파일의 계산작업에 정답과 다른 수식이 이미 "
+            f"{len(contaminated_diff)}개 들어 있습니다 ({', '.join(cc[:4])}"
+            f"{' 외' if len(cc) > 4 else ''}). 원본 문제에는 없는 수식이므로 "
+            "문제 파일이 이전 풀이로 덮어써진 것(문제 파일 오염)으로 보입니다. "
+            "문제↔정답 차이가 줄어 문제 수·배점·다른 시트의 채점 기준이 실제와 "
+            "달라질 수 있으니 원본 문제 파일을 다시 받아 채점하세요"
+            + ("" if key_groups else
+               " (세트 기대값 파일이 있으면 문제 구성은 그 파일을 따릅니다)")
+            + ".")
+    if contaminated or contaminated_diff:
+        res.contaminated = compress_coords(contaminated + contaminated_diff)
 
 
 def grade_analysis(res, ctx):
@@ -3124,37 +3573,61 @@ def grade_chart(res, ctx):
              "레이블을 붙일 계열만 한 번 클릭해 선택한 뒤 차트 요소(+) → "
              "데이터 레이블에서 위치를 지정합니다.")
 
-    # 5. 축 설정(문제↔정답이 다른 속성만, 주 단위 자동값 허용) / 범례 위치
+    # 5. 축 설정 / 범례 위치
+    #   축을 기본/보조 역할로 짝지어 속성(최대·최소·주 단위) 단위로 비교.
+    #   - 정답이 '자동'인 속성은 지시가 아니므로 채점 안 함 (학생의 부수 설정 무시)
+    #   - 문제와 같은 값도 지시가 아님. 문제에 없던 축(새 보조 축)은 기준선 자동
+    #   - 최소 0 명시 vs 자동: 자동 결과가 0이면 동일 처리. 주 단위 자동: 기존 관대
+    #   - 세트 기대값 chart.axes가 있으면 나열한 속성만 그 값으로 채점
     def axis_item():
-        """(채점 대상?, 통과?, 기대, 학생) — 문제 기준선 속성 단위 비교."""
-        ax_a, ax_s = fa["axes"], fs["axes"]
-        ax_p = fp["axes"] if fp is not None else None
-        if ax_p is not None and len(ax_p) == len(ax_a):
-            graded_any = False
-            ok = True
-            exp, got = [], []
-            names = ("최대", "최소", "주 단위")
-            for i in range(len(ax_a)):
-                for j, nm in enumerate(names):
-                    aa, pa = ax_a[i][j], ax_p[i][j]
-                    sa = ax_s[i][j] if i < len(ax_s) else None
-                    if aa == pa:
-                        continue  # 정답 작성자 부수 설정/기존 값
-                    graded_any = True
-                    if sa == aa:
+        """(채점 대상?, 통과?, 기대, 학생)"""
+        A, S = _axes_by_role(fa), _axes_by_role(fs)
+        P = _axes_by_role(fp) if fp is not None else {}
+        graded_any, ok, exp, got = False, True, [], []
+
+        def _txt(role, attr, v, missing=False):
+            return (f"{AXIS_ROLE_KO.get(role, role)} {AXIS_ATTR_KO[attr]} "
+                    f"{_num_txt(v)}" + (" (축 없음)" if missing else ""))
+
+        spec = ((ctx["key"].get("chart") or {}).get(norm_sheet_name(res.name))
+                or {}).get("axes")
+        if spec:
+            for item in (spec if isinstance(spec, list) else [spec]):
+                if not isinstance(item, dict):
+                    continue
+                role = _axis_role_name(item.get("axis"))
+                a_s = S.get(role)
+                for attr, keys in (("max", ("max",)), ("min", ("min",)),
+                                   ("unit", ("major_unit", "unit"))):
+                    want = next((item[k] for k in keys
+                                 if item.get(k) is not None), None)
+                    if want is None:
                         continue
-                    if j == 2 and sa is None and pa is None:
-                        continue  # 주 단위: 자동값이 지시 결과와 동일 가능
+                    graded_any = True
+                    have = a_s.get(attr) if a_s else None
+                    if _axis_attr_ok(attr, float(want), have, a_s):
+                        continue
                     ok = False
-                    exp.append(f"{nm} {aa:g}" if aa is not None else f"{nm} 자동")
-                    got.append(f"{nm} {sa:g}" if sa is not None else f"{nm} 자동")
+                    exp.append(_txt(role, attr, want))
+                    got.append(_txt(role, attr, have, missing=a_s is None))
             return graded_any, ok, ", ".join(exp), ", ".join(got)
-        a_set = [x for x in ax_a if any(v is not None for v in x)]
-        if not a_set:
-            return False, True, "", ""
-        s_set = [x for x in ax_s if any(v is not None for v in x)]
-        return True, sorted(map(str, a_set)) == sorted(map(str, s_set)), \
-            str(a_set), str(s_set)
+        for role, a_a in A.items():
+            a_p, a_s = P.get(role), S.get(role)
+            for attr in ("max", "min", "unit"):
+                aa = a_a.get(attr)
+                if aa is None:
+                    continue           # 정답이 자동 = 지시 아님
+                pa = a_p.get(attr) if a_p else None
+                if pa is not None and abs(pa - aa) <= 1e-9 * max(1.0, abs(aa)):
+                    continue           # 문제와 같음 = 정답 작성자 부수 설정/기존 값
+                graded_any = True
+                sa = a_s.get(attr) if a_s else None
+                if _axis_attr_ok(attr, aa, sa, a_s, lenient_unit=(pa is None)):
+                    continue
+                ok = False
+                exp.append(_txt(role, attr, aa))
+                got.append(_txt(role, attr, sa, missing=a_s is None))
+        return graded_any, ok, ", ".join(exp), ", ".join(got)
 
     ax_graded, ax_ok, ax_exp, ax_got = axis_item()
     if ax_graded:
@@ -3162,8 +3635,9 @@ def grade_chart(res, ctx):
             passed += 1
         else:
             fail("축 설정", ax_exp, ax_got,
-                 "세로 축 더블클릭 → 축 서식에서 최소/최대 경계와 단위 "
-                 "(주 단위)를 지시 값으로 입력합니다.")
+                 "축(기본 축은 왼쪽, 보조 축은 오른쪽 세로 축)을 더블클릭 → "
+                 "축 서식 → 축 옵션에서 경계 최소/최대와 단위(기본)를 지시 "
+                 "값으로 입력합니다. 지시에 없는 항목은 '자동'으로 두세요.")
     else:
         legend_graded = fp is None or fp["legend"] != fa["legend"]
         if not legend_graded or fa["legend"] == fs["legend"]:
@@ -3276,12 +3750,18 @@ def run_grading(problem_path, answer_path, student_path, key, sheets=None):
             if n in NEEDS_FMT_DIFF else {}
         key_cells = {k.upper(): v for k, v in
                      ((key.get("cells") or {}).get(n) or {}).items()}
+        # 세트 기대값 exclude: 문제지에 없는 정답 파일 잔여 서식 등 채점 제외
+        excl_notes = []
+        excl = (key.get("exclude") or {}).get(n)
+        if excl:
+            vdiffs, fdiffs, excl_notes = apply_key_exclusions(vdiffs, fdiffs, excl)
         judge = CellJudge(book_a, book_s, asheet, ssheet, key_cells,
                           display_tolerant=(n == "기본작업-1"))
         ctxs[n] = {
             "book_p": book_p, "book_a": book_a, "book_s": book_s,
             "psheet": psheet, "asheet": asheet, "ssheet": ssheet,
             "vdiffs": vdiffs, "fdiffs": fdiffs, "judge": judge, "key": key,
+            "exclude_notes": excl_notes,
         }
         if n not in points:
             nonstd.append(n)
@@ -3328,6 +3808,8 @@ def run_grading(problem_path, answer_path, student_path, key, sheets=None):
                 pass
         res.earned = max(0, min(res.alloc if isinstance(res.alloc, int)
                                 else res.alloc, res.earned))
+        for note in ctx.get("exclude_notes") or []:
+            res.notes.append(note)
         if ctx["judge"].formula_only_used:
             formula_only = True
         results.append(res)
@@ -4665,6 +5147,16 @@ def write_html(path, results, score100, global_notes, paths,
         warn_html = ('<div class="warn-banner">풀이가 거의 비어 있습니다 — '
                      'Excel에서 저장(Ctrl+S)했는지, 풀이 사본 파일이 맞는지 '
                      '확인하세요</div>')
+    # 문제 파일 오염 의심(계산작업에 수식이 이미 있음): 상단 배너 (v2.0.2)
+    contam = [c for r in results for c in (getattr(r, "contaminated", None) or [])]
+    if contam:
+        warn_html += ('<div class="warn-banner">문제 파일 오염 의심 — 문제 파일의 '
+                      '계산작업에 수식이 이미 들어 있습니다 ('
+                      + esc(", ".join(contam[:4]))
+                      + (" 외" if len(contam) > 4 else "")
+                      + '). 이전 풀이로 덮어써진 파일이면 문제 수·배점과 다른 '
+                      '시트의 채점 기준이 실제와 달라집니다. 원본 문제 파일을 '
+                      '다시 받아 채점하세요</div>')
 
     all_cards = [c for r in results for c in r.wrong]
     cat_losses, top3, checklist = build_diagnosis(results)
