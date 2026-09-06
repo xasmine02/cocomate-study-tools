@@ -19,11 +19,16 @@ v2.3.0: 완전 자동 업데이트 — 실행할 때마다 백그라운드로 ve
 새 버전이면 묻지 않고 내려받아 검증(sha256·py_compile·json)·백업·적용하고
 자동 재시작(시험 중이면 종료 후). 기대값 JSON(data_files)은 루트/기대값/에
 자동 배포·갱신되고 세트에 자동 연결. 세트설정 `_설정.자동업데이트` 토글.
+v2.3.1: 세트 인식 전면 수정 — 일정 슬롯↔세트를 전역 유일 배정(연도 충돌은 슬롯
+전체 토큰 기준, 정확 > 식별 > 부분 일치, 한 세트는 한 슬롯, 동점은 미배정+사유),
+문제 파일 내용(SHA-256)이 같은 세트 병합, 문제지 PDF·기대값 JSON 전역 유일 연결,
+세트 토큰 없는 PDF는 진단에서 '무관'으로 접음. 코코 모의고사 1·2회 세트 파일
+(xlsx·pdf)을 version.json `set_files`로 루트/모의고사/에 자동 배포.
 
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "2.3.0"
+__version__ = "2.3.1"
 
 import argparse
 import hashlib
@@ -270,19 +275,72 @@ def set_tokens(text):
     return toks
 
 
+_YEAR4_RE = re.compile(r"20\d{2}")
+_YEAR2_RE = re.compile(r"2\d")
+_ROUND_RE = re.compile(r"\d{1,2}회")
+_FORM_RE = re.compile(r"[ab가나]형")
+
+
+def _year_tokens(toks):
+    """연도 토큰을 4자리로 정규화한 집합 ('24' → '2024', '2026' 그대로)."""
+    out = set()
+    for t in toks:
+        if _YEAR4_RE.fullmatch(t):
+            out.add(t)
+        elif _YEAR2_RE.fullmatch(t):
+            out.add("20" + t)
+    return out
+
+
+def _is_year_token(t):
+    return bool(_YEAR4_RE.fullmatch(t) or _YEAR2_RE.fullmatch(t))
+
+
 def _token_conflict(a, b):
-    """연도/회차/형 토큰이 양쪽 모두에 있는데 서로 다르면 충돌."""
-    for pat in (r"20\d{2}", r"\d{1,2}회", r"[ab가나]형"):
-        ca = {t for t in a if re.fullmatch(pat, t)}
-        cb = {t for t in b if re.fullmatch(pat, t)}
+    """연도/회차/형 토큰이 양쪽 모두에 있는데 서로 다르면 충돌.
+
+    연도는 2자리('24')와 4자리('2024')를 같은 해로 봅니다(v2.3.1) — '24 2급
+    상시' 슬롯이나 '24_2급상시_문제지.pdf'가 2026 세트에 붙지 않도록.
+    """
+    ya, yb = _year_tokens(a), _year_tokens(b)
+    if ya and yb and not (ya & yb):
+        return True
+    for pat in (_ROUND_RE, _FORM_RE):
+        ca = {t for t in a if pat.fullmatch(t)}
+        cb = {t for t in b if pat.fullmatch(t)}
         if ca and cb and not (ca & cb):
             return True
     return False
 
 
-def _pdf_score(toks, pt):
-    """세트 토큰과 PDF 토큰의 일치 점수 (회차·형·연도 충돌이면 0)."""
-    return 0 if _token_conflict(toks, pt) else len(toks & pt)
+def _shared_count(a, b):
+    """겹치는 토큰 수 — 연도는 정규화해 같은 해면 1개로 셉니다."""
+    non_year = {t for t in a & b if not _is_year_token(t)}
+    return len(non_year) + len(_year_tokens(a) & _year_tokens(b))
+
+
+def _numeric_shared(a, b):
+    """겹치는 연도(정규화)·회차·형 토큰 수 — 동점 가르기용."""
+    n = len(_year_tokens(a) & _year_tokens(b))
+    n += len({t for t in a
+              if _ROUND_RE.fullmatch(t) or _FORM_RE.fullmatch(t)} & b)
+    return n
+
+
+def _pdf_score(toks, pt, name=""):
+    """세트 토큰과 파일(문제지 PDF·기대값 JSON) 토큰의 일치 점수.
+
+    회차·형·연도(2자리 포함) 충돌이면 0. 연도만 겹치는 파일은 파일명에
+    '문제'/'기대값'이 있을 때만 후보(v2.3.1) — '아이모2026_발표.pdf' 같은
+    무관한 문서가 연도 하나로 세트에 붙지 않도록.
+    """
+    if _token_conflict(toks, pt):
+        return 0
+    shared = _shared_count(toks, pt)
+    if shared and not {t for t in toks & pt if not _is_year_token(t)} \
+            and not any(w in str(name) for w in ("문제", "기대값")):
+        return 0
+    return shared
 
 
 def match_pdf_for_set(toks, pdf_paths, others=()):
@@ -291,14 +349,17 @@ def match_pdf_for_set(toks, pdf_paths, others=()):
     others: 다른 세트들의 토큰 집합 목록. PDF가 다른 세트와 같은 점수로
     맞으면(예: '2024 상시 문제지.pdf'가 상시 1회·2회 모두에 맞음) 어느
     세트의 문제지인지 알 수 없으므로 연결하지 않습니다.
+    (직접 선택 세트처럼 세트 목록이 없을 때 쓰는 단일 세트용 — 스캔 세트
+    전체는 link_files_globally가 전역 유일 연결을 합니다.)
     """
     scored = []
     for p in pdf_paths:
-        pt = set_tokens(os.path.basename(p))
-        shared = _pdf_score(toks, pt)
+        name = os.path.basename(p)
+        pt = set_tokens(name)
+        shared = _pdf_score(toks, pt, name)
         if shared < 1:
             continue
-        if any(_pdf_score(ot, pt) >= shared for ot in others):
+        if any(_pdf_score(ot, pt, name) >= shared for ot in others):
             continue           # 다른 세트에도 똑같이 맞는 애매한 PDF
         scored.append((shared, p))
     if not scored:
@@ -306,6 +367,95 @@ def match_pdf_for_set(toks, pdf_paths, others=()):
     best = max(s for s, _p in scored)
     matched = [p for s, p in scored if s == best]
     return matched[0] if len(matched) == 1 else None
+
+
+def _file_link_score(st, path):
+    """세트 토큰 ↔ 파일 점수 튜플 (겹침 수, 연도·회차·형 겹침 수, 파일 토큰이
+    세트 토큰에 다 들어가는지). 후보가 아니면 None.
+
+    겹침이 1개뿐이면 파일 토큰이 세트 토큰에 모두 포함될 때만 후보 —
+    '코코모의고사1회_기대값.json'이 '1회' 하나로 2024 기출 1회 세트에 붙지 않도록
+    ('2024_문제지.pdf' ↔ '2024 A형'처럼 파일 쪽 토큰이 더 적은 경우는 허용).
+    """
+    name = os.path.basename(path)
+    pt = set_tokens(name)
+    shared = _pdf_score(st, pt, name)
+    if shared < 1:
+        return None
+    contained = 1 if all(_has_token(st, t) for t in pt) else 0
+    if shared < 2 and not contained:
+        return None
+    return (shared, _numeric_shared(st, pt), contained)
+
+
+def link_files_globally(sets, paths, field, origin=None, tokens_of=None,
+                        cands_of=None):
+    """세트 ↔ 파일(문제지 PDF 또는 기대값 JSON) 전역 유일 연결 (v2.3.1).
+
+    각 파일은 최대 한 세트, 각 세트는 최대 한 파일. field가 이미 있는 세트와
+    이미 쓰인 파일은 후보에서 빠집니다. 점수(겹치는 토큰 수 → 그중 연도·회차·형
+    수 → 파일 토큰이 세트 토큰의 부분집합인지)가 높은 짝부터 배정하고,
+    - 어떤 파일에 다른 세트(문제지가 이미 있는 세트 포함)가 더 높은 점수로
+      맞으면 그 파일은 그 세트의 것으로 보고 낮은 세트에는 붙이지 않습니다.
+    - 같은 점수로 두 후보가 남으면(동점) 연결하지 않고 세트에
+      s[field + "_tie"] = "파일명 ↔ 경쟁 세트" 사유를 남깁니다(진단 표시).
+    origin이 있으면 연결된 세트에 s[field + "_origin"] = origin.
+    cands_of(세트) → 그 세트의 후보 경로 목록(기본: paths 전부) — 같은 이름의
+    기대값이 여러 폴더에 있을 때 세트 폴더 사본을 고르는 데 씁니다.
+    """
+    tokens_of = tokens_of or _set_tokens_of
+    used = {os.path.abspath(s[field]) for s in sets if s.get(field)}
+    cands = [p for p in paths if os.path.abspath(p) not in used]
+    if not cands:
+        return
+    toks = {id(s): tokens_of(s) for s in sets}
+    # 파일별 최고 점수(문제지가 있는 세트 포함) — 더 잘 맞는 세트가 있으면 제외
+    best_any = {}
+    for s in sets:
+        for p in cands:
+            sc = _file_link_score(toks[id(s)], p)
+            if sc and sc[0] > best_any.get(p, 0):
+                best_any[p] = sc[0]
+    pairs = []
+    for s in sets:
+        if s.get(field):
+            continue
+        own = cands if cands_of is None else [
+            p for p in cands_of(s) if os.path.abspath(p) not in used]
+        for p in own:
+            sc = _file_link_score(toks[id(s)], p)
+            if sc and sc[0] >= best_any.get(p, 0):
+                pairs.append((sc, s, p))
+    pairs.sort(key=lambda t: (tuple(-x for x in t[0]), t[1]["name"],
+                              os.path.basename(t[2])))
+    taken_sets, taken_paths = set(), set()
+    for i, (sc, s, p) in enumerate(pairs):
+        if id(s) in taken_sets or p in taken_paths:
+            continue
+        rivals = [(s2, p2) for sc2, s2, p2 in pairs[i + 1:]
+                  if sc2 == sc and (p2 == p or s2 is s)
+                  and id(s2) not in taken_sets and p2 not in taken_paths]
+        if rivals:
+            names = sorted({s2["name"] for s2, _p in rivals if s2 is not s})
+            files = sorted({os.path.basename(p2) for _s, p2 in rivals
+                            if p2 != p})
+            why = os.path.basename(p) + (
+                f" ↔ 세트 {', '.join(names)}과(와) 동점" if names else
+                f" ↔ {', '.join(files)} 동점")
+            s[field + "_tie"] = why
+            for s2, _p in rivals:
+                if s2 is not s and not s2.get(field + "_tie"):
+                    s2[field + "_tie"] = (os.path.basename(p) +
+                                          f" ↔ 세트 {s['name']}과(와) 동점")
+            taken_paths.add(p)
+            taken_paths.update(p2 for _s, p2 in rivals)
+            continue
+        s[field] = p
+        s.pop(field + "_tie", None)
+        if origin:
+            s[field + "_origin"] = origin
+        taken_sets.add(id(s))
+        taken_paths.add(p)
 
 
 _CFG_DICT_KEYS = ("_슬롯매핑", "_진행", "_자동선택", "_설정")
@@ -408,8 +558,14 @@ def _attach_saved_pdf(s, pdf, confirmed, origin):
 
 
 def apply_set_config(sets, config):
-    """저장된 세트 구성 반영. 사라진 경로·깨진 항목·회차가 다른 PDF는 무시."""
-    by_key = {s["norm"]: s for s in sets}
+    """저장된 세트 구성 반영. 사라진 경로·깨진 항목·회차가 다른 PDF는 무시.
+    병합된 중복 세트(s["중복"])의 키로 저장된 항목은 대표 세트에 반영합니다."""
+    by_key = {}
+    for s in sets:
+        for d in s.get("중복") or []:
+            if d.get("norm"):
+                by_key.setdefault(d["norm"], s)
+        by_key[s["norm"]] = s
     for k, ent in (config or {}).items():
         if not isinstance(ent, dict) or str(k).startswith("_"):
             continue
@@ -485,6 +641,84 @@ def _pick_exact_key(cands, set_dir, key_dirs):
     return sorted(cands)[0], "다른 폴더"
 
 
+def _dir_depth(path, root=None):
+    """폴더 깊이(루트 기준 경로 요소 수). 루트가 없거나 밖이면 절대 경로 기준."""
+    try:
+        rel = os.path.relpath(os.path.abspath(path), os.path.abspath(root)) \
+            if root else os.path.abspath(path)
+    except ValueError:
+        rel = os.path.abspath(path)
+    return len([p for p in rel.replace("\\", "/").split("/") if p not in ("", ".")])
+
+
+def _dup_entry(s):
+    return {k: s.get(k) for k in ("name", "norm", "dir", "problem", "answer",
+                                  "pdf", "key")}
+
+
+def merge_duplicate_sets(sets, root=None):
+    """문제 파일 내용이 같은 세트를 하나로 병합 (v2.3.1).
+
+    사용자가 세트를 복사·개명해 두 폴더에 둔 경우(예: '상시기출2회(문제).xlsm'
+    과 '2024년 기출문제 유형 2회(문제).xlsm')를 한 세트로 봅니다. 크기가 같은
+    문제 파일끼리만 SHA-256을 계산해 같으면 중복. 대표: 같은 키의 문제지
+    PDF·기대값이 붙은 쪽 → 폴더가 얕은 쪽 → 이름순. 나머지는 대표의
+    s["중복"] 목록({name, norm, dir, problem, answer, pdf, key})에 남아
+    토큰(슬롯·PDF·기대값 매칭)과 진단 표시에 쓰이고, 중복 쪽에만 있던
+    문제지·기대값은 대표가 넘겨받습니다. 반환: 병합된 세트 목록.
+    """
+    by_size = {}
+    for s in sets:
+        try:
+            size = os.path.getsize(s["problem"])
+        except (OSError, TypeError):
+            continue
+        by_size.setdefault(size, []).append(s)
+    drop = set()
+    for group in by_size.values():
+        if len(group) < 2:
+            continue
+        by_hash = {}
+        for s in group:
+            h = file_sha256(s["problem"])
+            if h:
+                by_hash.setdefault(h, []).append(s)
+        for dups in by_hash.values():
+            if len(dups) < 2:
+                continue
+            dups.sort(key=lambda s: (0 if (s.get("pdf") or s.get("key")) else 1,
+                                     _dir_depth(s["dir"], root), s["name"]))
+            rep = dups[0]
+            rep.setdefault("중복", [])
+            for d in dups[1:]:
+                rep["중복"].append(_dup_entry(d))
+                rep["중복"].extend(d.get("중복") or [])
+                if not rep.get("pdf") and d.get("pdf"):
+                    rep["pdf"] = d["pdf"]
+                if not rep.get("key") and d.get("key"):
+                    rep["key"], rep["key_origin"] = d["key"], d.get("key_origin")
+                drop.add(id(d))
+    return [s for s in sets if id(s) not in drop]
+
+
+def similar_named_sets(sets):
+    """내용은 다른데 이름이 비슷한 세트 짝 [(세트A, 세트B, 공통 토큰)] —
+    회차/형 토큰을 공유하고 충돌 없이 토큰이 2개 이상 겹치는 경우(진단 안내용)."""
+    out = []
+    for i, a in enumerate(sets):
+        ta = _set_tokens_of(a)
+        for b in sets[i + 1:]:
+            tb = _set_tokens_of(b)
+            if _token_conflict(ta, tb):
+                continue
+            common = ta & tb
+            if _shared_count(ta, tb) >= 2 and any(
+                    _ROUND_RE.fullmatch(t) or _FORM_RE.fullmatch(t)
+                    for t in common):
+                out.append((a, b, sorted(common)))
+    return out
+
+
 def scan_sets(root, config=None, key_dirs=None):
     """느슨한 세트 그룹핑 스캔.
 
@@ -498,6 +732,11 @@ def scan_sets(root, config=None, key_dirs=None):
     ③ 스캔 루트 어디든 정확 키 파일 ④ 연도·회차·형 토큰이 충돌 없이
     유일하게 맞는 파일(문제지 PDF와 같은 규칙). 출처는 s["key_origin"].
     key_dirs가 스캔 루트 밖이어도 그 폴더의 기대값 JSON은 후보에 넣습니다.
+
+    v2.3.1: 문제 파일 내용이 같은 세트는 하나로 병합(merge_duplicate_sets,
+    s["중복"]), 같은 키가 없는 문제지 PDF·기대값 JSON은 link_files_globally로
+    전역 유일 연결(각 파일 한 세트, 각 세트 한 파일, 동점은 s["pdf_tie"]/
+    s["key_tie"] 사유만 남김).
     """
     sets = []
     all_pdfs = []
@@ -555,42 +794,36 @@ def scan_sets(root, config=None, key_dirs=None):
             problem = next(p for p in g["excel"] if p != answer)
         if not (problem and answer) or problem == answer:
             continue
-        key, origin = _pick_exact_key(g["json"], os.path.dirname(problem),
-                                      key_dirs)
+        set_dir = os.path.dirname(problem)
+        key, origin = _pick_exact_key(g["json"], set_dir, key_dirs)
+        # 같은 키 PDF가 여럿이면 세트 폴더 안의 것 우선
+        pdfs = sorted(g["pdf"], key=lambda p: (os.path.dirname(p) != set_dir, p))
         sets.append({
             "name": display_name(problem), "norm": k,
-            "dir": os.path.dirname(problem),
+            "dir": set_dir,
             "problem": problem, "answer": answer,
             "key": key, "key_origin": origin,
-            "pdf": sorted(g["pdf"])[0] if g["pdf"] else None,
+            "pdf": pdfs[0] if pdfs else None,
+            "pdf_사본": pdfs[1:],        # 같은 키의 다른 사본(진단 표시용)
         })
-    # 같은 키 PDF가 없는 세트: 토큰 퍼지 매칭 (유일할 때만)
-    used = {s["pdf"] for s in sets if s["pdf"]}
-    for s in sets:
-        if s["pdf"]:
-            continue
-        toks = set_tokens(s["name"]) | set_tokens(os.path.basename(s["dir"]))
-        others = [_set_tokens_of(o) for o in sets if o is not s]
-        cand = match_pdf_for_set(toks, [p for p in all_pdfs if p not in used],
-                                 others=others)
-        if cand:
-            s["pdf"] = cand
-            used.add(cand)
-    # 같은 키 기대값 JSON이 없는 세트: 토큰 퍼지 매칭 (문제지 PDF와 같은 규칙,
-    # 유일할 때만) — 예: '2026_1회_기대값.json' ↔ '2026 … 1회_문제.xlsm'
-    used_k = {s["key"] for s in sets if s.get("key")}
-    for s in sets:
-        if s.get("key"):
-            continue
-        toks = set_tokens(s["name"]) | set_tokens(os.path.basename(s["dir"]))
-        others = [_set_tokens_of(o) for o in sets if o is not s]
-        cands = _dedupe_keys_by_name([p for p in all_keys if p not in used_k],
-                                     s["dir"], key_dirs)
-        cand = match_pdf_for_set(toks, cands, others=others)
-        if cand:
-            s["key"] = cand
-            s["key_origin"] = "토큰 일치"
-            used_k.add(cand)
+    # 문제 파일 내용이 같은 세트 병합 (대표가 토큰·문제지·기대값을 넘겨받음)
+    sets = merge_duplicate_sets(sets, root)
+    # 같은 키 PDF가 없는 세트: 토큰 전역 유일 연결 (이미 연결된 파일과 같은
+    # 이름의 다른 사본은 후보에서 제외)
+    used_pdf_names = {os.path.basename(s["pdf"]) for s in sets if s.get("pdf")}
+    link_files_globally(
+        sets, [p for p in all_pdfs if os.path.basename(p) not in used_pdf_names],
+        "pdf")
+    # 같은 키 기대값 JSON이 없는 세트: 같은 규칙 — 예: '2026_1회_기대값.json'
+    # ↔ '2026 … 1회_문제.xlsm'. 같은 이름의 기대값이 여러 폴더에 있으면 세트
+    # 폴더 → 기대값 폴더 순으로 하나만 후보에 둡니다.
+    used_k = {os.path.abspath(s["key"]) for s in sets if s.get("key")}
+    used_k_names = {os.path.basename(s["key"]) for s in sets if s.get("key")}
+    free_keys = [p for p in all_keys if os.path.abspath(p) not in used_k
+                 and os.path.basename(p) not in used_k_names]
+    link_files_globally(
+        sets, free_keys, "key", origin="토큰 일치",
+        cands_of=lambda s: _dedupe_keys_by_name(free_keys, s["dir"], key_dirs))
     apply_set_config(sets, config if config is not None else load_set_config())
     sets.sort(key=lambda s: s["name"])
     return sets
@@ -1614,68 +1847,220 @@ def plan_title(plan, today=None, set_names=None):
     return " · ".join(parts)
 
 
-# 일정 슬롯별 식별 토큰: 전 토큰 일치가 없을 때 이 토큰만으로 유일 매칭 허용
-# (예: '컴활2급 A형 문제.xlsx'처럼 파일명에 '2024'가 없어도 A형 인식)
+# 일정 슬롯별 식별 규칙 (v2.3.1: 연도+회차/형 중심).
+#   "핵심": 반드시 있어야 하는 토큰 묶음 목록 — 묶음 안은 대안(어느 하나면 됨,
+#           연도는 2자리/4자리를 같은 해로 봄)
+#   "보조": 식별 일치에 더 필요한 묶음 — 없으면 '부분 일치'로 강등
+#   "연도제외": True면 연도 토큰(20xx·2자리)이 있는 세트는 후보에서 제외
+# 어느 등급이든 슬롯 문구 전체 토큰과 세트 토큰의 연도·회차·형 충돌은 후보 제외
+# (예: '2024 상시 1회'는 2026 세트에 붙지 않음).
 SLOT_IDENTITY = {
-    "2024 상시 1회": ["상시", "1회"],
-    "2024 상시 2회": ["상시", "2회"],
-    "2024 A형": ["a형"],
-    "2024 B형": ["b형"],
-    "코코 1회": ["코코", "1회"],
-    "코코 2회": ["코코", "2회"],
-    "24 2급 상시": ["24", "2급", "상시"],
-    "컴활 2급 상시": ["컴활", "상시"],
-    "2026 1회": ["2026", "1회"],
+    "2024 상시 1회": {"핵심": [["2024", "24"], ["1회"]]},
+    "2024 상시 2회": {"핵심": [["2024", "24"], ["2회"]]},
+    "2024 A형": {"핵심": [["a형"]]},
+    "2024 B형": {"핵심": [["b형"]]},
+    "코코 1회": {"핵심": [["코코"], ["1회"]]},
+    "코코 2회": {"핵심": [["코코"], ["2회"]]},
+    "24 2급 상시": {"핵심": [["24", "2024"], ["2급"]],
+                 "보조": [["모의", "실기", "상시"]]},
+    "컴활 2급 상시": {"핵심": [["컴활"], ["2급"], ["상시"]], "연도제외": True},
+    "2026 1회": {"핵심": [["2026"], ["1회"]]},
 }
+SLOT_TIER_LABEL = {3: "전체 토큰 일치", 2: "식별 토큰 일치", 1: "부분 일치"}
+
+
+def slot_identity_spec(text):
+    """슬롯 문구의 식별 규칙 dict (표에 없으면 연도(20xx)를 뺀 토큰 각각이 핵심)."""
+    if text in SLOT_IDENTITY:
+        return SLOT_IDENTITY[text]
+    toks = set_tokens(text)
+    rest = sorted(t for t in toks if not _YEAR4_RE.fullmatch(t)) or sorted(toks)
+    return {"핵심": [[t] for t in rest]}
 
 
 def slot_identity_tokens(text):
-    """슬롯 문구의 식별 토큰 (표에 없으면 연도(20xx)를 뺀 나머지 토큰)."""
-    if text in SLOT_IDENTITY:
-        return set(SLOT_IDENTITY[text])
-    toks = set_tokens(text)
-    rest = {t for t in toks if not re.fullmatch(r"20\d{2}", t)}
-    return rest or toks
+    """슬롯 문구의 식별 토큰 표시용 집합 — 대안 묶음은 '2024/24'처럼 합쳐 표시."""
+    spec = slot_identity_spec(text)
+    return {"/".join(g) for g in spec["핵심"]} | \
+        {"/".join(g) for g in spec.get("보조", [])}
 
 
 def _set_tokens_of(s):
-    return set_tokens(s["name"]) | set_tokens(os.path.basename(s["dir"]))
+    """세트 토큰: 세트명 + 폴더명 (+ 병합된 중복 세트의 이름·폴더명)."""
+    toks = set_tokens(s["name"]) | set_tokens(os.path.basename(s["dir"] or ""))
+    for d in s.get("중복") or []:
+        toks |= set_tokens(d.get("name") or "")
+        toks |= set_tokens(os.path.basename(d.get("dir") or ""))
+    return toks
 
 
-def match_slot(sets, text):
+def _has_token(st, t):
+    """세트 토큰에 t가 있는가 (연도는 2자리/4자리 동일시)."""
+    if _is_year_token(t):
+        return bool(_year_tokens({t}) & _year_tokens(st))
+    return t in st
+
+
+def _group_hit(st, group):
+    """대안 묶음 중 세트에 있는 토큰 (없으면 None)."""
+    for t in group:
+        if _has_token(st, t):
+            return t
+    return None
+
+
+def slot_candidate_score(spec, s, st=None):
+    """(슬롯, 세트) 점수 (등급, 연도·회차·형 겹침, 전체 겹침) 또는 None(후보 아님).
+
+    등급 3 전체 토큰 일치(슬롯 문구 토큰이 세트에 다 있음) > 2 식별 토큰 일치
+    (핵심+보조) > 1 부분 일치(핵심만). 슬롯 전체 토큰과 연도·회차·형이 충돌하거나
+    핵심 묶음이 하나라도 없으면 후보 아님. 반환 튜플 뒤에 사유 문구가 붙습니다:
+    ((등급, 숫자겹침, 겹침), 사유).
+    """
+    toks = set_tokens(spec)
+    st = st if st is not None else _set_tokens_of(s)
+    if _token_conflict(toks, st):
+        return None
+    rule = slot_identity_spec(spec)
+    if rule.get("연도제외") and _year_tokens(st):
+        return None
+    hits = []
+    for g in rule["핵심"]:
+        h = _group_hit(st, g)
+        if h is None:
+            return None
+        hits.append(h)
+    missing = []
+    for g in rule.get("보조", []):
+        h = _group_hit(st, g)
+        if h is None:
+            missing.append("/".join(g))
+        else:
+            hits.append(h)
+    if all(_has_token(st, t) for t in toks):
+        tier, why = 3, "전체 토큰 일치 (" + ", ".join(sorted(toks)) + ")"
+    elif not missing:
+        tier, why = 2, "식별 토큰 일치 (" + ", ".join(sorted(set(hits))) + ")"
+    else:
+        tier, why = 1, ("부분 일치 (" + ", ".join(sorted(set(hits))) +
+                        " — " + "·".join(missing) + " 없음)")
+    return (tier, _numeric_shared(toks, st), _shared_count(toks, st)), why
+
+
+def all_slot_specs():
+    """알려진 일정 슬롯 문구 전부 (식별 표 + 일정표 + 우선순위 표) — 순서 유지."""
+    specs = list(SLOT_IDENTITY)
+    for no in sorted(ROUTINE_PLAN):
+        for spec in ROUTINE_PLAN[no].get("세트") or []:
+            if spec != AUTO and spec not in specs:
+                specs.append(spec)
+    for spec in list(PRIORITY_SPECS) + [REDO_SPEC]:
+        if spec not in specs:
+            specs.append(spec)
+    return specs
+
+
+def assign_slots(sets, specs=None, mapping=None):
+    """일정 슬롯 ↔ 세트 전역 유일 배정 (v2.3.1). 반환 {슬롯: (세트|None, 사유)}.
+
+    요청한 specs에 알려진 슬롯 전부(all_slot_specs)를 더해 함께 배정합니다 —
+    '2026 1회'처럼 확실한 슬롯이 그 세트를 먼저 가져가야 '2024 상시 1회'나
+    '컴활 2급 상시'가 같은 세트를 차지하지 못하기 때문입니다.
+    ① 세트설정 `_슬롯매핑`(mapping, 직접 선택 저장)이 최우선 — 그 세트(같은 키의
+       스캔 세트 포함)는 다른 슬롯 후보에서 제외.
+    ② 모든 (슬롯, 세트) 쌍을 slot_candidate_score로 채점, 점수 높은 짝부터
+       탐욕적으로 배정(한 세트는 한 슬롯). 같은 점수의 짝이 슬롯 또는 세트를
+       공유하면(동점) 그 슬롯들은 미배정으로 두고 사유에 후보를 나열합니다.
+    ③ 남은 슬롯: 후보가 다른 슬롯에 배정됐으면 그 사실을, 아예 없으면
+       '후보 없음'을 사유로.
+    """
+    specs = list(dict.fromkeys(list(specs or []) + all_slot_specs()))
+    result = {}
+    taken = set()          # 배정된 세트 norm
+    mapping = mapping or {}
+    for spec in specs:                           # ① 직접 선택 저장
+        ent = mapping.get(spec)
+        if not isinstance(ent, dict):
+            continue
+        ms = set_from_mapping(ent)
+        if ms is None:
+            continue
+        result[spec] = (ms, "직접 선택 저장됨 (" +
+                        os.path.basename(ms["problem"]) + ")")
+        taken.add(ms["norm"])
+        for s in sets:                           # 중복 병합 대표도 같은 세트
+            if any(d.get("norm") == ms["norm"] for d in s.get("중복") or []):
+                taken.add(s["norm"])
+    toks = {id(s): _set_tokens_of(s) for s in sets}
+    pairs = []                                   # ② 채점
+    for spec in specs:
+        if spec in result:
+            continue
+        for s in sets:
+            if s["norm"] in taken:
+                continue
+            r = slot_candidate_score(spec, s, toks[id(s)])
+            if r:
+                pairs.append((r[0], spec, s, r[1]))
+    order = {spec: i for i, spec in enumerate(specs)}
+    pairs.sort(key=lambda t: (tuple(-x for x in t[0]), order[t[1]], t[2]["name"]))
+    tied = {}                                    # spec -> 사유
+    blocked = set()                              # 동점으로 묶인 세트 norm
+    winner = {}                                  # norm -> spec
+    for i, (sc, spec, s, why) in enumerate(pairs):
+        if spec in result or spec in tied or s["norm"] in taken \
+                or s["norm"] in blocked:
+            continue
+        rivals = [(sp2, s2) for sc2, sp2, s2, _w in pairs[i + 1:]
+                  if sc2 == sc and (sp2 == spec or s2 is s)
+                  and sp2 not in result and sp2 not in tied
+                  and s2["norm"] not in taken and s2["norm"] not in blocked]
+        if not rivals:
+            result[spec] = (s, why)
+            taken.add(s["norm"])
+            winner[s["norm"]] = spec
+            continue
+        same_slot = sorted({s2["name"] for sp2, s2 in rivals if sp2 == spec})
+        same_set = sorted({sp2 for sp2, s2 in rivals if s2 is s and sp2 != spec})
+        if same_slot:
+            tied[spec] = ("복수 후보 (동점): " +
+                          ", ".join([s["name"]] + same_slot) +
+                          " — [직접 선택]으로 지정하세요")
+        if same_set:
+            tied.setdefault(spec, f"세트 '{s['name']}'을(를) 두고 슬롯 " +
+                            ", ".join(f"'{x}'" for x in same_set) +
+                            "과(와) 동점 — [직접 선택]으로 지정하세요")
+            for sp2 in same_set:
+                tied.setdefault(sp2, f"세트 '{s['name']}'을(를) 두고 슬롯 "
+                                f"'{spec}'과(와) 동점 — [직접 선택]으로 "
+                                "지정하세요")
+            blocked.add(s["norm"])
+    for spec in specs:                           # ③ 미배정 사유
+        if spec in result:
+            continue
+        if spec in tied:
+            result[spec] = (None, tied[spec])
+            continue
+        lost = [(s, winner[s["norm"]]) for sc, sp, s, _w in pairs
+                if sp == spec and s["norm"] in winner]
+        if lost:
+            result[spec] = (None, "후보 없음 — " + ", ".join(
+                f"'{s['name']}'은(는) 슬롯 '{w}'에 배정됨(더 잘 맞음)"
+                for s, w in lost))
+        else:
+            idt = "·".join(sorted(slot_identity_tokens(spec)))
+            result[spec] = (None, f"후보 없음 — 파일명에 {idt} 토큰을 가진 "
+                                  "문제/정답 짝이 없음")
+    return result
+
+
+def match_slot(sets, text, mapping=None):
     """슬롯 문구 -> (세트 or None, 판정 설명). GUI 없이 테스트 가능.
 
-    ① 문구의 전 토큰이 세트에 있고 유일 → '전체 토큰 일치'
-    ② 없으면 식별 토큰(SLOT_IDENTITY)만으로 유일 → '식별 토큰 일치'
-    ③ 그래도 0개/복수면 미발견 (설명에 후보 나열).
+    v2.3.1: 알려진 슬롯 전부와 함께 전역 유일 배정(assign_slots)한 결과 중
+    text의 항목 — 다른 슬롯이 더 잘 맞는 세트는 이 슬롯에 오지 않습니다.
     """
-    toks = set_tokens(text)
-    scored = []
-    for s in sets:
-        st = _set_tokens_of(s)
-        if _token_conflict(toks, st) or (toks - st):
-            continue
-        shared = len(toks & st)
-        if shared >= 1:
-            scored.append((shared, s))
-    if scored:
-        best = max(sc for sc, _s in scored)
-        matched = [s for sc, s in scored if sc == best]
-        if len(matched) == 1:
-            return matched[0], "전체 토큰 일치 (" + ", ".join(sorted(toks)) + ")"
-        return None, "복수 후보 (전체 토큰): " + ", ".join(
-            s["name"] for s in matched)
-    idt = slot_identity_tokens(text)
-    cands = [s for s in sets
-             if idt <= _set_tokens_of(s)
-             and not _token_conflict(idt, _set_tokens_of(s))]
-    if len(cands) == 1:
-        return cands[0], "식별 토큰 일치 (" + ", ".join(sorted(idt)) + ")"
-    if not cands:
-        return None, ("후보 없음 — 파일명에 " + "·".join(sorted(idt))
-                      + " 토큰을 가진 문제/정답 짝이 없음")
-    return None, "복수 후보 (식별 토큰 " + "·".join(sorted(idt)) + "): " + \
-        ", ".join(s["name"] for s in cands)
+    return assign_slots(sets, [text], mapping)[text]
 
 
 def find_set_for_tokens(sets, text):
@@ -1734,10 +2119,23 @@ def scan_diagnosis_text(root, config=None, specs=None, sets=None):
     if sets is None:
         sets = scan_sets(root, config) if root and os.path.isdir(root) else []
     owner = {}
+    tie_files = {}          # 동점으로 연결 못 한 파일명 -> 사유
     for s in sets:
         for k in ("problem", "answer", "pdf", "key"):
             if s.get(k):
                 owner[os.path.abspath(s[k])] = s["name"]
+        for d in s.get("중복") or []:          # 병합된 중복 세트의 파일
+            for k in ("problem", "answer", "pdf", "key"):
+                if d.get(k):
+                    owner.setdefault(os.path.abspath(d[k]),
+                                     f"{s['name']} (중복·동일 내용)")
+        for p in s.get("pdf_사본") or []:      # 같은 키 PDF의 다른 사본
+            owner.setdefault(os.path.abspath(p), f"{s['name']} (같은 키 사본)")
+        for k in ("pdf", "key"):
+            if s.get(k + "_tie"):
+                fn = s[k + "_tie"].split(" ↔ ")[0]
+                tie_files.setdefault(fn, "미소속 (동점: " +
+                                     s[k + "_tie"].split(" ↔ ", 1)[1] + ")")
     files = []
     if root and os.path.isdir(root):
         for dirpath, dirnames, filenames in os.walk(root):
@@ -1751,9 +2149,16 @@ def scan_diagnosis_text(root, config=None, specs=None, sets=None):
                                   "채점결과", "~$", ".")):
                     continue
                 files.append(os.path.join(dirpath, fn))
+    # 세트 토큰이 하나도 없는 PDF(대학 서류 등)는 연결 후보가 아니므로 접어 표시
+    unrelated = [p for p in files
+                 if os.path.splitext(p)[1].lower() == ".pdf"
+                 and not set_tokens(os.path.basename(p))
+                 and os.path.abspath(p) not in owner]
     lines.append("== 파일 → 정규화 키 → 역할 → 소속 세트 ==")
     lines.append("파일명 | 정규화 키 | 역할 | 소속 세트 | 폴더")
     for p in files:
+        if p in unrelated:
+            continue
         fn = os.path.basename(p)
         ext = os.path.splitext(fn)[1].lower()
         if ext == ".pdf":
@@ -1761,34 +2166,53 @@ def scan_diagnosis_text(root, config=None, specs=None, sets=None):
         else:
             role = {"problem": "문제", "answer": "정답"}.get(file_role(fn),
                                                         "미상(문제/정답 표기 없음)")
-        own = owner.get(os.path.abspath(p), "미소속")
+        own = owner.get(os.path.abspath(p)) or tie_files.get(fn, "미소속")
         rel = os.path.relpath(os.path.dirname(p), root) if root else ""
         lines.append(f"{fn} | {norm_set_key(fn)} | {role} | {own} | {rel}")
+    if unrelated:
+        lines.append(f"무관(세트 토큰 없음) PDF {len(unrelated)}개 — 연결 후보에서 "
+                     "제외: " + ", ".join(os.path.basename(p) for p in unrelated))
     if not files:
         lines.append("(xlsx/xlsm/pdf 파일 없음)")
     lines.append("")
     lines.append("== 인식된 세트 ==")
-    lines.append("세트명 | 토큰 | 문제 | 정답 | PDF | 기대값")
+    lines.append("세트명 | 토큰 | 문제 | 정답 | PDF | 기대값 | 비고")
     for s in sets:
         pdf_col = os.path.basename(s["pdf"]) if s.get("pdf") else "-"
         if s.get("pdf") and pdf_conflicts_with_set(s):
             pdf_col += " ⚠회차불일치"
         elif s.get("pdf_warning"):
             pdf_col += f" (⚠ {s['pdf_warning']})"
+        elif s.get("pdf_tie"):
+            pdf_col += f" (동점: {s['pdf_tie']})"
         key_col = "-"
         if s.get("key"):
             key_col = os.path.basename(s["key"])
             if s.get("key_origin") and s["key_origin"] != "세트 폴더":
                 key_col += f" ({s['key_origin']})"
+        elif s.get("key_tie"):
+            key_col += f" (동점: {s['key_tie']})"
+        note = ""
+        if s.get("중복"):
+            note = "중복(동일 내용): " + ", ".join(
+                os.path.basename(d.get("problem") or d.get("name") or "?")
+                for d in s["중복"])
         lines.append(f"{s['name']} | {','.join(sorted(_set_tokens_of(s)))} | "
                      f"{os.path.basename(s['problem'])} | "
                      f"{os.path.basename(s['answer'])} | "
-                     f"{pdf_col} | {key_col}")
+                     f"{pdf_col} | {key_col} | {note or '-'}")
     if not sets:
         lines.append("(인식된 세트 없음 — 같은 폴더에 '…문제.xlsx'와 '…정답.xlsm' "
                      "짝이 있어야 합니다)")
+    similar = similar_named_sets(sets)
+    if similar:
+        lines.append("")
+        lines.append("== 이름이 비슷한 세트 (문제 파일 내용은 다름) ==")
+        for a, b, common in similar:
+            lines.append(f"{a['name']} ↔ {b['name']} (공통 토큰 {', '.join(common)})"
+                         " — 같은 세트를 두 번 두었다면 한쪽을 지우세요")
     lines.append("")
-    lines.append("== 일정 슬롯 매칭 ==")
+    lines.append("== 일정 슬롯 매칭 (전역 유일 배정: 한 세트는 한 슬롯) ==")
     if specs is None:
         specs = []
         for no in range(1, 15):
@@ -1797,15 +2221,20 @@ def scan_diagnosis_text(root, config=None, specs=None, sets=None):
                     specs.append(spec)
     mapping = {k: v for k, v in _cfg_section(config, "_슬롯매핑").items()
                if isinstance(v, dict)}
+    assigned = assign_slots(sets, specs, mapping)
     for spec in specs:
-        s, how = match_slot(sets, spec)
+        s, how = assigned.get(spec, (None, ""))
         line = f"슬롯 '{spec}' → " + (f"세트 '{s['name']}' ({how})" if s
                                      else f"미발견 ({how})")
+        if s:
+            line += (" · PDF " + (os.path.basename(s["pdf"]) if s.get("pdf")
+                                  else "없음") +
+                     " · 기대값 " + (os.path.basename(s["key"]) if s.get("key")
+                                   else "없음"))
         m = mapping.get(spec)
-        if m:
-            ms = set_from_mapping(m)
+        if m and not (s and s.get("direct")):
             line += (f" · 직접 선택 저장됨: {os.path.basename(m.get('problem') or '?')}"
-                     + ("" if ms else " (파일 없음 — 무시)"))
+                     " (파일 없음 — 무시)")
         lines.append(line)
     stray = [os.path.basename(p) for p in files
              if os.path.abspath(p) not in owner
@@ -1915,7 +2344,7 @@ def resolve_day_sets(plan, sets, records=None, today=None, saved=None,
                      mapping=None):
     """일정의 세트 슬롯 -> [(세트 or None, 이유)].
 
-    고정 슬롯은 저장된 직접 선택(mapping) → 토큰 매칭(match_slot) 순,
+    고정 슬롯은 저장된 직접 선택(mapping) → 전역 유일 배정(assign_slots) 순,
     자동 슬롯은 저장된 선택(saved)을 우선 복원하고 없으면
     pick_set_for_retry로 고릅니다. 슬롯끼리는 서로 다른 세트.
     """
@@ -1926,6 +2355,7 @@ def resolve_day_sets(plan, sets, records=None, today=None, saved=None,
     mapping = mapping or {}
     objs = list(plan.get("세트객체") or [])
     whys = list(plan.get("슬롯사유") or [])
+    assigned = None
     for k, spec in enumerate(slots):          # ① 고정 세트
         if spec != AUTO:
             s, how = None, ""
@@ -1933,11 +2363,11 @@ def resolve_day_sets(plan, sets, records=None, today=None, saved=None,
                 s = objs[k]
                 how = "적응형 배정 · " + (whys[k] if k < len(whys) and whys[k]
                                        else "배정")
-            if not s and spec in mapping:
-                s = set_from_mapping(mapping[spec])
-                how = "직접 선택 저장됨" if s else ""
             if not s:
-                s, how = match_slot(sets, spec)
+                if assigned is None:
+                    assigned = assign_slots(
+                        sets, [x for x in slots if x != AUTO], mapping)
+                s, how = assigned.get(spec, (None, ""))
             if s and how.startswith("적응형 배정"):
                 reasons[k] = how
             else:
@@ -2729,22 +3159,29 @@ def record_review_state(norm_key, json_name, checks,
 #     메인 스레드에서 .bak 백업 → 교체(하나라도 실패하면 전체 롤백) →
 #     자동 재시작(새 프로세스를 먼저 띄우고 종료). 시험 진행 중이면 적용을
 #     미루고 시험 종료 후 적용합니다.
-#   - 버전이 같아도 data_files 중 로컬에 없거나 sha256이 다른 기대값은
-#     내려받아 갱신(재시작 없음). 원격에서 사라진 기대값은 지우지 않습니다.
+#   - 버전이 같아도 data_files/set_files 중 로컬에 없거나 sha256이 다른
+#     파일은 내려받아 갱신(재시작 없음). 원격에서 사라진 파일은 지우지 않습니다.
 # 재시작된 새 인스턴스는 .update_applied.json을 읽어 "자동 업데이트됨" 띠를
 # 띄웁니다. 세트설정.json `_설정.자동업데이트`(기본 true)로 끌 수 있고,
 # [업데이트 확인] 버튼은 토글과 무관하게 즉시 확인·적용합니다.
 #
 # version.json 형식:
-#   {"version": "2.3.0", "notes": "...",
+#   {"version": "2.3.1", "notes": "...",
 #    "files":      {"시험장/시험장.py": "시험장.py", ...},      # 프로그램
-#    "data_files": {"기대값/코코모의고사1회_기대값.json": "기대값/..."},  # 기대값
-#    "sha256":     {"시험장.py": "<hex>", "기대값/...json": "<hex>"}}    # 선택
+#    "data_files": {"기대값/코코모의고사1회_기대값.json": "기대값/..."},  # 기대값 JSON
+#    "set_files":  {"모의고사/코코모의고사1회_문제.xlsx": "모의고사/..."},  # 세트(xlsx·pdf)
+#    "sha256":     {"시험장.py": "<hex>", "기대값/...json": "<hex>", ...}}
 # 2.2.3 이하의 apply_update는 files 항목에 __version__ 표식과 py_compile을
 # 요구하므로 JSON은 반드시 data_files에만 둡니다(구버전은 그 키를 무시).
+# 2.3.0의 data_files 검증은 UTF-8 디코드 + json.loads를 요구해 xlsx·pdf가
+# 섞이면 업데이트 전체가 실패하므로, 바이너리 세트 파일은 set_files(2.3.1+에서
+# 처리, 2.3.0 이하는 무시)에만 둡니다. set_files는 sha256(필수)만 검사하고
+# 설치 루트(기대값/의 상위)/모의고사/… 에 내려받습니다.
 
 UPDATE_BASE_URL = ("https://raw.githubusercontent.com/"
                    "xasmine02/cocomate-study-tools/main/")
+SET_FILES_KEY = "set_files"      # version.json: 세트 파일(xlsx·pdf) — 2.3.1+
+_BINARY_MAGIC = {".xlsx": b"PK\x03\x04", ".xlsm": b"PK\x03\x04", ".pdf": b"%PDF"}
 UPDATE_NOTICE_PATH = os.path.join(RECORDS_DIR, ".update_applied.json")
 AUTO_UPDATE_SETTING = "자동업데이트"
 _VERSION_MARK_RE = re.compile(r'^__version__\s*=\s*["\']([^"\']+)["\']',
@@ -2774,7 +3211,7 @@ def fetch_update_info(base_url=UPDATE_BASE_URL, timeout=3):
         info = json.loads(_http_get(base_url + "version.json", timeout)
                           .decode("utf-8"))
         if isinstance(info, dict) and info.get("version"):
-            for k in ("files", "data_files", "sha256"):
+            for k in ("files", "data_files", SET_FILES_KEY, "sha256"):
                 if not isinstance(info.get(k), dict):
                     info[k] = {}
             return info
@@ -2821,24 +3258,45 @@ def _update_target_path(rel_key, base_dir=None):
 
 
 def _data_target_path(rel_key, base_dir=None):
-    """기대값 상대 경로('기대값/x_기대값.json') -> 루트/기대값/x_기대값.json
-    (설치 구조에 따라 expected_values_dir 기준, 폴더는 적용 시 생성)."""
+    """데이터 상대 경로 -> 설치 위치 (폴더는 적용 시 생성).
+
+    '기대값/x_기대값.json' → 루트/기대값/x_기대값.json (expected_values_dir),
+    '모의고사/코코모의고사1회_문제.xlsx' → 루트/모의고사/… — 루트는 설치 구조에
+    따른 기대값 폴더의 상위(시험장/ 구조면 <루트>, 평면 구조면 그 폴더).
+    폴더 없는 키('x.json')는 기대값/으로.
+    """
     parts = [p for p in str(rel_key).split("/") if p not in ("", ".", "..")]
-    if parts and parts[0] == EXPECTED_DIR_NAME:
-        parts = parts[1:]
     if not parts:
-        raise RuntimeError(f"잘못된 기대값 경로: {rel_key!r}")
-    return os.path.join(expected_values_dir(base_dir), *parts)
+        raise RuntimeError(f"잘못된 데이터 경로: {rel_key!r}")
+    if len(parts) == 1:
+        parts = [EXPECTED_DIR_NAME] + parts
+    root = os.path.dirname(expected_values_dir(base_dir))
+    return os.path.join(root, *parts)
 
 
 def _verify_download(repo_rel, data, kind, info, expect_version=None):
-    """내려받은 내용 검증 (실패 시 RuntimeError). 반환: 디코드된 텍스트."""
+    """내려받은 내용 검증 (실패 시 RuntimeError). 반환: 디코드된 텍스트
+    (바이너리 세트 파일은 None).
+
+    .py/.pyw: sha256(있으면) + __version__ 표식 + (호출 쪽에서) py_compile.
+    .json: sha256(있으면) + json.loads. 그 밖의 확장자(xlsx·xlsm·pdf, v2.3.1
+    set_files): sha256 필수 + 파일 머리(PK/%PDF)만 확인 — 텍스트 검사 없음.
+    """
     expected = (info.get("sha256") or {}).get(repo_rel)
     if expected:
         got = sha256_hex(data)
         if got.lower() != str(expected).lower():
             raise RuntimeError(f"{repo_rel}: sha256 불일치 "
                                f"(기대 {str(expected)[:12]}…, 실제 {got[:12]}…)")
+    ext = os.path.splitext(str(repo_rel))[1].lower()
+    if kind != "code" and ext != ".json":
+        if not expected:
+            raise RuntimeError(f"{repo_rel}: sha256 항목이 없어 바이너리 파일을 "
+                               "검증할 수 없습니다")
+        magic = _BINARY_MAGIC.get(ext)
+        if magic and not data.startswith(magic):
+            raise RuntimeError(f"{repo_rel}: {ext} 파일 형식이 아닙니다")
+        return None
     try:
         text = data.decode("utf-8")
     except UnicodeDecodeError as e:
@@ -2902,14 +3360,15 @@ def _stage_items(items, info, base_url, timeout):
 
 
 def stage_update(info, base_url=UPDATE_BASE_URL, base_dir=None, timeout=15):
-    """새 버전의 files(프로그램)+data_files(기대값) 전부 다운로드·검증·스테이징.
+    """새 버전의 files(프로그램)+data_files(기대값)+set_files(세트 파일) 전부
+    다운로드·검증·스테이징.
 
     반환: (성공 여부, 메시지, staged). 실패하면 .new를 정리하고 기존 파일은
     건드리지 않습니다. 적용은 commit_staged().
     """
     info = info or {}
     files = info.get("files") or {}
-    data_files = info.get("data_files") or {}
+    data_files = _all_data_files(info)
     if not files and not data_files:
         return False, "업데이트 파일 목록이 비어 있습니다.", []
     items = [(k, v, _update_target_path(k, base_dir), "code")
@@ -2936,10 +3395,13 @@ def commit_staged(staged, version=None):
             os.replace(tmp, target)
             replaced.append((target, existed))
         n_code = sum(1 for it in staged if it["kind"] == "code")
-        n_data = len(staged) - n_code
-        what = (f"프로그램 {n_code}개" if n_code else "") + \
-            (" + " if n_code and n_data else "") + \
-            (f"기대값 {n_data}개" if n_data else "")
+        n_set = sum(1 for it in staged if it["kind"] != "code"
+                    and not str(it["rel"]).lower().endswith(".json"))
+        n_data = len(staged) - n_code - n_set
+        what = " + ".join(x for x in (
+            f"프로그램 {n_code}개" if n_code else "",
+            f"기대값 {n_data}개" if n_data else "",
+            f"세트 파일 {n_set}개" if n_set else "") if x)
         return True, (f"{what} 파일을 v{version}(으)로 업데이트했습니다."
                       if version else f"{what} 파일을 갱신했습니다.")
     except Exception as e:
@@ -2966,12 +3428,23 @@ def apply_update(info, base_url=UPDATE_BASE_URL, base_dir=None, timeout=15):
     return commit_staged(staged, (info or {}).get("version"))
 
 
+def _all_data_files(info):
+    """data_files(기대값 JSON) + set_files(세트 xlsx·pdf) 합친 {설치 키: 저장소 경로}."""
+    out = {}
+    for k in ("data_files", SET_FILES_KEY):
+        v = (info or {}).get(k)
+        if isinstance(v, dict):
+            out.update(v)
+    return out
+
+
 def data_files_to_sync(info, base_dir=None):
-    """로컬에 없거나 sha256이 다른 기대값 항목 [(rel_key, repo_rel, target)].
-    sha256 맵에 없는 항목은 로컬 파일이 없을 때만 내려받습니다."""
+    """로컬에 없거나 sha256이 다른 데이터 항목 [(rel_key, repo_rel, target)]
+    (기대값 JSON + 세트 파일). sha256 맵에 없는 항목은 로컬 파일이 없을 때만
+    내려받습니다."""
     out = []
     sha = (info or {}).get("sha256") or {}
-    for rel_key, repo_rel in ((info or {}).get("data_files") or {}).items():
+    for rel_key, repo_rel in _all_data_files(info).items():
         try:
             target = _data_target_path(rel_key, base_dir)
         except RuntimeError:
@@ -2986,7 +3459,8 @@ def data_files_to_sync(info, base_dir=None):
 
 
 def sync_data_files(info, base_url=UPDATE_BASE_URL, base_dir=None, timeout=15):
-    """버전이 같아도 기대값(data_files)만 갱신. 반환: (성공, 개수, 메시지)."""
+    """버전이 같아도 기대값(data_files)·세트 파일(set_files)만 갱신.
+    반환: (성공, 개수, 메시지)."""
     todo = data_files_to_sync(info, base_dir)
     if not todo:
         return True, 0, "기대값 파일이 모두 최신입니다."
@@ -2994,7 +3468,7 @@ def sync_data_files(info, base_url=UPDATE_BASE_URL, base_dir=None, timeout=15):
         staged = _stage_items([(k, v, t, "data") for k, v, t in todo],
                               info or {}, base_url, timeout)
     except Exception as e:
-        return False, 0, f"기대값 갱신 실패(기존 파일 유지): {e}"
+        return False, 0, f"기대값·세트 파일 갱신 실패(기존 파일 유지): {e}"
     ok, msg = commit_staged(staged)
     return ok, (len(staged) if ok else 0), msg
 
@@ -3105,8 +3579,10 @@ class UpdateCoordinator:
                                       "오르지 않았습니다.")
                 n_files = len(info.get("files") or {})
                 n_data = len(info.get("data_files") or {})
+                n_set = len(info.get(SET_FILES_KEY) or {})
                 self.log(f"새 버전 v{remote} 발견 (현재 v{self.current}) — "
-                         f"내려받는 중: 프로그램 {n_files}개 + 기대값 {n_data}개")
+                         f"내려받는 중: 프로그램 {n_files}개 + 기대값 {n_data}개"
+                         + (f" + 세트 파일 {n_set}개" if n_set else ""))
                 ok, msg, staged = stage_update(info, self.base_url,
                                                self.base_dir, timeout=dl_timeout)
                 if not ok:
