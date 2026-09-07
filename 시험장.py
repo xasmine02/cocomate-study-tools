@@ -30,11 +30,16 @@ v2.4.0: 루틴 웹 연동 — 프로그램 안에 로컬 HTTP 서버(127.0.0.1:8
 /api/state 로 내보내며 체크·수동 점수·오답노트 완료·시험 시작 등 쓰기 요청을
 받습니다(세션 토큰). [루틴 열기] 버튼·`_설정.루틴자동열기`·단계 가이드
 [웹에서 퀴즈 풀기]. 채점 결과는 클립보드 복사 대신 루틴 페이지에 자동 반영.
+v2.4.1: 시험일 변경 9/17(목)·9/18(금) 이틀 연속 — 학습일 Day 1~14 = 9/3~9/16(마감
+9/16), 구간은 시험일 목록에서 도출(학습일 없는 구간은 건너뜀 → 단일 구간), 9/12
+복기일 개념 제거(시험 1 저녁 복기 메모·실수 노트는 시험일 안내), 재응시 목표
+사다리 70→75→80→85 는 재응시가 배정된 날짜 순으로 분배(같은 날 2세트는 같은
+목표), 남는 용량은 재응시로 채움. 고정 일정표·안내문·D-day·루틴 페이지 동기화.
 
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "2.4.0"
+__version__ = "2.4.1"
 
 import argparse
 import hashlib
@@ -1651,19 +1656,20 @@ def classify_grading_error(rc, text):
 
 
 # ---------------------------------------------------------------------------
-# 오늘의 학습 — 14일 루틴 일정 v4 (웹 루틴과 동일: 2026-09-03 시작, 시험 2회)
+# 오늘의 학습 — 14일 루틴 일정 (웹 루틴과 동일: 2026-09-03 시작, 시험 2회)
+#   학습일 Day 1~14 = 9/3(목)~9/16(수), 시험 1 = 9/17(목), 시험 2 = 9/18(금).
 #   매일 모의고사 1세트 40분 완주 → 채점 → 오답노트 → 오답 재풀이
 # ---------------------------------------------------------------------------
 
 ROUTINE_START = date(2026, 9, 3)                     # Day 1 (9/3 목)
-EXAM_DATES = [date(2026, 9, 11), date(2026, 9, 18)]  # 시험 1 · 시험 2
+EXAM_DATES = [date(2026, 9, 17), date(2026, 9, 18)]  # 시험 1 · 시험 2 (이틀 연속)
 EXAM_DATE = EXAM_DATES[0]                            # (구 코드 호환)
 ROUTINE_TAG = "2026-09"     # 기록.json 루틴 세대 표시 (구 루틴 기록과 구분)
 PROGRESS_NS = "r0903"       # 세트설정.json '_진행' 키 접두 (구 루틴 진행과 분리)
 
 PLAN_EXAM1, PLAN_EXAM2, PLAN_AFTER = 15, 16, 17     # 시험 1 / 시험 2 / 이후
-PLAN_ORDER = ([0] + list(range(1, 9)) + [PLAN_EXAM1]
-              + list(range(9, 15)) + [PLAN_EXAM2, PLAN_AFTER])  # 시간순
+PLAN_ORDER = ([0] + list(range(1, 15))
+              + [PLAN_EXAM1, PLAN_EXAM2, PLAN_AFTER])  # 시간순 (시험 2회는 학습일 뒤)
 AUTO = "자동선택"           # 세트 슬롯 값: 기록 기반 자동 선택
 
 ROUTINE_PLAN = {
@@ -1684,26 +1690,25 @@ ROUTINE_PLAN = {
     6: {"제목": "1차 완주", "종류": "모의", "세트": ["컴활 2급 상시"],
         "목표": None},
     7: {"제목": "재도전", "종류": "모의", "세트": ["2026 1회"], "목표": 65},
-    8: {"제목": "시험 1 전 마무리", "종류": "모의", "세트": [AUTO],
-        "목표": 70, "특별": ["실수노트"]},
-    9: {"제목": "2차 완주", "종류": "모의", "세트": [AUTO], "목표": 75,
-        "특별": ["복기"]},
-    10: {"제목": "2차 완주", "종류": "모의", "세트": [AUTO, AUTO],
-         "목표": 75},
-    11: {"제목": "2차 완주", "종류": "모의", "세트": [AUTO], "목표": 80,
-         "메모": "신규 세트 우선"},
-    12: {"제목": "2차 완주", "종류": "모의", "세트": [AUTO], "목표": 80},
-    13: {"제목": "2차 완주", "종류": "모의", "세트": [AUTO], "목표": 85},
-    14: {"제목": "시험 2 전 최종", "종류": "모의", "세트": [AUTO],
+    # 9/10(목)~9/16(수): 재응시 사다리 70·70·75·75·80·80·85 (주말 9/12·13 2세트)
+    8: {"제목": "재응시", "종류": "모의", "세트": [AUTO], "목표": 70},
+    9: {"제목": "재응시", "종류": "모의", "세트": [AUTO], "목표": 70},
+    10: {"제목": "재응시", "종류": "모의", "세트": [AUTO, AUTO], "목표": 75},
+    11: {"제목": "재응시", "종류": "모의", "세트": [AUTO, AUTO], "목표": 75},
+    12: {"제목": "재응시", "종류": "모의", "세트": [AUTO], "목표": 80},
+    13: {"제목": "재응시", "종류": "모의", "세트": [AUTO], "목표": 80},
+    14: {"제목": "시험 전 최종", "종류": "모의", "세트": [AUTO],
          "목표": 85, "특별": ["실수노트"]},
     PLAN_EXAM1: {"제목": "시험 1", "종류": "안내",
-                 "할일": "시험 1 당일. 수험표·신분증 확인, 고사장 30분 전 "
-                        "도착. 저장은 Ctrl+S 수시로, 계산작업은 한 문제 3분 "
-                        "넘기면 다음으로. 준비한 만큼 충분합니다 — 화이팅!"},
+                 "할일": "시험 1 당일(9/17 목). 수험표·신분증 확인, 고사장 "
+                        "30분 전 도착. 저장은 Ctrl+S 수시로, 계산작업은 한 "
+                        "문제 3분 넘기면 다음으로. 시험 후 저녁에는 세트 "
+                        "없이 복기 메모(막힌 유형·시간 부족 구간 3줄)와 실수 "
+                        "노트 1회독만 가볍게 — 내일 2차가 있습니다."},
     PLAN_EXAM2: {"제목": "시험 2", "종류": "안내",
-                 "할일": "시험 2 당일. 시험 1의 복기 메모를 한 번 훑고 "
-                        "출발하세요. 실수 노트의 항목만 지키면 됩니다 — "
-                        "화이팅!"},
+                 "할일": "시험 2 당일(9/18 금). 아침에 실수 노트와 어제의 "
+                        "복기 메모만 한 번 훑고 출발하세요. 그 항목만 지키면 "
+                        "됩니다 — 화이팅!"},
     PLAN_AFTER: {"제목": "루틴 완주", "종류": "안내",
                  "할일": "14일 루틴과 시험 2회를 완주했습니다. 수고 많았습니다! "
                         "결과와 관계없이 쌓은 실력은 남습니다."},
@@ -1725,7 +1730,7 @@ PREP_STEPS = [
 
 
 def routine_date_for(no):
-    """일정 번호 -> 날짜. Day 1~14는 시험일을 건너뛰어 배정(시험일 제외)."""
+    """일정 번호 -> 날짜. Day 1~14 = 9/3~9/16 연속(시험일이 사이에 오면 건너뜀)."""
     no = int(no)
     if 1 <= no <= 14:
         d = ROUTINE_START + timedelta(days=no - 1)
@@ -1777,7 +1782,7 @@ def build_day_steps(plan, slot_names=None):
     """일정 -> 스텝 시퀀스 (공통 템플릿, 세트 슬롯마다 ①~④ 반복).
 
     ① 시험 모드 40분 완주 ② 채점·성적 복사(자동 체크) ③ 오답노트 모드
-    ④ 오답 재풀이 15분 → (특별) 실수 노트 → ⑤ (선택) 함수 퀴즈.
+    ④ 오답 재풀이 15분 → (특별: 마감일) 실수 노트 → ⑤ (선택) 함수 퀴즈.
     """
     no = plan.get("no", 0)
     if plan.get("종류") != "모의":
@@ -1788,11 +1793,6 @@ def build_day_steps(plan, slot_names=None):
     if len(goals) < len(slots):
         goals += [plan.get("목표")] * (len(slots) - len(goals))
     steps = []
-    if "복기" in (plan.get("특별") or []):
-        steps.append({"이름": "시험 1 복기", "형": "안내", "분": 15,
-                      "설명": "어제 시험 1을 복기하세요 — 막힌 문제·시간 "
-                             "배분·실수를 웹 루틴 실수 노트에 3줄로 "
-                             "적습니다. 시험 2까지 이 노트만 지키면 됩니다."})
     for k, spec in enumerate(slots):
         name = names[k] if k < len(names) else "자동 선택"
         goal = goals[k]
@@ -1824,8 +1824,8 @@ def build_day_steps(plan, slot_names=None):
     if "실수노트" in (plan.get("특별") or []):
         steps.append({"이름": "실수 노트 정리", "형": "안내", "분": 10,
                       "설명": "오늘까지의 오답에서 반복된 실수를 웹 루틴 실수 "
-                             "노트에 정리하세요. 시험장에서 볼 마지막 "
-                             "체크리스트입니다."})
+                             "노트에 정리하세요. 내일 1차·모레 2차 시험장에서 "
+                             "볼 마지막 체크리스트입니다."})
     steps.append({"이름": "(선택) 함수 퀴즈", "형": "안내", "분": 10,
                   "선택": True, "웹탭": "quiz",
                   "설명": "(선택) 루틴 페이지 함수 퀴즈 10문제 — 오늘 틀린 "
@@ -2508,35 +2508,56 @@ def retry_payload_for_set(s, minutes=15, json_path=None):
 # 적응형 일정 엔진 v5 — 기록(기록.json) 기준으로 매번 재계산 (웹 루틴과 동일 규격)
 #   전날·그전날 못 한 세트는 자동으로 풀에 남아 오늘 이후로 재배치되고,
 #   시험 전날(구간 마감)까지 전 세트 완주를 보장하도록 용량을 올린다.
+#   구간은 시험일 목록에서 도출: 이전 시험일 다음 날 ~ 다음 시험일 전날,
+#   학습일이 하나도 없는 구간(9/18 앞)은 건너뛰므로 이 일정은 단일 구간(9/3~9/16).
 # ---------------------------------------------------------------------------
 
 PRIORITY_SPECS = ["2024 상시 1회", "코코 1회", "2024 A형", "2024 상시 2회",
                   "코코 2회", "2024 B형", "24 2급 상시", "컴활 2급 상시",
                   "2026 1회"]          # 첫응시 고정 우선순위 (그 외 신규는 이름순)
-REDO_SPEC = "2026 1회"                # 1구간 필수 재도전 (루틴 중 미응시면)
+REDO_SPEC = "2026 1회"                # 필수 재도전 (루틴 중 미응시면)
 REDO_GOAL = 65
-RETRY_MIN_SEG1 = 2                    # 1구간 재응시 최소(재도전 포함)
+RETRY_MIN = 2                         # 재응시 최소(재도전 포함) — 부족하면 평일 승격
+RETRY_MIN_SEG1 = RETRY_MIN            # (구 이름 호환)
+RETRY_GOALS = [70, 75, 80, 85]        # 재응시 목표 사다리 (배정된 날짜 순으로 분배)
 WEEKEND_CAP, WEEKDAY_CAP = 2, 1
 
 
+def study_segments():
+    """시험일 목록에서 학습 구간 도출: [{seg, seg_start, end, exam}] (학습일 0인
+    구간은 건너뜀). 9/17·9/18 시험이면 1구간 9/3~9/16 하나뿐."""
+    segs = []
+    prev = ROUTINE_START
+    for ex in sorted(EXAM_DATES):
+        start, end = prev, ex - timedelta(days=1)
+        if end >= start:
+            segs.append({"seg": len(segs) + 1, "seg_start": start, "end": end,
+                         "exam": ex})
+        prev = ex + timedelta(days=1)
+    return segs
+
+
+def next_segment_after(seg_no):
+    """seg_no 다음 학습 구간 (없으면 None) — 미리보기(preview)용."""
+    return next((sg for sg in study_segments() if sg["seg"] == seg_no + 1), None)
+
+
 def segment_for(today):
-    """오늘 -> 구간 정보. kind: study(1·2구간) / exam / after."""
+    """오늘 -> 구간 정보. kind: study(학습 구간) / exam / after."""
     if today in EXAM_DATES:
         return {"kind": "exam", "exam_no": EXAM_DATES.index(today) + 1}
-    if today > EXAM_DATES[-1]:
+    if today > max(EXAM_DATES):
         return {"kind": "after"}
-    if today < EXAM_DATES[0]:
-        return {"kind": "study", "seg": 1, "seg_start": ROUTINE_START,
-                "start": max(today, ROUTINE_START),
-                "end": EXAM_DATES[0] - timedelta(days=1)}
-    return {"kind": "study", "seg": 2,
-            "seg_start": EXAM_DATES[0] + timedelta(days=1), "start": today,
-            "end": EXAM_DATES[1] - timedelta(days=1)}
+    for sg in study_segments():
+        if today <= sg["end"]:
+            return {"kind": "study", "seg": sg["seg"], "seg_start": sg["seg_start"],
+                    "start": max(today, sg["seg_start"]), "end": sg["end"]}
+    return {"kind": "after"}      # 시험일 사이에 학습일이 없는 날 (이 일정엔 없음)
 
 
 def base_capacity(d, seg_end):
-    """기본 용량: 주말 2 / 평일 1 / 마감일 1(+실수노트) / 시험 다음날 1(+복기)."""
-    if d == EXAM_DATES[0] + timedelta(days=1) or d == seg_end:
+    """기본 용량: 주말 2 / 평일 1 / 마감일(시험 전날) 1(+실수노트)."""
+    if d == seg_end:
         return 1
     return WEEKEND_CAP if d.weekday() >= 5 else WEEKDAY_CAP
 
@@ -2607,7 +2628,7 @@ def build_adaptive_plan(today, records, sets):
         by_date.setdefault(_record_date(r), []).append(r)
     plan["_recs_by_date"] = by_date
 
-    # 학습일·기본 용량
+    # 학습일·기본 용량 (승격 후보 = 평일, 이른 날부터 → 마감일은 최후)
     days = []
     d = start
     while d <= end:
@@ -2618,18 +2639,16 @@ def build_adaptive_plan(today, records, sets):
     if today in cap:
         cap[today] = max(0, cap[today] - done_today)
     boostable = [dd for dd in days
-                 if dd.weekday() < 5 and dd != EXAM_DATES[0] + timedelta(days=1)
-                 and not (dd == today and done_today >= 2)]
+                 if dd.weekday() < 5 and not (dd == today and done_today >= 2)]
 
     # 풀
     ordered = prioritized_sets(sets)
     first_pool = [(s, lab) for s, lab in ordered if not by_set.get(s["norm"])]
     redo_set = None
-    if seg["seg"] == 1:
-        rs, _how = match_slot(sets, REDO_SPEC)
-        if rs and by_set.get(rs["norm"]) and not any(
-                _record_date(r) >= ROUTINE_START for r in by_set[rs["norm"]]):
-            redo_set = rs
+    rs, _how = match_slot(sets, REDO_SPEC)
+    if rs and by_set.get(rs["norm"]) and not any(
+            _record_date(r) >= ROUTINE_START for r in by_set[rs["norm"]]):
+        redo_set = rs                           # 루틴 전 기록만 있음 → 재도전 필수
     mandatory = []
     for s, lab in first_pool:
         goal = REDO_GOAL if lab == REDO_SPEC else None
@@ -2659,22 +2678,21 @@ def build_adaptive_plan(today, records, sets):
         b = _best(by_set[s["norm"]])
         return (b if b is not None else -1, s["name"])
 
-    if seg["seg"] == 2:
-        redone = {s["norm"] for s, _l in attempted
-                  if any(_record_date(r) >= seg_start for r in by_set[s["norm"]])}
-        groups = ([s for s, _l in attempted if s["norm"] not in redone],
-                  [s for s, _l in attempted if s["norm"] in redone])
-    else:
-        groups = ([s for s, _l in attempted],)
+    def retried_in_routine(s):
+        """루틴 중 재응시(첫 기록 이후의 기록이 구간 안) 여부."""
+        return any(_record_date(r) >= seg_start and i > 0
+                   for i, r in enumerate(by_set[s["norm"]]))
+
+    # 재응시 풀: 아직 재응시 안 한 세트 먼저, 각 그룹은 최고점 오름차순(동점 이름순),
+    # 오늘·어제 응시한 세트는 그룹 뒤로
+    groups = ([s for s, _l in attempted if not retried_in_routine(s)],
+              [s for s, _l in attempted if retried_in_routine(s)])
     retry_pool = []
     for g in groups:
         retry_pool.extend(sorted((s for s in g if not recent(s)), key=retry_key))
         retry_pool.extend(sorted((s for s in g if recent(s)), key=retry_key))
     retries_done = 0
-    redo_norm = None
-    if seg["seg"] == 1:
-        rs0, _h = match_slot(sets, REDO_SPEC)
-        redo_norm = rs0["norm"] if rs0 else None
+    redo_norm = rs["norm"] if rs else None
     for s, _l in attempted:
         recs = by_set[s["norm"]]
         if s["norm"] == redo_norm:              # 2026 1회: 루틴 중 응시 = 재도전 완료
@@ -2685,16 +2703,15 @@ def build_adaptive_plan(today, records, sets):
             if _record_date(r) >= seg_start and i > 0:
                 retries_done += 1
 
-    # 필요량 vs 용량 — 단계적 확장/축소
-    retry_target = RETRY_MIN_SEG1 if seg["seg"] == 1 else 0
+    # 필요량(첫응시 전부 + 재도전 + 재응시 최소) vs 용량 — 단계적 확장/축소
+    #   ① 평일 승격(이른 날부터, 마감일 최후) ② 재응시 최소 축소(최소 1)
+    #   ③ 첫응시 뒤에서부터 '선택' 강등
+    retry_target = RETRY_MIN
     demoted = []
     boost_days = []
     while True:
         redo_in = any(sl.get("counts_as_retry") for sl in mandatory)
-        if seg["seg"] == 1:
-            extra = max(0, retry_target - retries_done - (1 if redo_in else 0))
-        else:
-            extra = 0
+        extra = max(0, retry_target - retries_done - (1 if redo_in else 0))
         required = len(mandatory) + extra
         total_cap = sum(cap.values())
         if required <= total_cap:
@@ -2712,50 +2729,56 @@ def build_adaptive_plan(today, records, sets):
             demoted.append(sl)
             continue
         break
-    if seg["seg"] == 2:
-        extra = max(0, sum(cap.values()) - len(mandatory))   # 목표: 전 세트 재응시
     plan["retry_target"] = retry_target
 
-    # 재응시 슬롯 (목표 점수 순번 상승)
-    retry_slots = []
-    n_r = extra
-    cursor = 0
-    for k in range(n_r):
-        if seg["seg"] == 1:
-            level = min(3, (k * 4) // max(1, n_r))
-            goal = 70 + 5 * level
-        else:
-            level = min(2, (k * 3) // max(1, n_r))
-            goal = 75 + 5 * level
-        s = None
-        if retry_pool:
-            s = retry_pool[cursor % len(retry_pool)]
-            cursor += 1
-        why = ("재응시 · 최고점 " + (f"{_best(by_set[s['norm']]):g}점"
-                                  if _best(by_set[s["norm"]]) is not None
-                                  else "점수 없음")) if s else "재응시 · 자동 선택"
-        retry_slots.append(_slot("retry", s, goal, why))
-
-    # 배정: 첫응시(우선순위) → 재응시, 가장 이른 슬롯부터, 하루 안 중복 없음
-    queue = list(mandatory) + retry_slots
+    # 배정 1: 첫응시·재도전(우선순위 순)을 가장 이른 슬롯부터, 하루 안 중복 없음
+    queue = list(mandatory)
     per_day = {dd: [] for dd in days}
     for dd in days:
         while len(per_day[dd]) < cap[dd] and queue:
             pick = None
             for i, sl in enumerate(queue):      # 같은 날 같은 세트 금지
-                if sl["set"] is None or all(
-                        x["set"] is None
-                        or x["set"]["norm"] != sl["set"]["norm"]
-                        for x in per_day[dd]):
+                if all(x["set"]["norm"] != sl["set"]["norm"] for x in per_day[dd]):
                     pick = queue.pop(i)
                     break
             if pick is None:
                 break
             per_day[dd].append(dict(pick, date=dd))
-    for sl in queue:                            # 배정 못 한 것은 강등 처리
+    for sl in queue:                            # 배정 못 한 필수 슬롯은 강등 처리
         demoted.append(sl)
-    for k, sl in enumerate(demoted):
+    for sl in demoted:
         sl["kind"] = "optional"
+
+    # 배정 2: 남는 용량은 전부 재응시 — 풀을 순환(최고점 낮은 세트부터), 같은 날
+    # 이미 있는 세트는 건너뛰고 풀이 비었거나 전부 겹치면 '자동 선택'(당일 기록 기준)
+    def _retry_slot(s):
+        why = ("재응시 · 최고점 " + (f"{_best(by_set[s['norm']]):g}점"
+                                  if _best(by_set[s["norm"]]) is not None
+                                  else "점수 없음")) if s else "재응시 · 자동 선택"
+        return _slot("retry", s, None, why)
+
+    cursor = 0
+    for dd in days:
+        while len(per_day[dd]) < cap[dd]:
+            s = None
+            for _try in range(len(retry_pool)):
+                cand = retry_pool[cursor % len(retry_pool)]
+                cursor += 1
+                if all(x["set"] is None or x["set"]["norm"] != cand["norm"]
+                       for x in per_day[dd]):
+                    s = cand
+                    break
+            per_day[dd].append(dict(_retry_slot(s), date=dd))
+    # 재응시 목표 사다리 70→75→80→85: 재응시가 배정된 날짜 순으로 4단계 분배
+    # (같은 날 2세트는 같은 목표). 예: 7일이면 70·70·75·75·80·80·85.
+    retry_days = [dd for dd in days
+                  if any(sl["kind"] == "retry" for sl in per_day[dd])]
+    for rank, dd in enumerate(retry_days):
+        level = min(len(RETRY_GOALS) - 1,
+                    (rank * len(RETRY_GOALS)) // max(1, len(retry_days)))
+        for sl in per_day[dd]:
+            if sl["kind"] == "retry":
+                sl["goal"] = RETRY_GOALS[level]
     plan["days"] = {dd: per_day[dd] for dd in days}
     plan["boost_days"] = boost_days
     plan["demoted"] = [sl["name"] for sl in demoted]
@@ -2789,7 +2812,7 @@ def build_adaptive_plan(today, records, sets):
 def adaptive_day_plan(adaptive, no):
     """적응형 결과 -> 일정 번호 no의 카드/단계 창용 plan dict.
 
-    adaptive가 없거나 해당 날짜가 계산 범위 밖이면 v4 고정 일정으로 폴백.
+    adaptive가 없거나 해당 날짜가 계산 범위 밖이면 고정 일정표로 폴백.
     """
     base = plan_for_day(no)
     if not adaptive or adaptive.get("kind") != "study":
@@ -2832,8 +2855,6 @@ def adaptive_day_plan(adaptive, no):
     plan["남은세트"] = adaptive["remaining"]
     if d == adaptive["end"]:
         plan["특별"].append("실수노트")
-    if d == EXAM_DATES[0] + timedelta(days=1):
-        plan["특별"].append("복기")
     if d == today:
         plan["사유"] = adaptive.get("reason") or ""
         plan["경고"] = adaptive.get("warning")
@@ -4009,10 +4030,11 @@ def _iso(d):
 
 
 def _seg_end_for(d):
-    """날짜가 속한 구간의 마감일 (9/10 또는 9/17)."""
-    if d < EXAM_DATES[0]:
-        return EXAM_DATES[0] - timedelta(days=1)
-    return EXAM_DATES[1] - timedelta(days=1)
+    """날짜가 속한 학습 구간의 마감일 (이 일정은 9/16 하나). 시험일이면 그 날짜."""
+    for sg in study_segments():
+        if sg["seg_start"] <= d <= sg["end"]:
+            return sg["end"]
+    return d
 
 
 def serialize_slot(sl, by_set):
@@ -4034,8 +4056,7 @@ def serialize_slot(sl, by_set):
     }
 
 
-def _day_title(d, today, kind, slots, promoted, deadline, review_day,
-               recs_by_date):
+def _day_title(d, today, kind, slots, promoted, deadline, recs_by_date):
     if kind == "exam":
         return f"시험 {EXAM_DATES.index(d) + 1}"
     if kind == "next":
@@ -4044,8 +4065,6 @@ def _day_title(d, today, kind, slots, promoted, deadline, review_day,
         recs = recs_by_date.get(d) or []
         return "완료" if recs else "미완주"
     parts = []
-    if review_day:
-        parts.append("복기")
     if slots:
         parts.append(f"{len(slots)}세트" + (" (승격)" if promoted else ""))
     elif d == today and recs_by_date.get(d):
@@ -4060,20 +4079,20 @@ def _day_title(d, today, kind, slots, promoted, deadline, review_day,
 def serialize_days(adaptive, today, recs_by_date, by_set, dates=None):
     """9/3~9/18 모든 날짜를 규약 days[] 로 (dates 를 주면 그 날짜만).
 
-    kind: exam(시험일) > next(현재 구간 end 이후 학습일) > past(오늘 이전) >
-    review(9/12) > mock(슬롯 있음) / rest(슬롯 없음). past·exam·next 의 slots 는
-    []이고 오늘·예정일은 엔진의 남은 배정만 담습니다.
+    kind: exam(시험일 9/17·9/18) > next(현재 구간 end 이후 학습일 — 이 일정엔
+    없음) > past(오늘 이전) > mock(슬롯 있음) / rest(슬롯 없음). past·exam·next
+    의 slots 는 []이고 오늘·예정일은 엔진의 남은 배정만 담습니다. review_day 는
+    규약 호환용으로 남겨 두되 이 일정(시험 후 학습일 없음)에서는 항상 false.
     """
     study = bool(adaptive) and adaptive.get("kind") == "study"
     end = adaptive.get("end") if study else None
     boost = set(adaptive.get("boost_days") or []) if study else set()
     days_map = (adaptive.get("days") or {}) if study else {}
-    review_day = EXAM_DATES[0] + timedelta(days=1)
-    deadlines = {ex - timedelta(days=1) for ex in EXAM_DATES}
+    deadlines = {sg["end"] for sg in study_segments()}
     if dates is None:
         dates = []
         d = ROUTINE_START
-        while d <= EXAM_DATES[-1]:
+        while d <= max(EXAM_DATES):
             dates.append(d)
             d += timedelta(days=1)
     out = []
@@ -4089,15 +4108,15 @@ def serialize_days(adaptive, today, recs_by_date, by_set, dates=None):
             kind, capacity = "next", base_capacity(d, _seg_end_for(d))
         else:
             slots = [serialize_slot(sl, by_set) for sl in days_map.get(d, [])]
-            kind = "review" if d == review_day else ("mock" if slots else "rest")
+            kind = "mock" if slots else "rest"
             capacity = base_capacity(d, end) + (1 if d in boost else 0)
         promoted = d in boost
         out.append({
             "date": d.isoformat(), "no": routine_day_no(d), "kind": kind,
             "title": _day_title(d, today, kind, slots, promoted, d in deadlines,
-                                d == review_day, recs_by_date),
+                                recs_by_date),
             "capacity": capacity, "promoted": promoted,
-            "deadline": d in deadlines, "review_day": d == review_day,
+            "deadline": d in deadlines, "review_day": False,
             "slots": slots,
         })
     return out
@@ -4116,7 +4135,7 @@ def _recs_by_date(records):
 
 def serialize_plan(adaptive, today, records, sets, preview=None):
     """build_adaptive_plan 결과 → 규약 plan (date → ISO, 내부 키 제거, days[] 전체,
-    seg 1 이면 preview{days, boost_days})."""
+    다음 학습 구간이 있으면 preview{days, boost_days} — 이 일정은 단일 구간이라 null)."""
     study = adaptive.get("kind") == "study"
     by_set = exam_records_by_set(sets or [], records or [])
     recs_by_date = adaptive.get("_recs_by_date") if study else None
@@ -4139,9 +4158,8 @@ def serialize_plan(adaptive, today, records, sets, preview=None):
         "days": serialize_days(adaptive, today, recs_by_date, by_set),
         "preview": None,
     }
-    if study and adaptive.get("seg") == 1 and preview \
-            and preview.get("kind") == "study":
-        p_today = preview.get("today") or EXAM_DATES[0] + timedelta(days=1)
+    if study and preview and preview.get("kind") == "study":
+        p_today = preview.get("today") or preview["start"]
         dates = []
         d = preview["start"]
         while d <= preview["end"]:
@@ -4174,12 +4192,13 @@ def build_state(sets, records=None, cfg=None, today=None, exam_running=False,
         adaptive = {"kind": segment_for(today)["kind"], "today": today,
                     "days": {}, "reason": "", "warning": f"일정 계산 오류: {e}"}
     preview = None
-    if adaptive.get("kind") == "study" and adaptive.get("seg") == 1:
+    nxt = next_segment_after(adaptive.get("seg") or 0) \
+        if adaptive.get("kind") == "study" else None
+    if nxt:                                   # 다음 학습 구간이 있을 때만 (지금은 없음)
         try:
-            preview = build_adaptive_plan(EXAM_DATES[0] + timedelta(days=1),
-                                          records, sets)
+            preview = build_adaptive_plan(nxt["seg_start"], records, sets)
         except Exception as e:
-            log_error("루틴 연동 2구간 미리보기", e)
+            log_error("루틴 연동 다음 구간 미리보기", e)
     recs, review, index = serialize_records(records, sets, cfg)
     checks = {str(k): bool(v) for k, v in
               _cfg_section(cfg, WEB_CHECKS_KEY).items()}
@@ -7516,7 +7535,7 @@ def run_smoke():
     sheets, label = dlg.selection()
     assert sheets == ["기본작업-1", "기본작업-2", "기본작업-3"]
     dlg.destroy()
-    # 오늘의 학습 카드 + 미리보기 화살표 (일정 v4: 9/3 시작, 시험 2회 D-day)
+    # 오늘의 학습 카드 + 미리보기 화살표 (9/3 시작, 시험 9/17·9/18 D-day)
     assert app.plan_title_lbl.cget("text"), "오늘의 학습 제목 비어 있음"
     app.plan_no = 3
     app._render_plan_card()
@@ -7538,12 +7557,13 @@ def run_smoke():
     assert "시험1 D" in t3 and "시험2 D" in t3, t3
     app._shift_plan(1)
     assert "Day 4" in app.plan_title_lbl.cget("text")
-    app.plan_no = 8
-    app._shift_plan(1)                       # d08 다음은 시험 1 (시간순)
+    app.plan_no = 14
+    app._shift_plan(1)                       # d14(9/16) 다음은 시험 1 (시간순)
     assert app.plan_no == PLAN_EXAM1
     assert "시험일" in app.plan_title_lbl.cget("text")
-    app._shift_plan(1)
-    assert app.plan_no == 9
+    app._shift_plan(1)                       # 이틀 연속: 시험 1 → 시험 2
+    assert app.plan_no == PLAN_EXAM2
+    assert "9/18(금)" in app.plan_title_lbl.cget("text")
     # 단계 가이드 창 — 2세트 날(Day 3): ①~④ ×2 + (선택) 퀴즈 = 9스텝
     save_step_progress("d03", set())
     guide = StepGuideWindow(app, plan_for_day(3))
