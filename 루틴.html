@@ -204,6 +204,48 @@
   .plan-banner{margin-top:14px; padding:12px 16px; background:var(--accent-soft); border:1px solid var(--accent); color:var(--accent-deep); font-size:14px; font-weight:500}
   .plan-banner.warn{background:var(--warn-soft); border-color:var(--warn); color:var(--warn)}
   .plan-banner:empty{display:none}
+  /* 이의제기 반영 띠 (시험장이 지난 기록을 다시 채점해 점수를 정정했을 때) */
+  .corr-strip{margin-top:12px; padding:11px 14px; background:var(--accent-soft); border:1px solid var(--accent); border-left-width:4px; color:var(--accent-deep); font-size:13.5px; display:flex; flex-wrap:wrap; gap:6px 12px; align-items:baseline}
+  .corr-strip[hidden]{display:none}
+  .corr-strip .cs-head{font-weight:700; letter-spacing:-.01em}
+  .corr-item{display:inline-flex; align-items:baseline; gap:6px}
+  .corr-item .ci-set{font-weight:600}
+  .corr-item .ci-move{font-family:"IBM Plex Mono", ui-monospace, monospace; font-size:12.5px}
+  .corr-item .ci-why{color:var(--muted); font-size:12.5px}
+  .corr-delta{display:inline-block; padding:0 7px; border:1px solid var(--accent); background:var(--card); color:var(--accent-deep); font-size:12px; font-weight:700; font-family:"IBM Plex Mono", ui-monospace, monospace; white-space:nowrap}
+  .corr-delta.down{border-color:var(--warn); color:var(--warn)}
+  .rc-corr{margin:6px 0 0; font-size:12.5px; color:var(--accent-deep); display:flex; flex-wrap:wrap; gap:6px; align-items:baseline}
+
+  /* ===== 게임형 히어로 (티어 · 게이지 · 연속 · 도전 과제 · 오늘 잠금) ===== */
+  .game{margin-top:16px; padding:14px 16px; background:var(--card); border:1px solid var(--line); box-shadow:var(--shadow)}
+  .g-tiers{display:flex; flex-wrap:wrap; gap:6px; align-items:center}
+  .g-tier{display:inline-flex; align-items:baseline; gap:5px; padding:3px 10px; border:1px solid var(--line); background:var(--bg); color:var(--muted); font-size:12.5px; font-weight:600}
+  .g-tier .gt-mark{font-family:"IBM Plex Mono", ui-monospace, monospace; font-size:12px}
+  .g-tier .gt-num{font-family:"IBM Plex Mono", ui-monospace, monospace; font-size:11.5px; opacity:.85}
+  .g-tier.done{border-color:var(--accent); background:var(--accent-soft); color:var(--accent-deep)}
+  .g-tier.now{border-color:var(--warn); background:var(--warn-soft); color:var(--warn)}
+  .g-bar{position:relative; height:12px; margin-top:11px; background:var(--accent-soft); border:1px solid var(--line); overflow:hidden}
+  .g-fill{height:100%; width:0; background:var(--accent); transition:width .45s steps(12, end)}
+  .g-tick{position:absolute; top:0; bottom:0; width:1px; background:var(--card); opacity:.9}
+  .g-gauge-label{margin:6px 0 0; font-size:13.5px; font-weight:600}
+  .g-lines{margin-top:4px; display:flex; flex-wrap:wrap; gap:4px 14px; align-items:baseline; font-size:12.5px; color:var(--muted)}
+  .g-lock{color:var(--warn); font-weight:600}
+  .g-lock[hidden]{display:none}
+  .g-lock .gl-time{font-family:"IBM Plex Mono", ui-monospace, monospace}
+  .g-badges{margin-top:11px; display:grid; grid-template-columns:repeat(auto-fill, minmax(148px, 1fr)); gap:6px}
+  .g-badge{display:flex; align-items:center; gap:7px; padding:5px 8px; border:1px solid var(--line); background:var(--bg); min-width:0}
+  .g-badge .gb-icon{flex:0 0 auto; min-width:38px; text-align:center; padding:1px 5px; border:1px solid var(--line); background:var(--card); font-size:11px; font-weight:700; font-family:"IBM Plex Mono", ui-monospace, monospace; color:var(--muted)}
+  .g-badge .gb-text{min-width:0; font-size:12px; line-height:1.35; color:var(--muted)}
+  .g-badge .gb-name{display:block; font-weight:600}
+  .g-badge .gb-when{display:block; font-size:11px; opacity:.9}
+  .g-badge.done{border-color:var(--accent); background:var(--accent-soft)}
+  .g-badge.done .gb-icon{border-color:var(--accent); color:var(--accent-deep)}
+  .g-badge.done .gb-text{color:var(--accent-deep)}
+  .g-badge-note{margin:8px 0 0; font-size:12.5px; color:var(--muted)}
+  @media (max-width:520px){
+    .game{padding:12px}
+    .g-badges{grid-template-columns:repeat(auto-fill, minmax(132px, 1fr))}
+  }
   .plan-items{list-style:none; padding:0; margin:6px 0 0; display:grid; gap:8px}
   .pi{display:flex; flex-wrap:wrap; align-items:center; gap:8px; font-size:14px}
   .pi-kind{font-size:11.5px; font-weight:700; padding:1px 7px; background:var(--accent-soft); color:var(--accent-deep); white-space:nowrap}
@@ -651,12 +693,27 @@
           <div class="hero-d"><div class="d-num" id="d-num" aria-label="1차 시험까지 남은 날">D-11</div><p class="d-sub" id="d-sub">2차 9/18 (금) · D-12</p></div>
         </div>
 
+        <div class="game" id="game-panel">
+          <div class="g-tiers" id="tier-row" aria-label="목표 단계 — 합격 70 · 숙련 80 · 고득점 90 · 만점 100"></div>
+          <div class="g-bar" id="tier-track" role="progressbar" aria-label="현재 목표까지의 진행" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0">
+            <div class="g-fill" id="tier-fill"></div>
+          </div>
+          <p class="g-gauge-label" id="tier-label"></p>
+          <div class="g-lines">
+            <span class="g-streak" id="streak-line"></span>
+            <span class="g-lock" id="lock-line" hidden></span>
+          </div>
+          <div class="g-badges" id="badge-grid"></div>
+          <p class="g-badge-note" id="badge-note"></p>
+        </div>
+
         <div class="start-row">
           <button type="button" id="start-btn" class="start-btn">오늘 하루 공부 시작</button>
           <button type="button" id="recalc-btn" class="quiz-nav-btn" data-fallback-only>일정 다시 계산</button>
           <span class="start-hint" id="plan-remaining"></span>
         </div>
         <div class="plan-banner" id="plan-banner" aria-live="polite"></div>
+        <div class="corr-strip" id="corr-strip" hidden aria-live="polite"></div>
 
         <div>
           <div class="strip-wrap" role="img" aria-label="9월 3일부터 9월 18일까지 날짜 스트립. 매일 모의 1세트, 주말 9월 5일·6일·12일·13일은 2세트, 9월 16일 마감, 1차 시험 9월 17일, 2차 시험 9월 18일. 오늘 날짜는 자동 표시.">
@@ -1288,7 +1345,7 @@
     }
   } catch (e) { TOKEN = ""; }
   /* api.on = 연동 모드 확정, st = 마지막 /api/state, sets/recs = 화면용 정규화 사본 */
-  var api = { on: false, probed: false, st: null, sets: [], recs: [], generated: null, connected: false, lastSync: 0, timer: null, busy: false, deferred: false };
+  var api = { on: false, probed: false, st: null, sets: [], recs: [], corrections: [], generated: null, connected: false, lastSync: 0, timer: null, busy: false, deferred: false };
   function linked() { return api.on && api.st !== null; }
 
   /* ---------- 적응형 일정 · 채점결과 매핑 (순수 함수 — 시험장 프로그램과 동일 규격) ---------- */
@@ -1426,19 +1483,143 @@
       return r && r.mode !== "부분연습" && r.mode !== "오답재풀이" && typeof r.total === "number" && typeof r.date === "string";
     });
   }
-  /* 목표 사다리 상태 — 시험장 level_info 와 동일: 현재 목표 = 아직 달성하지 못한 가장 낮은 단계(전체 최고점 기준) */
-  function levelInfo(records) {
-    var scored = scoredRecords(records);
-    var best = null;
-    scored.forEach(function(r){ if (best === null || r.total > best) { best = r.total; } });
-    var achieved = GOAL_TIERS.filter(function(t){ return best !== null && best >= t; });
+  /* 최고점 → 목표 사다리 상태 (시험장 level_from_best 와 동일) */
+  function levelFromBest(best) {
+    var achieved = GOAL_TIERS.filter(function(t){ return best !== null && best !== undefined && best >= t; });
     var perfect = achieved.indexOf(GOAL_TIERS[GOAL_TIERS.length - 1]) >= 0;
     var goal = GOAL_TIERS[GOAL_TIERS.length - 1];
     if (!perfect) {
       for (var i = 0; i < GOAL_TIERS.length; i++) { if (achieved.indexOf(GOAL_TIERS[i]) < 0) { goal = GOAL_TIERS[i]; break; } }
     }
-    return { tier: perfect ? "perfect" : goal, current_goal: goal, best_total: best,
+    return { tier: perfect ? "perfect" : goal, current_goal: goal, best_total: (best === undefined ? null : best),
              achieved: achieved, next_goal: perfect ? null : goal };
+  }
+  /* 목표 사다리 상태 — 시험장 level_info 와 동일: 현재 목표 = 아직 달성하지 못한 가장 낮은 단계(전체 최고점 기준) */
+  function levelInfo(records) {
+    var best = null;
+    scoredRecords(records).forEach(function(r){ if (best === null || r.total > best) { best = r.total; } });
+    return levelFromBest(best);
+  }
+
+  /* ===== 게임형 요소 (시험장 2.6.0 과 같은 정의 — 규약 achievements) =====
+     판정은 규약 records[] 형식만 보는 순수 함수라 연동 모드·폴백 모드가 같은 결과를 낸다.
+     색만으로 상태를 구분하지 않도록 화면에는 아이콘 글자와 달성/미달성 문구를 함께 쓴다. */
+  var TIER_LABELS = { 70: "합격", 80: "숙련", 90: "고득점", 100: "만점" };
+  var FAST_CLEAR_SEC = 40 * 60, CALC_AREA = "계산작업", BASE_AREA_POINTS = 60, CALC_AREA_POINTS = 40;
+  function tierLabel(goal) { return TIER_LABELS[goal] || ""; }
+  function gaugeFraction(best, goal) {
+    var g = Number(goal || 0);
+    if (!(g > 0)) { return 0; }
+    return Math.max(0, Math.min(1, Number(best || 0) / g));
+  }
+  var ACHIEVEMENT_DEFS = [
+    { id: "first",   icon: "완주",   group: "시작",   name: "첫 완주",              desc: "모의고사 한 세트를 끝까지 풀고 채점했다" },
+    { id: "pass70",  icon: "70",     group: "점수",   name: "첫 합격",              desc: "합격선 70점을 처음 넘었다" },
+    { id: "tier80",  icon: "80",     group: "점수",   name: "80점 돌파",            desc: "한 세트에서 80점 이상을 받았다" },
+    { id: "tier90",  icon: "90",     group: "점수",   name: "90점 돌파",            desc: "한 세트에서 90점 이상을 받았다" },
+    { id: "tier100", icon: "100",    group: "점수",   name: "만점 · 전 영역 무실점", desc: "100점 — 모든 영역에서 한 점도 잃지 않았다" },
+    { id: "streak3", icon: "3일",    group: "연속",   name: "3일 연속",             desc: "사흘 연속으로 응시했다" },
+    { id: "streak5", icon: "5일",    group: "연속",   name: "5일 연속",             desc: "닷새 연속으로 응시했다" },
+    { id: "calc40",  icon: "계산",   group: "정확도", name: "계산작업 만점",         desc: "계산작업 5문제를 모두 맞혀 40/40점을 받았다" },
+    { id: "base60",  icon: "무실점", group: "정확도", name: "기본·분석·기타 무실점", desc: "계산작업을 뺀 세 영역에서 60점을 모두 지켰다" },
+    { id: "sets5",   icon: "5세트",  group: "완주량", name: "세트 5개 완주",         desc: "서로 다른 세트를 5개 완주했다" },
+    { id: "sets9",   icon: "9세트",  group: "완주량", name: "세트 9개 완주",         desc: "서로 다른 세트를 9개 완주했다" },
+    { id: "fast40",  icon: "40분",   group: "속도",   name: "40분 내 완주",          desc: "실제 시험 시간(40분) 안에 제출했다" }
+  ];
+  /* 시트 이름 → 영역 (시험장 _category_of_sheet 와 동일) */
+  function categoryOfSheet(name) {
+    var head = String(name || "").split("-")[0].trim();
+    if (head === "매크로작업" || head === "차트작업") { return "기타작업"; }
+    return head || "기타작업";
+  }
+  /* 규약 records[] → 판정용 정규화 목록 (점수 있는 시험·수동, date·time·id 순) */
+  function achRecords(records) {
+    var out = [];
+    (records || []).forEach(function(r){
+      if (!r || typeof r !== "object") { return; }
+      var mode = (typeof r.mode === "string" && r.mode) ? r.mode : "시험";
+      if (mode !== "시험" && mode !== "수동") { return; }
+      if (typeof r.total !== "number") { return; }
+      var d = String(r.date || "");
+      if (d.length !== 10) { return; }
+      var set = (r.set && typeof r.set === "object") ? r.set : {};
+      var sheets = [];
+      (Array.isArray(r.sheets) ? r.sheets : []).forEach(function(sh){
+        if (sh && typeof sh.alloc === "number" && typeof sh.earned === "number") {
+          sheets.push({ name: String(sh.name || ""), alloc: sh.alloc, earned: sh.earned });
+        }
+      });
+      out.push({ id: String(r.id || ""), date: d, time: String(r.time || ""), mode: mode, total: r.total,
+                 norm: String(set.norm || "") || String(set.name || ""), sheets: sheets,
+                 elapsed_sec: (typeof r.elapsed_sec === "number" && r.elapsed_sec > 0) ? Math.floor(r.elapsed_sec) : 0 });
+    });
+    out.sort(function(a, b){
+      if (a.date !== b.date) { return a.date < b.date ? -1 : 1; }
+      if (a.time !== b.time) { return a.time < b.time ? -1 : 1; }
+      return a.id < b.id ? -1 : (a.id > b.id ? 1 : 0);
+    });
+    return out;
+  }
+  function areaTotals(rec) {
+    var out = {};
+    (rec.sheets || []).forEach(function(s){
+      var c = categoryOfSheet(s.name);
+      if (!out[c]) { out[c] = [0, 0]; }
+      out[c][0] += s.alloc; out[c][1] += s.earned;
+    });
+    return out;
+  }
+  /* 도전 과제 12종 판정 — when 은 달성한 기록의 응시 날짜(연속 배지는 연속이 채워진 날) */
+  function achievements(records) {
+    var recs = achRecords(records), got = {}, seen = [], days = [];
+    function mark(id, when) { if (when && !got[id]) { got[id] = when; } }
+    recs.forEach(function(r){
+      var d = r.date, total = r.total;
+      mark("first", d);
+      if (total >= PASS_LINE) { mark("pass70", d); }
+      if (total >= 80) { mark("tier80", d); }
+      if (total >= 90) { mark("tier90", d); }
+      if (total >= 100) { mark("tier100", d); }
+      var areas = areaTotals(r), calc = areas[CALC_AREA], others = [];
+      Object.keys(areas).forEach(function(k){ if (k !== CALC_AREA) { others.push(areas[k]); } });
+      if (calc && calc[0] >= CALC_AREA_POINTS && calc[1] >= calc[0]) { mark("calc40", d); }
+      if (others.length) {
+        var alloc = 0, full = true;
+        others.forEach(function(v){ alloc += v[0]; if (v[1] < v[0]) { full = false; } });
+        if (alloc >= BASE_AREA_POINTS && full) { mark("base60", d); }
+      }
+      if (r.norm && seen.indexOf(r.norm) < 0) {
+        seen.push(r.norm);
+        if (seen.length >= 5) { mark("sets5", d); }
+        if (seen.length >= 9) { mark("sets9", d); }
+      }
+      if (r.mode === "시험" && r.elapsed_sec > 0 && r.elapsed_sec <= FAST_CLEAR_SEC) { mark("fast40", d); }
+      if (days.indexOf(d) < 0) { days.push(d); }
+    });
+    var run = 0, prev = null;
+    days.slice().sort().forEach(function(d){
+      if (d < ROUTINE_START || EXAM_DATES.indexOf(d) >= 0) { return; }
+      run = (prev !== null && addDays(prev, 1) === d) ? run + 1 : 1;
+      prev = d;
+      if (run >= 3) { mark("streak3", d); }
+      if (run >= 5) { mark("streak5", d); }
+    });
+    return ACHIEVEMENT_DEFS.map(function(a){
+      return { id: a.id, icon: a.icon, group: a.group, name: a.name, desc: a.desc,
+               done: !!got[a.id], when: got[a.id] || null };
+    });
+  }
+  /* 규약 records[] 의 최고점 (시험장 serialized_best 와 동일) */
+  function serializedBest(records) {
+    var best = null;
+    achRecords(records).forEach(function(r){ if (best === null || r.total > best) { best = r.total; } });
+    return best;
+  }
+  function achievementSummary(records) {
+    var items = achievements(records), done = items.filter(function(a){ return a.done; });
+    var latest = null;
+    done.forEach(function(a){ if (!latest || a.when > latest.when) { latest = a; } });
+    return { done: done.length, total: items.length, items: items, latest: latest };
   }
   /* 목표 문구: '목표 70점(합격선)' · '목표 80점(승급)' */
   function goalLabel(goal) {
@@ -2178,6 +2359,158 @@
         + " · 남은 응시 기회 " + plan.attemptsLeft + "회 · 합격 " + plan.passedSets + "/" + plan.totalSets + "세트 · 마감 " + fmtMD(plan.deadline);
     }
   }
+  /* ---------- 게임형 히어로 (티어 · 게이지 · 연속 · 도전 과제 · 오늘 잠금) ---------- */
+  /* 판정 입력은 규약 records[] 형식 하나로 통일한다 — 연동 모드는 서버 값 그대로,
+     폴백 모드는 가져온 채점결과·수동 점수를 같은 모양으로 옮겨 담아 같은 함수에 넣는다. */
+  function fallbackAchRecords() {
+    var out = [];
+    state.results.forEach(function(r){
+      var g = String(r.generated || "");
+      out.push({ id: g, date: g.slice(0, 10), time: g.slice(11, 16), mode: "시험",
+                 total: (typeof r.total === "number") ? r.total : null,
+                 set: { name: stripExt(r.problem), norm: r.set || stripExt(r.problem) },
+                 sheets: Array.isArray(r.sheets) ? r.sheets : [], wrong_items: [], elapsed_sec: 0 });
+    });
+    state.manual.forEach(function(m){
+      out.push({ id: m.date + "|" + (m.set || ""), date: m.date, time: "23:59", mode: "수동",
+                 total: (typeof m.total === "number") ? m.total : null,
+                 set: { name: m.name, norm: m.set || m.name }, sheets: [], wrong_items: [], elapsed_sec: 0 });
+    });
+    return out;
+  }
+  function gameRecords() { return linked() ? arr(api.st.records) : fallbackAchRecords(); }
+  /* 자정까지 남은 시간 'HH:MM:SS' (브라우저 시계 기준) */
+  function lockCountdown() {
+    var now = new Date();
+    var next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
+    var secs = Math.max(0, Math.floor((next - now) / 1000));
+    return pad(Math.floor(secs / 3600)) + ":" + pad(Math.floor(secs % 3600 / 60)) + ":" + pad(secs % 60);
+  }
+  function renderLockLine() {
+    var el = document.getElementById("lock-line");
+    if (!el) { return; }
+    if (!plan || !plan.todayLocked || iso !== plan.today) { el.hidden = true; el.textContent = ""; return; }
+    el.hidden = false;
+    el.textContent = "";
+    el.appendChild(document.createTextNode("오늘 응시 완료 · 다음 응시까지 "));
+    var t = document.createElement("span");
+    t.className = "gl-time";
+    t.textContent = lockCountdown();
+    el.appendChild(t);
+  }
+  function renderGame() {
+    var panel = document.getElementById("game-panel");
+    if (!panel) { return; }
+    var recs = gameRecords();
+    var best = serializedBest(recs);
+    var lv = (plan && plan.level && typeof plan.level.current_goal === "number") ? plan.level : levelFromBest(best);
+    var goal = lv.current_goal, perfect = lv.tier === "perfect";
+    /* 티어 배지 — 달성 ✓ · 현재 ▶ · 미달성 ○ (색만으로 구분하지 않는다) */
+    var row = document.getElementById("tier-row");
+    if (row) {
+      row.textContent = "";
+      GOAL_TIERS.forEach(function(g){
+        var done = lv.achieved.indexOf(g) >= 0, now = (g === goal) && !done;
+        var el = document.createElement("span");
+        el.className = "g-tier" + (done ? " done" : (now ? " now" : ""));
+        var mk = document.createElement("span"); mk.className = "gt-mark"; mk.textContent = done ? "✓" : (now ? "▶" : "○");
+        var nm = document.createElement("span"); nm.textContent = tierLabel(g);
+        var nu = document.createElement("span"); nu.className = "gt-num"; nu.textContent = g;
+        el.appendChild(mk); el.appendChild(nm); el.appendChild(nu);
+        el.title = tierLabel(g) + " " + g + "점 — " + (done ? "달성" : (now ? "현재 목표" : "미달성"));
+        row.appendChild(el);
+      });
+    }
+    /* 게이지 = 최고점 / 현재 목표, 지나온 단계는 눈금으로 */
+    var frac = perfect ? 1 : gaugeFraction(best, goal);
+    var fill = document.getElementById("tier-fill"), track = document.getElementById("tier-track");
+    if (fill) { fill.style.width = Math.round(frac * 100) + "%"; }
+    if (track) {
+      Array.prototype.slice.call(track.querySelectorAll(".g-tick")).forEach(function(t){ track.removeChild(t); });
+      GOAL_TIERS.forEach(function(g){
+        if (g >= goal) { return; }
+        var tick = document.createElement("i");
+        tick.className = "g-tick";
+        tick.style.left = (g / goal * 100) + "%";
+        track.appendChild(tick);
+      });
+      track.setAttribute("aria-valuenow", String(Math.round(frac * 100)));
+    }
+    var glabel = document.getElementById("tier-label");
+    if (glabel) {
+      if (best === null) { glabel.textContent = "아직 기록이 없습니다 — 첫 목표 " + goal + "점(" + tierLabel(goal) + ")"; }
+      else if (perfect) { glabel.textContent = "최고 " + best + "점 · 만점 달성 — 남은 세트도 100점 도전"; }
+      else { glabel.textContent = "최고 " + best + "점 / 목표 " + goal + "점(" + tierLabel(goal) + ") — " + Math.max(0, goal - best) + "점 남음"; }
+    }
+    var stk = (plan && plan.streak) ? plan.streak : { current: 0, best: 0, today_done: false };
+    var sline = document.getElementById("streak-line");
+    if (sline) {
+      sline.textContent = "연속 " + stk.current + "일 (최고 " + stk.best + "일) · "
+        + (stk.today_done ? "오늘 응시 완료" : "오늘 미응시");
+    }
+    renderLockLine();
+    /* 도전 과제 그리드 */
+    var summ = achievementSummary(recs);
+    var grid = document.getElementById("badge-grid");
+    if (grid) {
+      grid.textContent = "";
+      summ.items.forEach(function(a){
+        var el = document.createElement("span");
+        el.className = "g-badge" + (a.done ? " done" : "");
+        var ic = document.createElement("span"); ic.className = "gb-icon"; ic.textContent = (a.done ? "✓" : "·") + a.icon;
+        var tx = document.createElement("span"); tx.className = "gb-text";
+        var nm = document.createElement("b"); nm.className = "gb-name"; nm.textContent = a.name;
+        var wh = document.createElement("span"); wh.className = "gb-when";
+        wh.textContent = a.done ? ("달성 " + fmtMD(a.when)) : "미달성";
+        tx.appendChild(nm); tx.appendChild(wh);
+        el.appendChild(ic); el.appendChild(tx);
+        el.title = a.name + " — " + a.desc + (a.done ? " (달성 " + a.when + ")" : " (미달성)");
+        grid.appendChild(el);
+      });
+    }
+    var note = document.getElementById("badge-note");
+    if (note) {
+      note.textContent = "도전 과제 " + summ.done + "/" + summ.total + " 달성"
+        + (summ.latest ? " · 최근 — " + summ.latest.name + " (" + fmtMD(summ.latest.when) + ")" : " · 첫 완주부터 시작해요")
+        + (linked() ? "" : " · 가져온 채점결과로 계산합니다(시험장에 연결하면 소요 시간까지 반영)");
+    }
+  }
+
+  /* 이의제기 반영 띠 — 색만으로 구분하지 않도록 "이의제기 반영"·"+9점" 글자를 함께 쓴다 */
+  function renderCorrections() {
+    var box = document.getElementById("corr-strip");
+    if (!box) { return; }
+    box.textContent = "";
+    var list = linked() ? api.corrections : [];
+    if (!list.length) { box.hidden = true; return; }
+    box.hidden = false;
+    var head = document.createElement("span");
+    head.className = "cs-head";
+    head.textContent = "이의제기 반영" + (list.length > 1 ? " " + list.length + "건" : "");
+    box.appendChild(head);
+    list.slice(0, 4).forEach(function(c){
+      var item = document.createElement("span");
+      item.className = "corr-item";
+      var nm = document.createElement("span"); nm.className = "ci-set"; nm.textContent = c.name;
+      var mv = document.createElement("span"); mv.className = "ci-move";
+      mv.textContent = (c.before === null ? "—" : c.before) + " → " + c.after + "점";
+      var dl = document.createElement("span");
+      dl.className = "corr-delta" + (c.delta !== null && c.delta < 0 ? " down" : "");
+      dl.textContent = deltaText(c.delta);
+      item.appendChild(nm); item.appendChild(mv); item.appendChild(dl);
+      if (c.reason) {
+        var why = document.createElement("span"); why.className = "ci-why"; why.textContent = "· " + c.reason;
+        item.appendChild(why);
+      }
+      box.appendChild(item);
+    });
+    if (list.length > 4) {
+      var more = document.createElement("span");
+      more.className = "ci-why";
+      more.textContent = "외 " + (list.length - 4) + "건 — 시험장 시작 화면에서 자세히";
+      box.appendChild(more);
+    }
+  }
   function renderTrend() {
     var box = document.getElementById("score-trend");
     if (!box) { return; }
@@ -2359,6 +2692,8 @@
     renderFixedPlan();
     renderInputs();
     renderBanner();
+    renderGame();
+    renderCorrections();
     renderTrend();
     renderProgress();
     renderTodaySlot();
@@ -2375,8 +2710,29 @@
     if (!st.review || typeof st.review !== "object") { st.review = {}; }
     if (!st.checks || typeof st.checks !== "object") { st.checks = {}; }
     st.exam_running = st.exam_running === true;
-    st.sets = arr(st.sets); st.records = arr(st.records);
+    st.sets = arr(st.sets); st.records = arr(st.records); st.corrections = arr(st.corrections);
     return st;
+  }
+  /* 이의제기 반영(정정) 목록 — 시험장이 지난 기록을 다시 채점해 점수를 고친 내역.
+     폴백 모드에는 정정 개념이 없어 언제나 빈 배열이다. */
+  function correctionsFromApi(st) {
+    return arr(st.corrections).filter(function(c){
+      return c && typeof c === "object" && typeof c.after === "number";
+    }).map(function(c){
+      var set = (c.set && typeof c.set === "object") ? c.set : null;
+      var before = (typeof c.before === "number") ? c.before : null;
+      return { id: String(c.record_id || ""), set: set ? String(set.norm || "") : "",
+               name: (set && set.name) ? String(set.name) : "세트 미지정",
+               date: String(c.date || "").slice(0, 10), before: before, after: c.after,
+               delta: (typeof c.delta === "number") ? c.delta : (before === null ? null : c.after - before),
+               reason: (typeof c.reason === "string") ? c.reason : "",
+               source: (typeof c.source === "string" && c.source) ? c.source : "재채점",
+               when: (typeof c.when === "string") ? c.when : "" };
+    });
+  }
+  function deltaText(d) { return d === null ? "정정" : (d > 0 ? "+" + d : String(d)) + "점"; }
+  function correctionsFor(recordId) {
+    return api.corrections.filter(function(c){ return c.id === recordId; });
   }
   function setsFromApi(st) {
     return st.sets.filter(function(s){ return s && typeof s === "object"; }).map(function(s){
@@ -2522,6 +2878,7 @@
     api.generated = st.generated;
     api.sets = setsFromApi(api.st);
     api.recs = recordsFromApi(api.st);
+    api.corrections = correctionsFromApi(api.st);
     api.connected = true;
     api.lastSync = Date.now();
     if (!changed) { renderLinkBar(); return; }
@@ -2638,6 +2995,21 @@
       else { badge.className = "rc-badge miss"; badge.textContent = "채점 실패"; }
       head.appendChild(title); head.appendChild(mode); head.appendChild(when); head.appendChild(badge);
       card.appendChild(head);
+      var corrs = correctionsFor(r.id);
+      if (corrs.length) {
+        var cline = document.createElement("p");
+        cline.className = "rc-corr";
+        var ctag = document.createElement("span");
+        ctag.className = "corr-delta" + (corrs[0].delta !== null && corrs[0].delta < 0 ? " down" : "");
+        ctag.textContent = deltaText(corrs[0].delta);
+        cline.appendChild(ctag);
+        var ctxt = document.createElement("span");
+        ctxt.textContent = "이의제기 반영 — " + (corrs[0].before === null ? "—" : corrs[0].before)
+          + " → " + corrs[0].after + "점" + (corrs[0].reason ? " · " + corrs[0].reason : "")
+          + (corrs.length > 1 ? " (정정 " + corrs.length + "회)" : "");
+        cline.appendChild(ctxt);
+        card.appendChild(cline);
+      }
       if (r.sheets.length) {
         var bars = document.createElement("div");
         bars.className = "rc-bars";
@@ -3354,6 +3726,8 @@
       if (FS_OK && state.folderLinked) { scanFromSaved(false); }
     }
     renderAll();
+    /* 오늘 잠금 카운트다운은 1초마다 (상태 폴링과 무관 — 네트워크 요청 없음) */
+    setInterval(renderLockLine, 1000);
     if (api.on) { startPolling(); }
   }
   if (LINK_HOST) {
