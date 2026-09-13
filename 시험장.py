@@ -42,11 +42,20 @@ v2.5.0: 루틴 간소화 — ① 하루 1세트(= 시험 모드 하루 1회 제�
 순) → 전부 목표 이상이면 그 날은 자유 복습(빈 슬롯). ④ 하루 클리어 = 완주 +
 채점(점수는 조건 아님), 오답노트·오답 재풀이·함수 퀴즈는 선택 단계. ⑤ 연동
 규약에 level·streak·attempts_left·today_locked 추가(스키마 호환).
+v2.6.0: ① 이의제기 자동 반영 — 채점할 때마다 기록에 채점 근거(채점기 버전 ·
+문제/정답/기대값 파일 sha256 · 풀이 파일 경로)를 함께 저장하고, 실행할 때마다
+백그라운드에서 "채점기가 올라갔거나 정답·문제·기대값 파일이 바뀐" 지난 기록을
+찾아 `풀이_*.xlsm` 사본으로 **자동으로 다시 채점**한다(사용자 조작 없음).
+점수가 바뀌면 원점수를 `정정이력` 에 보관하고 새 리포트를 저장한 뒤 시작
+화면에 "이의제기 반영: … 86 → 95점" 띠를 띄운다. 풀이 파일이 없어 다시 채점할
+수 없는 기록은 업데이트로 배포되는 `정정/점수정정.json`(data_files) 으로 점수만
+정정한다. 정정된 점수로 목표 단계·연속 응시·합격 세트 수·일정 배정·웹
+진행률이 다시 계산되고, 규약에 `corrections` 가 추가됐다.
 
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "2.5.0"
+__version__ = "2.6.0"
 
 import argparse
 import hashlib
@@ -220,7 +229,7 @@ SET_CONFIG_PATH = os.path.join(BASE_DIR, "세트설정.json")
 EXPECTED_DIR_NAME = "기대값"      # 자동 배포되는 세트별 기대값 JSON 폴더
 
 # 루틴 웹 연동 서버 (v2.4.0, 규약: 문서/연동_API.md v2.4.1)
-ROUTINE_API_VERSION = "2.5.0"          # /api/state 의 version (규약 버전)
+ROUTINE_API_VERSION = "2.6.0"          # /api/state 의 version (규약 버전)
 ROUTINE_HTML_NAME = "루틴.html"        # 시험장 폴더의 루틴 페이지 파일
 ROUTINE_DATA_KEY = "시험장/루틴.html"   # version.json set_files 키 (자동 업데이트)
 ROUTINE_PORT_DEFAULT = 8765
@@ -1815,15 +1824,7 @@ def level_info(records):
     현재 목표 = 아직 달성하지 못한 가장 낮은 단계(전체 기록 최고점 기준).
     예: 최고점 72 → 70 달성, 현재 목표 80. 100 달성이면 tier "perfect".
     """
-    best = best_total(records)
-    achieved = [t for t in GOAL_TIERS
-                if best is not None and best >= t]
-    perfect = GOAL_TIERS[-1] in achieved
-    goal = GOAL_TIERS[-1] if perfect \
-        else next(t for t in GOAL_TIERS if t not in achieved)
-    return {"tier": "perfect" if perfect else goal, "current_goal": goal,
-            "best_total": best, "achieved": achieved,
-            "next_goal": None if perfect else goal}
+    return level_from_best(best_total(records))
 
 
 def goal_label(goal):
@@ -1891,6 +1892,274 @@ def daily_lock_message(now=None):
     return (f"{DAILY_LOCK_TITLE}\n\n하루 1세트 루틴입니다 — 자정까지 "
             f"{lock_remaining_text(now)} 남았습니다.\n오답노트 모드·오답 "
             "재풀이·부분 연습은 지금도 할 수 있습니다.")
+
+
+# --- 게임형 요소 (v2.6.0): 티어 · 도전 과제 — 프로그램·웹 공통 정의 -----------
+#
+# 규약(문서/연동_API.md)의 `achievements` 와 같은 정의입니다. 판정은 **규약
+# records[]**(serialize_records 출력)만 보는 순수 함수라 프로그램과 웹(폴백
+# 모드 포함)이 같은 결과를 냅니다. 유치한 연출 대신 "지금 어디까지 왔는지"를
+# 한눈에 보여 주는 용도이며, 색만으로 상태를 구분하지 않도록 아이콘 글자와
+# 달성/미달성 문구를 항상 함께 씁니다.
+
+TIER_LABELS = {70: "합격", 80: "숙련", 90: "고득점", 100: "만점"}
+FAST_CLEAR_SEC = 40 * 60          # '40분 내 완주' 기준 (실제 시험 시간)
+CALC_AREA = "계산작업"
+BASE_AREA_POINTS = 60             # 계산작업을 뺀 세 영역의 배점 합
+CALC_AREA_POINTS = 40
+
+ACHIEVEMENT_DEFS = [
+    {"id": "first", "icon": "완주", "group": "시작", "name": "첫 완주",
+     "desc": "모의고사 한 세트를 끝까지 풀고 채점했다"},
+    {"id": "pass70", "icon": "70", "group": "점수", "name": "첫 합격",
+     "desc": "합격선 70점을 처음 넘었다"},
+    {"id": "tier80", "icon": "80", "group": "점수", "name": "80점 돌파",
+     "desc": "한 세트에서 80점 이상을 받았다"},
+    {"id": "tier90", "icon": "90", "group": "점수", "name": "90점 돌파",
+     "desc": "한 세트에서 90점 이상을 받았다"},
+    {"id": "tier100", "icon": "100", "group": "점수",
+     "name": "만점 · 전 영역 무실점",
+     "desc": "100점 — 모든 영역에서 한 점도 잃지 않았다"},
+    {"id": "streak3", "icon": "3일", "group": "연속", "name": "3일 연속",
+     "desc": "사흘 연속으로 응시했다"},
+    {"id": "streak5", "icon": "5일", "group": "연속", "name": "5일 연속",
+     "desc": "닷새 연속으로 응시했다"},
+    {"id": "calc40", "icon": "계산", "group": "정확도", "name": "계산작업 만점",
+     "desc": "계산작업 5문제를 모두 맞혀 40/40점을 받았다"},
+    {"id": "base60", "icon": "무실점", "group": "정확도",
+     "name": "기본·분석·기타 무실점",
+     "desc": "계산작업을 뺀 세 영역에서 60점을 모두 지켰다"},
+    {"id": "sets5", "icon": "5세트", "group": "완주량", "name": "세트 5개 완주",
+     "desc": "서로 다른 세트를 5개 완주했다"},
+    {"id": "sets9", "icon": "9세트", "group": "완주량", "name": "세트 9개 완주",
+     "desc": "서로 다른 세트를 9개 완주했다"},
+    {"id": "fast40", "icon": "40분", "group": "속도", "name": "40분 내 완주",
+     "desc": "실제 시험 시간(40분) 안에 제출했다"},
+]
+ACHIEVEMENT_IDS = [a["id"] for a in ACHIEVEMENT_DEFS]
+
+
+def tier_label(goal):
+    """목표 점수 → 티어 이름: 70 합격 · 80 숙련 · 90 고득점 · 100 만점."""
+    try:
+        return TIER_LABELS[int(goal)]
+    except (TypeError, ValueError, KeyError):
+        return ""
+
+
+def level_from_best(best):
+    """최고점 → level_info 와 같은 dict (기록 형식과 무관한 순수 계산)."""
+    achieved = [t for t in GOAL_TIERS if best is not None and best >= t]
+    perfect = GOAL_TIERS[-1] in achieved
+    goal = GOAL_TIERS[-1] if perfect \
+        else next(t for t in GOAL_TIERS if t not in achieved)
+    return {"tier": "perfect" if perfect else goal, "current_goal": goal,
+            "best_total": best, "achieved": achieved,
+            "next_goal": None if perfect else goal}
+
+
+def parse_elapsed(value):
+    """소요시간 → 초. '38분 10초' · '39:10' · '1:02:03' · 숫자 모두 처리.
+
+    읽을 수 없으면 0 ('-' 인 수동 기록 등)."""
+    if isinstance(value, bool):
+        return 0
+    if isinstance(value, (int, float)):
+        return max(0, int(value))
+    text = str(value or "").strip()
+    if not text:
+        return 0
+    m = re.search(r"(?:(\d+)\s*시간)?\s*(\d+)\s*분\s*(?:(\d+)\s*초)?", text)
+    if m and m.group(2):
+        h = int(m.group(1) or 0)
+        return h * 3600 + int(m.group(2)) * 60 + int(m.group(3) or 0)
+    parts = text.split(":")
+    if len(parts) in (2, 3) and all(p.strip().isdigit() for p in parts):
+        nums = [int(p) for p in parts]
+        if len(nums) == 2:
+            return nums[0] * 60 + nums[1]
+        return nums[0] * 3600 + nums[1] * 60 + nums[2]
+    m2 = re.fullmatch(r"(\d+)\s*초?", text)
+    return int(m2.group(1)) if m2 else 0
+
+
+def _ach_records(records):
+    """규약 records[] → 도전 과제 판정용 정규화 목록 (date·time·id 순).
+
+    점수가 있는 `시험`·`수동` 기록만. 이상한 항목은 조용히 버립니다."""
+    out = []
+    for r in records or []:
+        if not isinstance(r, dict):
+            continue
+        mode = str(r.get("mode") or "시험")
+        if mode not in ("시험", "수동"):
+            continue
+        total = r.get("total")
+        if isinstance(total, bool) or not isinstance(total, (int, float)):
+            continue
+        d = str(r.get("date") or "")
+        if len(d) != 10:
+            continue
+        st = r.get("set") if isinstance(r.get("set"), dict) else {}
+        sheets = []
+        for s in (r.get("sheets") or []):
+            if isinstance(s, dict) \
+                    and isinstance(s.get("alloc"), (int, float)) \
+                    and isinstance(s.get("earned"), (int, float)) \
+                    and not isinstance(s.get("alloc"), bool):
+                sheets.append({"name": str(s.get("name") or ""),
+                               "alloc": s["alloc"], "earned": s["earned"]})
+        es = r.get("elapsed_sec")
+        out.append({
+            "id": str(r.get("id") or ""), "date": d,
+            "time": str(r.get("time") or ""), "mode": mode, "total": total,
+            "norm": str(st.get("norm") or "") or str(st.get("name") or ""),
+            "sheets": sheets,
+            "elapsed_sec": int(es) if isinstance(es, (int, float))
+            and not isinstance(es, bool) and es > 0 else 0})
+    out.sort(key=lambda r: (r["date"], r["time"], r["id"]))
+    return out
+
+
+def _area_totals(rec):
+    """기록 1건의 영역별 [배점, 득점] — 시트 이름을 영역으로 묶습니다."""
+    out = {}
+    for s in rec.get("sheets") or []:
+        cat = _category_of_sheet(s.get("name"))
+        cur = out.setdefault(cat, [0, 0])
+        cur[0] += s["alloc"]
+        cur[1] += s["earned"]
+    return out
+
+
+def _iso_next(d):
+    """'2026-09-05' → '2026-09-06' (읽을 수 없으면 None)."""
+    try:
+        return (date.fromisoformat(d) + timedelta(days=1)).isoformat()
+    except (TypeError, ValueError):
+        return None
+
+
+def achievements(records):
+    """도전 과제 12종 판정 (규약 records[] 만 보는 순수 함수).
+
+    반환: ACHIEVEMENT_DEFS 순서의 [{id, name, desc, icon, group, done, when}].
+    `when` 은 달성한 기록의 응시 날짜(YYYY-MM-DD), 연속 배지는 그 연속이
+    채워진 날. 프로그램·웹이 같은 정의를 씁니다.
+    """
+    recs = _ach_records(records)
+    got = {}
+
+    def mark(aid, when):
+        if when and aid not in got:
+            got[aid] = when
+
+    seen, days = [], []
+    for r in recs:
+        d, total = r["date"], r["total"]
+        mark("first", d)
+        for aid, need in (("pass70", PASS_LINE), ("tier80", 80),
+                          ("tier90", 90), ("tier100", 100)):
+            if total >= need:
+                mark(aid, d)
+        areas = _area_totals(r)
+        calc = areas.get(CALC_AREA)
+        if calc and calc[0] >= CALC_AREA_POINTS and calc[1] >= calc[0]:
+            mark("calc40", d)
+        others = [v for k, v in areas.items() if k != CALC_AREA]
+        if others and sum(v[0] for v in others) >= BASE_AREA_POINTS \
+                and all(v[1] >= v[0] for v in others):
+            mark("base60", d)
+        if r["norm"] and r["norm"] not in seen:
+            seen.append(r["norm"])
+            if len(seen) >= 5:
+                mark("sets5", d)
+            if len(seen) >= 9:
+                mark("sets9", d)
+        if r["mode"] == "시험" and 0 < r["elapsed_sec"] <= FAST_CLEAR_SEC:
+            mark("fast40", d)
+        if d not in days:
+            days.append(d)
+    # 연속 응시 (streak_info 와 같은 규칙: 루틴 시작일 이후, 시험일 제외)
+    start_iso = ROUTINE_START.isoformat()
+    exam_iso = [x.isoformat() for x in EXAM_DATES]
+    run, prev = 0, None
+    for d in sorted(days):
+        if d < start_iso or d in exam_iso:
+            continue
+        run = run + 1 if (prev is not None and _iso_next(prev) == d) else 1
+        prev = d
+        if run >= 3:
+            mark("streak3", d)
+        if run >= 5:
+            mark("streak5", d)
+    out = []
+    for a in ACHIEVEMENT_DEFS:
+        out.append(dict(a, done=a["id"] in got, when=got.get(a["id"])))
+    return out
+
+
+def achievement_summary(records):
+    """도전 과제 요약 → {done, total, items, latest}."""
+    items = achievements(records)
+    done = [a for a in items if a["done"]]
+    latest = max(done, key=lambda a: a["when"]) if done else None
+    return {"done": len(done), "total": len(items), "items": items,
+            "latest": latest}
+
+
+def new_achievements(before, after):
+    """직전 기록 목록 대비 **새로 달성한** 도전 과제 (응시 결과 연출용)."""
+    had = {a["id"] for a in achievements(before) if a["done"]}
+    return [a for a in achievements(after) if a["done"] and a["id"] not in had]
+
+
+def serialized_best(records):
+    """규약 records[] 의 최고점 (점수 있는 시험·수동 기록 기준, 없으면 None)."""
+    scores = [r["total"] for r in _ach_records(records)]
+    return max(scores) if scores else None
+
+
+def gauge_fraction(best, goal):
+    """티어 게이지 채움 비율 0.0~1.0 (최고점 / 현재 목표)."""
+    try:
+        g = float(goal or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if g <= 0:
+        return 0.0
+    b = float(best or 0)
+    return max(0.0, min(1.0, b / g))
+
+
+def progress_delta(before, after):
+    """응시 결과 연출용 요약 (규약 records[] 두 벌, after 는 이번 기록 포함).
+
+    → {prev_best, best, best_delta, level_before, level_after, tier_up[],
+       new_badges[], badges_done, badges_total}
+    """
+    prev_best = serialized_best(before)
+    best = serialized_best(after)
+    lv_b, lv_a = level_from_best(prev_best), level_from_best(best)
+    summ = achievement_summary(after)
+    return {
+        "prev_best": prev_best, "best": best,
+        "best_delta": None if prev_best is None else (best or 0) - prev_best,
+        "level_before": lv_b, "level_after": lv_a,
+        "tier_up": [t for t in lv_a["achieved"] if t not in lv_b["achieved"]],
+        "new_badges": new_achievements(before, after),
+        "badges_done": summ["done"], "badges_total": summ["total"],
+    }
+
+
+def lock_countdown_text(now=None):
+    """오늘 잠금 카운트다운 '07:12:33' (자정까지)."""
+    now = now or datetime.now()
+    nxt = datetime.combine(now.date() + timedelta(days=1),
+                           datetime.min.time())
+    secs = max(0, int((nxt - now).total_seconds()))
+    h, m, s = secs // 3600, (secs % 3600) // 60, secs % 60
+    return f"{h:02d}:{m:02d}:{s:02d}"
 
 
 def mandatory_step_indexes(steps):
@@ -3827,6 +4096,551 @@ class UpdateCoordinator:
 
 
 # ---------------------------------------------------------------------------
+# 자동 재채점 (v2.6.0) — 이의제기가 인정되면 지난 기록 점수를 스스로 정정
+# ---------------------------------------------------------------------------
+#
+# 사용자가 버튼을 누를 필요가 없습니다. 프로그램이 시작될 때 백그라운드
+# 스레드에서 기록.json 을 훑어
+#   (a) 저장된 채점기 버전이 지금 grade.py 보다 낮거나 아예 없는 기록
+#   (b) 정답·문제·기대값 파일의 sha256 이 응시 당시와 달라진 기록
+# 을 찾아, 응시 때 만든 `풀이_*.xlsm` 사본이 그대로 있으면 다시 채점합니다.
+# 점수가 바뀌면 기록의 총점·리포트를 갱신하고 **원래 점수를 `정정이력` 에
+# 보관**한 뒤 시작 화면에 비모달 띠로 알립니다("이의제기 반영: … 86 → 95점").
+# 풀이 파일이 없어 다시 채점할 수 없는 기록은 업데이트로 배포되는
+# `정정/점수정정.json`(data_files) 의 항목으로 점수만 정정합니다.
+# 정정된 점수는 기록.json 에 그대로 들어가므로 레벨·연속 응시·합격 세트 수·
+# 일정 배정·웹 진행률이 다음 계산부터 자동으로 다시 맞춰집니다.
+
+CORRECTIONS_DIR_NAME = "정정"            # 자동 배포되는 점수 정정 데이터 폴더
+CORRECTIONS_FILE_NAME = "점수정정.json"
+CORRECTIONS_DATA_KEY = "정정/점수정정.json"   # version.json data_files 키
+CORRECTION_HISTORY_FIELD = "정정이력"     # 기록에 보관하는 원점수 이력
+CORRECTION_KEY_FIELD = "키"              # 정정 항목 식별자 (중복 정정 방지)
+REGRADE_EVIDENCE_FIELDS = ("채점기버전", "문제해시", "정답해시", "기대값해시",
+                           "풀이경로")
+REGRADE_SUFFIX = "_재채점"               # 새 리포트 파일 이름 꼬리표
+REGRADE_SKIP_MODES = ("부분연습", "오답재풀이", "수동")
+REGRADE_MAX = 60                        # 한 번에 다시 채점할 최대 건수(안전장치)
+_GRADER_VERSION_CACHE = {}              # grade.py 경로 → ((mtime, size), 버전)
+_SHA_CACHE = {}                         # 파일 경로 → ((mtime, size), sha256)
+
+
+def corrections_path(base_dir=None):
+    """정정 데이터 파일 경로 — <루트>/정정/점수정정.json (기대값 폴더와 같은 루트)."""
+    root = os.path.dirname(expected_values_dir(base_dir))
+    return os.path.join(root, CORRECTIONS_DIR_NAME, CORRECTIONS_FILE_NAME)
+
+
+def file_sha256_cached(path):
+    """file_sha256 + (mtime, size) 캐시 — 시작 때 같은 정답 파일을 여러 기록이
+    함께 확인하므로 한 번만 읽습니다."""
+    if not path:
+        return None
+    try:
+        st = os.stat(path)
+    except OSError:
+        return None
+    key = (st.st_mtime, st.st_size)
+    hit = _SHA_CACHE.get(path)
+    if hit and hit[0] == key:
+        return hit[1]
+    h = file_sha256(path)
+    _SHA_CACHE[path] = (key, h)
+    return h
+
+
+def grader_version(grade_py=None):
+    """grade.py 의 `__version__` (없으면 None).
+
+    grade.py 에는 `--print-version` 같은 조회 수단이 없어 파일 텍스트에서
+    상수를 직접 읽습니다((mtime, size) 캐시)."""
+    p = grade_py or find_grade_py()
+    if not p or not os.path.isfile(p):
+        return None
+    try:
+        st = os.stat(p)
+        key = (st.st_mtime, st.st_size)
+    except OSError:
+        return None
+    hit = _GRADER_VERSION_CACHE.get(p)
+    if hit and hit[0] == key:
+        return hit[1]
+    try:
+        with open(p, encoding="utf-8", errors="replace") as f:
+            ver = version_marker(f.read())
+    except OSError:
+        return None
+    _GRADER_VERSION_CACHE[p] = (key, ver)
+    return ver
+
+
+def grading_evidence(problem=None, answer=None, student=None, key=None,
+                     grade_py=None):
+    """새 기록에 함께 저장할 채점 근거.
+
+    {채점기버전, 문제해시, 정답해시, 기대값해시, 풀이경로} — 구할 수 없는
+    항목은 넣지 않습니다(다음 실행이 다시 시도)."""
+    out = {}
+    ver = grader_version(grade_py)
+    if ver:
+        out["채점기버전"] = ver
+    for field, path in (("문제해시", problem), ("정답해시", answer),
+                        ("기대값해시", key)):
+        h = file_sha256_cached(path) if path and os.path.isfile(path) else None
+        if h:
+            out[field] = h
+    if student:
+        out["풀이경로"] = os.path.abspath(student)
+    return out
+
+
+def record_evidence_changes(rec, s, grade_py=None, student=None):
+    """기록에 저장할 채점 근거 중 **지금 값과 다른 것만** 돌려줍니다.
+
+    재채점이 필요 없거나 점수가 그대로여도 이 값을 갱신해 두어야 다음 실행이
+    같은 기록을 다시 채점하지 않습니다."""
+    s = s or {}
+    fresh = grading_evidence(problem=s.get("problem"), answer=s.get("answer"),
+                             key=s.get("key"), student=student,
+                             grade_py=grade_py)
+    return {k: v for k, v in fresh.items() if (rec or {}).get(k) != v}
+
+
+def regrade_reason(rec, s, cur_version=None):
+    """기록 1건이 자동 재채점 대상인지 → 사유 문자열(대상 아니면 "").
+
+    (a) 저장된 채점기 버전이 없거나 지금보다 낮음 → "채점기 2.0.3 …"
+    (b) 정답·문제·기대값 파일의 sha256 이 응시 당시와 다름 → "정답 파일 정정"
+    """
+    if not isinstance(rec, dict) or not isinstance(s, dict):
+        return ""
+    if str(rec.get("mode") or "시험") in REGRADE_SKIP_MODES:
+        return ""
+    score = rec.get("점수")
+    if isinstance(score, bool) or not isinstance(score, (int, float)):
+        return ""        # 채점되지 않은(중단) 기록은 정정할 점수가 없음
+    reasons = []
+    old = rec.get("채점기버전")
+    if cur_version:
+        try:
+            older = (not old) or _version_tuple(str(old)) \
+                < _version_tuple(str(cur_version))
+        except Exception:
+            older = True
+        if older:
+            reasons.append(f"채점기 {cur_version}"
+                           + (f" (기록 {old})" if old else " (버전 기록 없음)"))
+    for field, label, path in (("정답해시", "정답 파일", s.get("answer")),
+                               ("문제해시", "문제 파일", s.get("problem")),
+                               ("기대값해시", "기대값 파일", s.get("key"))):
+        want = rec.get(field)
+        now = file_sha256_cached(path) if path and os.path.isfile(path) \
+            else None
+        if want and now and str(want).lower() != str(now).lower():
+            reasons.append(f"{label} 정정")
+    return " · ".join(reasons)
+
+
+def attempt_file_for(rec, s=None):
+    """기록의 풀이 파일 경로 (없으면 None).
+
+    `풀이경로` 가 있으면 그대로 쓰고, 그 필드가 없는 과거 기록은 세트 폴더
+    (또는 리포트 폴더의 상위)에서 응시 일시가 같은 `풀이_*.xlsm` 을 찾습니다.
+    """
+    rec = rec or {}
+    p = rec.get("풀이경로")
+    if isinstance(p, str) and p and os.path.isfile(p):
+        return p
+    m = _RECORD_STAMP_RE.search(str(rec.get("일시") or ""))
+    if not m:
+        return None
+    y, mo, d, h, mi, _sec = m.groups()
+    stamp = f"{y}{mo}{d}_{h}{mi}"
+    dirs = []
+    if s and s.get("dir"):
+        dirs.append(s["dir"])
+    rep = rec.get("리포트")
+    if isinstance(rep, str) and rep:
+        dirs.append(os.path.dirname(os.path.dirname(os.path.abspath(rep))))
+    seen = set()
+    for d0 in dirs:
+        if not d0 or d0 in seen or not os.path.isdir(d0):
+            continue
+        seen.add(d0)
+        try:
+            names = sorted(os.listdir(d0))
+        except OSError:
+            continue
+        for fn in names:
+            if fn.startswith("풀이_") and stamp in fn \
+                    and fn.lower().endswith((".xlsx", ".xlsm")):
+                return os.path.join(d0, fn)
+    return None
+
+
+def regrade_report_base(rec, s=None, when=None):
+    """재채점 리포트를 저장할 경로 어간 (확장자 없음).
+
+    원래 리포트가 있던 폴더를 그대로 쓰고, 없으면 풀이 파일 옆 `채점결과/`.
+    예전 리포트는 지우지 않으므로 파일 이름에 `_재채점` 을 붙입니다."""
+    when = when or datetime.now()
+    stamp = when.strftime("%Y%m%d_%H%M%S")
+    name = record_set_name(rec)
+    out_dir = None
+    rep = (rec or {}).get("리포트")
+    if isinstance(rep, str) and rep:
+        cand = os.path.dirname(os.path.abspath(rep))
+        if os.path.isdir(cand):
+            out_dir = cand
+    if out_dir is None:
+        student = attempt_file_for(rec, s)
+        base = os.path.dirname(os.path.abspath(student)) if student \
+            else ((s or {}).get("dir") or RECORDS_DIR)
+        out_dir = os.path.join(base, "채점결과")
+    try:
+        os.makedirs(out_dir, exist_ok=True)
+    except OSError:
+        out_dir = RECORDS_DIR
+        _ensure_records_home()
+    return os.path.join(out_dir, f"채점결과_{name}_{stamp}{REGRADE_SUFFIX}")
+
+
+def regrade_record(rec, s, grade_py=None, student=None, when=None,
+                   timeout=600):
+    """기록 1건 다시 채점 → (결과 dict 또는 None, html 경로, json 경로, 오류문).
+
+    파일은 새로 쓰고 예전 리포트는 건드리지 않습니다."""
+    grade_py = grade_py or find_grade_py()
+    if not grade_py or not os.path.isfile(grade_py):
+        return None, None, None, "grade.py 를 찾을 수 없습니다"
+    student = student or attempt_file_for(rec, s)
+    if not student or not os.path.isfile(student):
+        return None, None, None, "풀이 파일이 없습니다"
+    if not s or not s.get("problem") or not s.get("answer"):
+        return None, None, None, "문제·정답 파일을 찾을 수 없습니다"
+    base = regrade_report_base(rec, s, when)
+    html_path, json_path = base + ".html", base + ".json"
+    result, out, err, rc = run_grading(
+        grade_py, s["problem"], s["answer"], student, key=s.get("key"),
+        html=html_path, json_out=json_path, timeout=timeout)
+    if result is None:
+        detail = ((err or "") + "\n" + (out or "")).strip()
+        return None, None, None, (detail[-300:] or f"채점 실패(rc={rc})")
+    return result, html_path, json_path, ""
+
+
+def correction_entry(before, after, reason, when=None, source="재채점",
+                     key=""):
+    """정정이력 1건."""
+    return {"이전총점": before, "새총점": after, "사유": str(reason or ""),
+            "일시": (when or datetime.now()).strftime("%Y-%m-%d %H:%M:%S"),
+            "출처": source, CORRECTION_KEY_FIELD: str(key or "")}
+
+
+def correction_applied(rec, key):
+    """같은 정정을 이미 반영했는지 (중복 정정 방지)."""
+    if not key:
+        return False
+    hist = (rec or {}).get(CORRECTION_HISTORY_FIELD)
+    if not isinstance(hist, list):
+        return False
+    return any(isinstance(h, dict)
+               and str(h.get(CORRECTION_KEY_FIELD) or "") == str(key)
+               for h in hist)
+
+
+def apply_correction(rec, new_total, reason, when=None, source="재채점",
+                     key="", report=None, result=None, evidence=None):
+    """기록 1건에 정정을 반영 (원본 dict 를 제자리에서 고칩니다).
+
+    점수가 바뀌면 원점수를 `정정이력` 에 넣고 총점·리포트·만점을 갱신합니다.
+    점수가 그대로여도 리포트·채점 근거는 갱신합니다(다음 실행이 또 채점하지
+    않도록). 반환: 정정이력 항목(점수가 바뀐 경우) 또는 None."""
+    if not isinstance(rec, dict):
+        return None
+    if key and correction_applied(rec, key):
+        return None
+    before = _coerce_score(rec.get("점수"))
+    after = _coerce_score(new_total)
+    if after is None:
+        return None
+    if report:
+        rec["리포트"] = report
+    if isinstance(result, dict):
+        mx = result.get("max_total")
+        if isinstance(mx, (int, float)) and not isinstance(mx, bool) \
+                and mx != 100:
+            rec["만점"] = _coerce_score(mx)
+        gs = result.get("graded_sheets")
+        if isinstance(gs, list) and gs:
+            rec["채점시트"] = [str(x) for x in gs]
+    if isinstance(evidence, dict):
+        rec.update(evidence)
+    if before == after:
+        return None                     # 점수 변화 없음 — 조용히 넘어감
+    rec["점수"] = after
+    hist = rec.get(CORRECTION_HISTORY_FIELD)
+    # 얕은 복사본(dict(rec))으로 넘어온 기록의 이력 리스트를 제자리에서 늘리면
+    # 원본과 같은 객체라 "바뀐 항목"으로 잡히지 않는다 — 새 리스트로 만든다.
+    hist = list(hist) if isinstance(hist, list) else []
+    entry = correction_entry(before, after, reason, when=when, source=source,
+                             key=key)
+    hist.append(entry)
+    rec[CORRECTION_HISTORY_FIELD] = hist
+    return entry
+
+
+def load_corrections(path=None):
+    """정정 데이터(`정정/점수정정.json`) → 항목 목록.
+
+    형식: {"corrections": [{"report_id", "set", "new_total", "reason"}]}.
+    파일이 없거나 깨졌거나 형식이 이상하면 조용히 [] (죽지 않습니다)."""
+    p = path or corrections_path()
+    try:
+        with open(p, encoding="utf-8-sig") as f:
+            data = json.load(f)
+    except Exception:
+        return []
+    items = data.get("corrections") if isinstance(data, dict) else data
+    if not isinstance(items, list):
+        return []
+    out = []
+    for it in items:
+        if not isinstance(it, dict):
+            continue
+        rid = it.get("report_id")
+        total = _coerce_score(it.get("new_total"))
+        if not isinstance(rid, str) or not rid.strip() or total is None:
+            continue
+        out.append({"report_id": rid.strip(), "set": str(it.get("set") or ""),
+                    "new_total": total,
+                    "reason": str(it.get("reason") or "이의제기 인정")})
+    return out
+
+
+def correction_change_text(ch):
+    """정정 1건 문구: '코코 모의고사 1회 86 → 95점'."""
+    before = ch.get("before")
+    b = f"{before:g}" if isinstance(before, (int, float)) else "—"
+    return f"{ch.get('name') or '?'} {b} → {ch.get('after'):g}점"
+
+
+def correction_summary_text(changes, limit=3):
+    """시작 화면 안내 띠 문구 — '이의제기 반영: 코코 1회 86 → 95점'."""
+    changes = [c for c in (changes or []) if isinstance(c, dict)]
+    if not changes:
+        return ""
+    head = "이의제기 반영: "
+    if len(changes) == 1:
+        return head + correction_change_text(changes[0])
+    shown = [correction_change_text(c) for c in changes[:limit]]
+    more = len(changes) - len(shown)
+    return (f"{head}{len(changes)}건 — " + " / ".join(shown)
+            + (f" 외 {more}건" if more > 0 else "")
+            + " (클릭하면 자세히)")
+
+
+class RegradeCoordinator:
+    """지난 기록 자동 재채점 (GUI 없이 테스트 가능).
+
+    run() 은 워커 스레드에서 도는 것을 전제로 하며 Tk 를 전혀 만지지 않습니다.
+    진행은 progress(i, n, 세트명) 콜백으로 알리고, 끝나면 요약 dict 를 돌려
+    줍니다(GUI 는 그것을 after(0, …) 로 받아 띠를 띄웁니다).
+
+    요약: {"checked", "targets", "regraded", "changes"[], "errors"[],
+           "data_applied", "skipped"}
+    """
+
+    def __init__(self, sets=None, grade_py=None, records_path=None,
+                 corrections_file=None, progress=None, log=None, when=None,
+                 timeout=600, limit=REGRADE_MAX):
+        self.sets = list(sets or [])
+        self.grade_py = grade_py or find_grade_py()
+        self.records_path = records_path or RECORDS_PATH
+        self.corrections_file = corrections_file
+        self._progress = progress
+        self._log = log or startup_log
+        self.when = when
+        self.timeout = timeout
+        self.limit = limit
+
+    # -- 내부 -------------------------------------------------------------
+
+    def log(self, msg):
+        try:
+            self._log(msg)
+        except Exception:
+            pass
+
+    def progress(self, i, n, name):
+        if self._progress is None:
+            return
+        try:
+            self._progress(i, n, name)
+        except Exception:
+            pass
+
+    def _set_for(self, rec):
+        name = record_set_name(rec)
+        for s in self.sets:
+            if s.get("name") == name:
+                return s
+        norm = norm_set_key(name) if name and name != "?" else ""
+        if norm:
+            for s in self.sets:
+                if s.get("norm") == norm:
+                    return s
+        return None
+
+    def _commit(self, patches):
+        """정정 결과를 기록.json 에 반영 — 쓰기 직전에 다시 읽어 병합합니다
+        (백그라운드로 도는 동안 새 응시 기록이 추가될 수 있음)."""
+        if not patches:
+            return False
+        with _FILE_LOCK:
+            records = load_records(self.records_path)
+            hit = 0
+            for rid, r in records_with_ids(records):
+                patch = patches.get(rid)
+                if patch:
+                    r.update(patch)
+                    hit += 1
+            if not hit:
+                return False
+            _backup_corrupt_json(self.records_path)
+            tmp = self.records_path + ".tmp"
+            try:
+                with open(tmp, "w", encoding="utf-8") as f:
+                    json.dump(records, f, ensure_ascii=False, indent=2)
+                os.replace(tmp, self.records_path)
+            except OSError as e:
+                log_error("자동 재채점 기록 저장", e)
+                try:
+                    if os.path.isfile(tmp):
+                        os.remove(tmp)
+                except OSError:
+                    pass
+                return False
+        routine_touch()
+        return True
+
+    # -- 공개 -------------------------------------------------------------
+
+    def plan(self, records=None):
+        """재채점 대상 [(rid, 기록, 세트, 사유, 풀이경로 or None)]."""
+        records = load_records(self.records_path) if records is None \
+            else records
+        cur = grader_version(self.grade_py)
+        out = []
+        for rid, rec in records_with_ids(records):
+            s = self._set_for(rec)
+            if s is None:
+                continue
+            why = regrade_reason(rec, s, cur)
+            if not why:
+                continue
+            out.append((rid, rec, s, why, attempt_file_for(rec, s)))
+        return out
+
+    def run(self):
+        summary = {"checked": 0, "targets": 0, "regraded": 0, "changes": [],
+                   "errors": [], "data_applied": 0, "skipped": 0}
+        try:
+            records = load_records(self.records_path)
+        except Exception as e:          # load_records 는 예외를 안 내지만 방어
+            log_error("자동 재채점 기록 읽기", e)
+            return summary
+        summary["checked"] = len(records)
+        try:
+            targets = self.plan(records)
+        except Exception as e:
+            log_error("자동 재채점 대상 선별", e)
+            targets = []
+        summary["targets"] = len(targets)
+        patches = {}
+        todo = [t for t in targets if t[4]][:self.limit]
+        for i, (rid, rec, s, why, student) in enumerate(todo, 1):
+            self.progress(i, len(todo), record_set_name(rec))
+            try:
+                result, html_p, json_p, err = regrade_record(
+                    rec, s, grade_py=self.grade_py, student=student,
+                    when=self.when, timeout=self.timeout)
+            except Exception as e:      # 한 건이 죽어도 나머지는 계속
+                log_error("자동 재채점 실행", e)
+                result, html_p, json_p, err = None, None, None, str(e)
+            if result is None:
+                summary["errors"].append(f"{record_set_name(rec)}: {err}")
+                continue
+            summary["regraded"] += 1
+            patch = dict(rec)
+            ev = record_evidence_changes(patch, s, grade_py=self.grade_py,
+                                         student=student)
+            entry = apply_correction(
+                patch, result.get("total"), why, when=self.when,
+                source="재채점", key=f"regrade:{rid}:{why}",
+                report=html_p if os.path.isfile(html_p) else None,
+                result=result, evidence=ev)
+            patches[rid] = {k: v for k, v in patch.items()
+                            if rec.get(k) != v or k == "점수"}
+            if entry:
+                summary["changes"].append({
+                    "id": rid, "name": record_set_name(rec),
+                    "date": str(rec.get("일시") or "")[:10],
+                    "before": entry["이전총점"], "after": entry["새총점"],
+                    "reason": entry["사유"], "source": "재채점",
+                    "report": html_p})
+                self.log(f"자동 재채점: {record_set_name(rec)} "
+                         f"{entry['이전총점']} → {entry['새총점']}점 ({why})")
+        summary["skipped"] = len([t for t in targets if not t[4]])
+        try:
+            summary["data_applied"] = self._apply_data(records, patches,
+                                                       summary)
+        except Exception as e:
+            log_error("점수 정정 데이터 반영", e)
+        self._commit(patches)
+        return summary
+
+    def _apply_data(self, records, patches, summary):
+        """정정 데이터 파일(`정정/점수정정.json`)로 점수만 정정.
+
+        다시 채점한 기록은 그 결과가 우선이라 건너뜁니다."""
+        items = load_corrections(self.corrections_file)
+        if not items:
+            return 0
+        by_id = {rid: rec for rid, rec in records_with_ids(records)}
+        n = 0
+        for it in items:
+            rid = it["report_id"]
+            rec = by_id.get(rid)
+            if rec is None or rid in patches:
+                continue
+            if it["set"]:
+                name = record_set_name(rec)
+                if it["set"] not in (name, norm_set_key(name)):
+                    continue
+            patch = dict(rec)
+            entry = apply_correction(
+                patch, it["new_total"], it["reason"], when=self.when,
+                source="정정데이터",
+                key=f"data:{rid}:{it['new_total']:g}")
+            if entry is None:
+                continue
+            patches[rid] = {k: v for k, v in patch.items()
+                            if rec.get(k) != v or k == "점수"}
+            n += 1
+            summary["changes"].append({
+                "id": rid, "name": record_set_name(rec),
+                "date": str(rec.get("일시") or "")[:10],
+                "before": entry["이전총점"], "after": entry["새총점"],
+                "reason": entry["사유"], "source": "정정데이터",
+                "report": rec.get("리포트")})
+            self.log(f"점수 정정 데이터 반영: {record_set_name(rec)} "
+                     f"{entry['이전총점']} → {entry['새총점']}점 "
+                     f"({it['reason']})")
+        return n
+
+
+# ---------------------------------------------------------------------------
 # 루틴 웹 연동 서버 (v2.4.0) — 규약: 문서/연동_API.md v2.4.1
 # ---------------------------------------------------------------------------
 #
@@ -4007,6 +4821,43 @@ def load_result_summary(json_path):
     return summ
 
 
+def serialize_corrections(records, sets=None, limit=20):
+    """기록의 `정정이력` → 규약 corrections[] (최근 정정이 앞).
+
+    웹이 "이의제기 반영 +9점" 배지를 띄우는 데 씁니다. 손으로 고친 기록에
+    이상한 값이 들어 있어도 읽을 수 있는 항목만 살립니다."""
+    by_name = {s.get("name"): s for s in sets or []}
+    out = []
+    for rid, r in records_with_ids(records):
+        hist = (r or {}).get(CORRECTION_HISTORY_FIELD)
+        if not isinstance(hist, list):
+            continue
+        name = record_set_name(r)
+        s = by_name.get(name)
+        norm = s["norm"] if s else (norm_set_key(name) if name != "?" else "")
+        dt = _record_datetime(r)
+        for h in hist:
+            if not isinstance(h, dict):
+                continue
+            after = _coerce_score(h.get("새총점"))
+            if after is None:
+                continue
+            before = _coerce_score(h.get("이전총점"))
+            out.append({
+                "record_id": rid,
+                "set": {"name": name, "norm": norm},
+                "date": dt.strftime("%Y-%m-%d") if dt
+                        else str(r.get("일시"))[:10],
+                "before": before, "after": after,
+                "delta": (after - before) if before is not None else None,
+                "reason": str(h.get("사유") or ""),
+                "source": str(h.get("출처") or "재채점"),
+                "when": str(h.get("일시") or ""),
+            })
+    out.sort(key=lambda c: (c["when"], c["record_id"]), reverse=True)
+    return out[:max(0, int(limit))]
+
+
 def serialize_records(records, sets, cfg=None):
     """기록.json → (규약 records[], review{}, 색인{id: 정보}).
 
@@ -4037,6 +4888,10 @@ def serialize_records(records, sets, cfg=None):
             "total": _num(total, None) if total is not None else None,
             "pass_line": PASS_LINE,
             "passed": total is not None and total >= PASS_LINE,
+            "elapsed": str(r.get("소요시간") or "") or None,
+            "elapsed_sec": parse_elapsed(r.get("소요초")
+                                         if r.get("소요초") is not None
+                                         else r.get("소요시간")),
             "report_html": os.path.basename(html_p) if html_p else None,
             "report_json": os.path.basename(json_p) if json_p else None,
             "sheets": summ["sheets"] if summ else [],
@@ -4296,6 +5151,8 @@ def build_state(sets, records=None, cfg=None, today=None, exam_running=False,
         "plan": plan_json,
         "sets": serialize_sets(sets, records, index, review),
         "records": recs,
+        "achievements": achievements(recs),
+        "corrections": serialize_corrections(records, sets),
         "review": review,
         "checks": checks,
         "settings": {"auto_open_routine": bool(
@@ -4898,12 +5755,24 @@ if HAS_TK:
 
     tk.Tk.report_callback_exception = _tk_report_callback_exception
 
+    # Tk 변수(BooleanVar/IntVar…) 강한 참조 보관.
+    # 창을 닫아 변수가 쓰레기가 되면 파이썬 GC 가 아무 스레드에서나 __del__ 을
+    # 돌리는데, 그 안의 Tcl 호출이 메인 스레드 밖이면 _tkinter 가 최대 10초를
+    # 기다린다 — 하필 루틴 연동 서버 스레드에서 걸리면 그 요청이 통째로
+    # 멈춘다(응답 없음). 변수는 프로그램이 끝날 때까지 들고 있는다(개수가
+    # 적고 하나에 수백 바이트라 비용이 없다).
+    _TK_VARS = []
+
+    def keep_var(var):
+        _TK_VARS.append(var)
+        return var
+
 
     class ResultWindow(tk.Toplevel):
         """채점 결과 창: 큰 점수 + 시트별 점수 + 리포트 열기."""
 
         def __init__(self, master, result, html_path, folder=None,
-                     copied=False, goal=None, linked=False):
+                     copied=False, goal=None, linked=False, progress=None):
             super().__init__(master)
             self.title(f"{APP_TITLE} - 채점 결과")
             self.configure(bg=BG)
@@ -4929,9 +5798,30 @@ if HAS_TK:
                          fg=BRAND if passed else RED,
                          font=("Malgun Gothic", 42, "bold")).pack()
                 verdict = "합격권" if passed else "미달"
-                tk.Label(frm, text=f"합격선 {PASS_LINE}점 기준: {verdict}",
+                delta_txt = ""
+                if progress and progress.get("prev_best") is not None:
+                    d = total - progress["prev_best"]
+                    delta_txt = ("  ·  직전 최고 "
+                                 f"{progress['prev_best']:g}점 대비 "
+                                 + (f"+{d:g}점" if d > 0 else
+                                    (f"{d:g}점" if d < 0 else "동점")))
+                elif progress:
+                    delta_txt = "  ·  첫 기록"
+                tk.Label(frm,
+                         text=f"합격선 {PASS_LINE}점 기준: {verdict}{delta_txt}",
                          bg=BG, fg=INK,
-                         font=UI_FONT_BOLD).pack(pady=(0, 10))
+                         font=UI_FONT_BOLD).pack(pady=(0, 8))
+                # 합격선 대비 게이지 (단계 채우기 — 과하지 않은 연출)
+                self.score_gauge = tk.Canvas(frm, height=16, width=360, bg=BG,
+                                             bd=0, highlightthickness=0)
+                self.score_gauge.pack(fill="x", pady=(0, 4))
+                self._gauge_target = max(0.0, min(1.0, float(total) / 100.0))
+                self._gauge_passed = passed
+                self._gauge_step = 0
+                self._animate_gauge()
+                tk.Label(frm, text=f"0 —— 합격선 {PASS_LINE} —— 100",
+                         bg=BG, fg=SUB,
+                         font=("Malgun Gothic", 8)).pack(pady=(0, 8))
             sheets = result.get("sheets") or []
             if sheets:
                 box = tk.Frame(frm, bg=CARD, highlightbackground=LINE,
@@ -4963,6 +5853,8 @@ if HAS_TK:
                 tk.Label(frm, text=g_txt, bg=g_bg, fg=g_fg,
                          font=("Malgun Gothic", 9, "bold"), padx=10, pady=5,
                          wraplength=360).pack(pady=(6, 0))
+            if progress and not partial:
+                self._render_progress(frm, progress, total)
             if linked:
                 self.link_lbl = tk.Label(
                     frm, text="채점 결과가 루틴 페이지에 자동 반영되었습니다 — "
@@ -4997,6 +5889,59 @@ if HAS_TK:
             tk.Button(btns, text="닫기", font=UI_FONT, relief="groove",
                       padx=14, pady=4, command=self.destroy).pack(
                 side="left", padx=6)
+
+        STEPS = 14              # 게이지 채우기 단계 (약 0.4초)
+
+        def _animate_gauge(self):
+            """합격선 대비 게이지를 단계적으로 채웁니다 (애니메이션은 여기까지)."""
+            cv = getattr(self, "score_gauge", None)
+            if cv is None or not cv.winfo_exists():
+                return
+            self._gauge_step = min(self.STEPS, self._gauge_step + 1)
+            frac = self._gauge_target * self._gauge_step / self.STEPS
+            w = max(1, cv.winfo_width() or 360)
+            h = int(cv["height"])
+            cv.delete("all")
+            cv.create_rectangle(0, 0, w, h, fill=CARD, outline=LINE)
+            if frac > 0:
+                cv.create_rectangle(
+                    0, 0, max(2, int(w * frac)), h,
+                    fill=BRAND if self._gauge_passed else AMBER, outline="")
+            x = int(w * PASS_LINE / 100)      # 합격선 눈금 + 글자
+            cv.create_line(x, 0, x, h, fill=INK, width=2)
+            cv.create_text(min(w - 22, x + 22), h // 2, text=str(PASS_LINE),
+                           fill=INK, font=("Malgun Gothic", 8))
+            if self._gauge_step < self.STEPS:
+                self.after(30, self._animate_gauge)
+
+        def _render_progress(self, frm, prog, total):
+            """티어 승급 · 새 도전 과제 (색만이 아니라 글자로도 구분)."""
+            ups = prog.get("tier_up") or []
+            if ups:
+                top = max(ups)
+                nxt = prog.get("level_after", {}).get("next_goal")
+                txt = f"{top}점 달성! {tier_label(top)} 단계" + (
+                    f" — 다음 목표 {nxt}점({tier_label(nxt)})"
+                    if nxt and nxt != top else " — 만점까지 왔습니다")
+                tk.Label(frm, text=txt, bg=BRAND, fg="white",
+                         font=("Malgun Gothic", 11, "bold"), padx=12, pady=6,
+                         wraplength=360).pack(pady=(2, 6))
+            badges = prog.get("new_badges") or []
+            if badges:
+                box = tk.Frame(frm, bg=BRAND_SOFT, padx=10, pady=6)
+                box.pack(fill="x", pady=(0, 6))
+                tk.Label(box, text=f"새 도전 과제 {len(badges)}개 달성",
+                         bg=BRAND_SOFT, fg=BRAND_DARK,
+                         font=("Malgun Gothic", 9, "bold"),
+                         anchor="w").pack(fill="x")
+                for a in badges[:4]:
+                    tk.Label(box, text=f"✓ [{a['icon']}] {a['name']} — "
+                                       f"{a['desc']}", bg=BRAND_SOFT, fg=INK,
+                             font=("Malgun Gothic", 9), anchor="w",
+                             justify="left", wraplength=340).pack(fill="x")
+            tk.Label(frm, text=f"도전 과제 {prog.get('badges_done', 0)}/"
+                               f"{prog.get('badges_total', 0)} 달성",
+                     bg=BG, fg=SUB, font=("Malgun Gothic", 9)).pack()
 
 
     class TimerWindow(tk.Toplevel):
@@ -5425,7 +6370,7 @@ if HAS_TK:
             af = tk.Frame(frm, bg=BG)
             af.pack(fill="x", pady=(8, 2))
             for name, sheet_list, minutes in PRACTICE_AREAS:
-                v = tk.BooleanVar(value=False)
+                v = keep_var(tk.BooleanVar(value=False))
                 self.area_vars[name] = v
                 tk.Checkbutton(
                     af, text=f"{name}  ({' · '.join(sheet_list)}, "
@@ -5442,7 +6387,7 @@ if HAS_TK:
             self.sheet_vars = {}
             for _name, sheet_list, _m in PRACTICE_AREAS:
                 for sh in sheet_list:
-                    v = tk.BooleanVar(value=False)
+                    v = keep_var(tk.BooleanVar(value=False))
                     self.sheet_vars[sh] = v
                     tk.Checkbutton(self.adv_frame, text=sh, variable=v,
                                    bg=BG, fg=INK, activebackground=BG,
@@ -5452,7 +6397,7 @@ if HAS_TK:
             tf.pack(fill="x", pady=(10, 0))
             tk.Label(tf, text="연습 시간(분):", bg=BG, fg=INK,
                      font=UI_FONT).pack(side="left")
-            self.minutes_var = tk.IntVar(value=DEFAULT_MINUTES)
+            self.minutes_var = keep_var(tk.IntVar(value=DEFAULT_MINUTES))
             tk.Spinbox(tf, from_=MIN_MINUTES, to=MAX_MINUTES,
                        textvariable=self.minutes_var, width=4,
                        font=UI_FONT).pack(side="left", padx=6)
@@ -5571,7 +6516,7 @@ if HAS_TK:
             top.pack(fill="x")
             tk.Label(top, text="바꿀 세트 슬롯:", bg=BG, fg=INK,
                      font=UI_FONT).pack(side="left")
-            self.slot_var = tk.IntVar(value=1)
+            self.slot_var = keep_var(tk.IntVar(value=1))
             for k in range(max(1, slot_count)):
                 tk.Radiobutton(top, text=f"{k + 1}번", variable=self.slot_var,
                                value=k + 1, bg=BG, fg=INK, font=UI_FONT,
@@ -6175,6 +7120,12 @@ if HAS_TK:
             self._update_progress = None        # 수동 확인 진행 창
             self._poll_token = 0                # 폴링 세대 (중복 폴링 방지)
             self._toast_after = None
+            self._toast_click = None     # 안내 띠 클릭 동작 (상세 창)
+            self._regrade_summary = None  # 마지막 자동 재채점 결과
+            self.status_card = None       # 게임형 상태 카드 (티어·배지)
+            self._gauge_goal = GOAL_TIERS[-1]
+            self._lock_after = None       # 오늘 잠금 카운트다운 after id
+            self._gauge_frac = 0.0
             self._warned_dirty = set()   # 원본 오염 경고를 이미 띄운 세트
             self.plan_no = routine_day_no()   # 오늘의 학습 일정 번호
             self.adaptive = None              # 적응형 일정 (recompute_plan)
@@ -6208,6 +7159,9 @@ if HAS_TK:
                 threading.Thread(target=self._bg_update_check,
                                  daemon=True).start()
                 self.after(1200, lambda: self._update_poll(tok))
+            if auto_update:
+                # 지난 기록 자동 재채점 (이의제기 반영) — 백그라운드, 사용자 조작 없음
+                self.after(600, self._start_regrade)
             if auto_update and self.routine_auto_open_var.get() \
                     and self.routine is not None:
                 self.after(900, self.open_routine_page)   # 시작 시 자동 열기
@@ -6242,11 +7196,13 @@ if HAS_TK:
                 font=("Malgun Gothic", 9), justify="left", anchor="w",
                 wraplength=600)
             self.toast_lbl.pack(side="left", fill="x", expand=True)
-            tk.Button(self.toast, text="✕", bg="#FFF4D6", fg="#5A4300",
-                      relief="flat", font=("Malgun Gothic", 9), padx=4,
-                      command=self.hide_toast).pack(side="right")
-            self.toast_lbl.bind("<Button-1>", self.hide_toast)
-            self.toast.bind("<Button-1>", self.hide_toast)
+            self.toast_close_btn = tk.Button(
+                self.toast, text="✕", bg="#FFF4D6", fg="#5A4300",
+                relief="flat", font=("Malgun Gothic", 9), padx=4,
+                command=self.hide_toast)
+            self.toast_close_btn.pack(side="right")
+            self.toast_lbl.bind("<Button-1>", self._on_toast_click)
+            self.toast.bind("<Button-1>", self._on_toast_click)
 
             # 오늘의 학습 카드 (날짜 기반 루틴 일정)
             plan_card = tk.Frame(self, bg=BRAND_SOFT, padx=14, pady=8)
@@ -6288,6 +7244,8 @@ if HAS_TK:
                 "등록]을 눌러주세요", bg=BRAND_SOFT, fg="#8A5A00",
                 font=("Malgun Gothic", 8), anchor="w")
             self._render_plan_card()
+
+            self._build_status_card(self).pack(fill="x", padx=16, pady=(8, 0))
 
             body = tk.Frame(self, bg=BG, padx=16, pady=12)
             body.pack(fill="both", expand=True)
@@ -6335,7 +7293,7 @@ if HAS_TK:
             ctrl.grid(row=2, column=0, columnspan=2, sticky="ew")
             tk.Label(ctrl, text="시험 시간(분):", bg=BG, fg=INK,
                      font=UI_FONT).pack(side="left")
-            self.minutes_var = tk.IntVar(value=DEFAULT_MINUTES)
+            self.minutes_var = keep_var(tk.IntVar(value=DEFAULT_MINUTES))
             tk.Spinbox(ctrl, from_=MIN_MINUTES, to=MAX_MINUTES, increment=5,
                        textvariable=self.minutes_var, width=4,
                        font=UI_FONT).pack(side="left", padx=(4, 14))
@@ -6375,14 +7333,15 @@ if HAS_TK:
                       padx=10, pady=4,
                       command=self.manual_update_check).pack(
                 side="right", padx=4)
-            self.auto_update_var = tk.BooleanVar(value=auto_update_enabled())
+            self.auto_update_var = keep_var(
+                tk.BooleanVar(value=auto_update_enabled()))
             self.auto_update_chk = tk.Checkbutton(
                 ctrl, text="자동 업데이트", variable=self.auto_update_var,
                 bg=BG, fg=INK, activebackground=BG, font=UI_FONT,
                 command=self._toggle_auto_update)
             self.auto_update_chk.pack(side="right", padx=(0, 2))
-            self.routine_auto_open_var = tk.BooleanVar(
-                value=bool(get_app_setting(ROUTINE_AUTO_OPEN_SETTING, False)))
+            self.routine_auto_open_var = keep_var(tk.BooleanVar(
+                value=bool(get_app_setting(ROUTINE_AUTO_OPEN_SETTING, False))))
             self.routine_auto_open_chk = tk.Checkbutton(
                 ctrl, text="루틴 자동 열기", variable=self.routine_auto_open_var,
                 bg=BG, fg=INK, activebackground=BG, font=UI_FONT,
@@ -6432,6 +7391,7 @@ if HAS_TK:
             if getattr(self, "plan_title_lbl", None) is not None:
                 self.recompute_plan()      # 새 기록 반영 (일정 재계산)
             self._apply_daily_lock()       # 하루 1회 제한 반영
+            self._render_status_card(records)   # 티어·연속·도전 과제
             if not records:
                 self.records_lbl.configure(text="아직 응시 기록이 없습니다.")
                 return
@@ -6469,8 +7429,11 @@ if HAS_TK:
             if btn is None or self.exam_running:
                 return
             if self.daily_locked():
-                btn.configure(state="disabled", text="오늘 응시 완료")
+                btn.configure(state="disabled",
+                              text=f"오늘 응시 완료 {lock_countdown_text()}")
+                self._apply_lock_banner()
                 return
+            self._apply_lock_banner()
             s = self._selected_set()
             btn.configure(state="normal", text="재응시 (새로 시작)"
                           if (s and set_records(s["name"])) else "시험 시작")
@@ -6761,9 +7724,25 @@ if HAS_TK:
 
         # ---------------- 자동 업데이트 ----------------
 
-        def show_toast(self, text, seconds=8):
+        def show_toast(self, text, seconds=8, on_click=None, tone=None):
             """비모달 안내 띠(시작 화면 위쪽). seconds 뒤 자동으로 사라지고
-            (0이면 유지) 띠를 클릭하거나 ✕를 누르면 바로 닫힙니다."""
+            (0이면 유지) ✕를 누르면 바로 닫힙니다. on_click 을 주면 띠를
+            클릭했을 때 닫는 대신 그 함수를 부릅니다(정정 상세 창 등).
+            tone="good" 이면 초록 띠(안내), 기본은 노랑 띠."""
+            self._toast_click = on_click
+            bg, fg, line = (("#E3F2E8", "#0B5D31", "#9ED3B4") if tone == "good"
+                            else ("#FFF4D6", "#5A4300", "#E5C87A"))
+            for w in (self.toast, self.toast_lbl, self.toast_close_btn):
+                try:
+                    w.configure(bg=bg)
+                except Exception:
+                    pass
+            try:
+                self.toast_lbl.configure(fg=fg)
+                self.toast_close_btn.configure(fg=fg)
+                self.toast.configure(highlightbackground=line)
+            except Exception:
+                pass
             self.toast_lbl.configure(text=text)
             if not self.toast.winfo_manager():
                 self.toast.pack(fill="x", padx=16, pady=(8, 0),
@@ -6781,8 +7760,334 @@ if HAS_TK:
 
         def hide_toast(self, _event=None):
             self._toast_after = None
+            self._toast_click = None
             if self.toast.winfo_manager():
                 self.toast.pack_forget()
+
+        def _on_toast_click(self, _event=None):
+            """띠 클릭: 상세 동작이 걸려 있으면 그것을, 아니면 닫기."""
+            cb = self._toast_click
+            if cb is None:
+                self.hide_toast()
+                return
+            try:
+                cb()
+            except Exception as e:
+                log_error("안내 띠 상세", e)
+
+        # ---------------- 자동 재채점 (이의제기 반영) ----------------
+
+        def _start_regrade(self):
+            """시작 직후 백그라운드로 지난 기록 재채점 — 사용자 조작 없음."""
+            if getattr(self, "_regrade_running", False):
+                return
+            self._regrade_running = True
+            sets = list(self.sets)
+            coord = RegradeCoordinator(sets, grade_py=self.grade_py,
+                                       progress=self._regrade_progress)
+            startup_log("자동 재채점 확인 시작 (백그라운드)")
+
+            def worker():
+                try:
+                    summary = coord.run()
+                except Exception as e:
+                    log_error("자동 재채점", e)
+                    summary = {"checked": 0, "targets": 0, "regraded": 0,
+                               "changes": [], "errors": [str(e)],
+                               "data_applied": 0, "skipped": 0}
+                try:
+                    self.after(0, lambda: self._regrade_done(summary))
+                except Exception:
+                    pass
+
+            threading.Thread(target=worker, daemon=True).start()
+
+        def _regrade_progress(self, i, n, name):
+            """(워커 스레드) 진행 표시 — Tk 갱신은 after(0, …) 로."""
+            if n < 2:
+                return          # 한 건이면 굳이 띠를 띄우지 않음
+            try:
+                self.after(0, lambda: self.show_toast(
+                    f"지난 기록 다시 채점 중 {i}/{n} — {name}", seconds=0))
+            except Exception:
+                pass
+
+        def _regrade_done(self, summary):
+            """(Tk 스레드) 재채점 결과 반영 + 안내 띠."""
+            self._regrade_running = False
+            self._regrade_summary = summary
+            changes = [c for c in (summary or {}).get("changes") or []
+                       if isinstance(c, dict)]
+            for err in (summary or {}).get("errors") or []:
+                startup_log(f"자동 재채점 건너뜀: {err}")
+            if not changes:
+                if summary and summary.get("targets"):
+                    startup_log(
+                        f"자동 재채점 완료: 대상 {summary['targets']}건 · "
+                        f"다시 채점 {summary.get('regraded', 0)}건 · "
+                        "점수 변화 없음")
+                self.hide_toast()
+                return
+            startup_log("이의제기 반영: "
+                        + " / ".join(f"{c['name']} {c['before']} → "
+                                     f"{c['after']}점 ({c['reason']})"
+                                     for c in changes))
+            try:
+                self.refresh_records()      # 레벨·연속·일정·진행률 재계산
+            except Exception as e:
+                log_error("자동 재채점 후 갱신", e)
+            self.show_toast(correction_summary_text(changes), seconds=0,
+                            on_click=self.show_corrections, tone="good")
+
+        def corrections_report_text(self, changes=None):
+            """정정 상세 텍스트 (상세 창·복사용)."""
+            summary = self._regrade_summary or {}
+            changes = changes if changes is not None else (
+                summary.get("changes") or [])
+            lines = ["[이의제기 반영 — 지난 기록 자동 재채점]", ""]
+            for c in changes:
+                before = c.get("before")
+                b = f"{before:g}" if isinstance(before, (int, float)) else "—"
+                lines.append(f"· {c.get('date', '?')}  {c.get('name', '?')}"
+                             f"  {b} → {c.get('after'):g}점"
+                             f"  ({c.get('source', '재채점')})")
+                lines.append(f"    사유: {c.get('reason', '')}")
+                if c.get("report"):
+                    lines.append(f"    새 리포트: {c['report']}")
+                lines.append("")
+            lines.append(f"확인한 기록 {summary.get('checked', 0)}건 · "
+                         f"대상 {summary.get('targets', 0)}건 · "
+                         f"다시 채점 {summary.get('regraded', 0)}건 · "
+                         f"정정 데이터 {summary.get('data_applied', 0)}건")
+            if summary.get("skipped"):
+                lines.append(f"풀이 파일이 없어 건너뛴 기록 "
+                             f"{summary['skipped']}건 — 정정 데이터가 배포되면 "
+                             "자동으로 반영됩니다.")
+            for err in summary.get("errors") or []:
+                lines.append(f"오류: {err}")
+            lines.append("")
+            lines.append("예전 리포트 파일은 지우지 않았습니다. 정정된 점수로 "
+                         "목표 단계·연속 응시·합격 세트 수·일정 배정·루틴 "
+                         "페이지 진행률이 다시 계산됩니다.")
+            return "\n".join(lines)
+
+        def show_corrections(self):
+            """안내 띠 클릭 → 정정 상세 창."""
+            changes = (self._regrade_summary or {}).get("changes") or []
+            if not changes:
+                self.hide_toast()
+                return
+            DiagnosisWindow(
+                self, self.corrections_report_text(changes),
+                title=f"{APP_TITLE} - 이의제기 반영",
+                hint="채점기·정답 파일이 바뀌어 지난 기록을 다시 채점했습니다. "
+                     "원래 점수는 기록.json 의 정정이력에 남아 있습니다.")
+
+        # ---------------- 게임형 상태 카드 (티어·게이지·연속·배지) ----------------
+
+        def _build_status_card(self, parent):
+            """목표 티어 · 게이지 · 연속 응시 · 도전 과제 · 오늘 잠금 카운트다운.
+
+            색만으로 상태를 구분하지 않도록 '달성'·'○' 같은 글자를 함께 씁니다."""
+            card = tk.Frame(parent, bg=CARD, highlightbackground=LINE,
+                            highlightthickness=1, padx=14, pady=9)
+            self.status_card = card
+            top = tk.Frame(card, bg=CARD)
+            top.pack(fill="x")
+            tk.Label(top, text="목표 단계", bg=CARD, fg=SUB,
+                     font=("Malgun Gothic", 9)).pack(side="left", padx=(0, 8))
+            self.tier_lbls = []
+            for g in GOAL_TIERS:
+                lbl = tk.Label(top, text="", bg=CARD, fg=SUB,
+                               font=("Malgun Gothic", 9, "bold"),
+                               padx=7, pady=1, highlightthickness=1,
+                               highlightbackground=LINE)
+                lbl.pack(side="left", padx=2)
+                self.tier_lbls.append((g, lbl))
+            self.badge_count_lbl = tk.Label(
+                top, text="", bg=CARD, fg=SUB, font=("Malgun Gothic", 9),
+                cursor="hand2")
+            self.badge_count_lbl.pack(side="right")
+            self.badge_count_lbl.bind("<Button-1>",
+                                      lambda e: self.show_achievements())
+            tk.Button(top, text="도전 과제", font=("Malgun Gothic", 9),
+                      relief="groove", padx=8, pady=1,
+                      command=self.show_achievements).pack(side="right",
+                                                           padx=(0, 8))
+            self.gauge = tk.Canvas(card, height=13, bg=CARD, bd=0,
+                                   highlightthickness=0)
+            self.gauge.pack(fill="x", pady=(7, 3))
+            self.gauge.bind("<Configure>", lambda e: self._draw_status_gauge())
+            info = tk.Frame(card, bg=CARD)
+            info.pack(fill="x")
+            self.gauge_lbl = tk.Label(info, text="", bg=CARD, fg=INK,
+                                      font=UI_FONT, anchor="w")
+            self.gauge_lbl.pack(side="left")
+            self.streak_lbl = tk.Label(info, text="", bg=CARD, fg=SUB,
+                                       font=("Malgun Gothic", 9), anchor="e")
+            self.streak_lbl.pack(side="right")
+            self.badge_row = tk.Frame(card, bg=CARD)
+            self.badge_row.pack(fill="x", pady=(6, 0))
+            self.badge_chips = []
+            cols = 6            # 좁은 창에서도 넘치지 않게 6칸씩 두 줄 고정
+            for i in range(cols):
+                self.badge_row.columnconfigure(i, weight=1, uniform="badge")
+            for i, a in enumerate(ACHIEVEMENT_DEFS):
+                chip = tk.Label(self.badge_row, text=a["icon"], bg=BG, fg=SUB,
+                                font=("Malgun Gothic", 8), padx=4, pady=1,
+                                highlightthickness=1,
+                                highlightbackground=LINE, cursor="hand2")
+                chip.grid(row=i // cols, column=i % cols, padx=2, pady=1,
+                          sticky="ew")
+                chip.bind("<Button-1>", lambda e: self.show_achievements())
+                self.badge_chips.append((a["id"], chip))
+            self.lock_lbl = tk.Label(
+                card, text="", bg="#FBF0DC", fg="#8A5A00",
+                font=("Malgun Gothic", 9, "bold"), anchor="w", padx=8, pady=3)
+            self._lock_after = None
+            return card
+
+        def _draw_status_gauge(self, frac=None):
+            """티어 게이지 (최고점 / 현재 목표). frac 을 주면 그 비율로."""
+            cv = getattr(self, "gauge", None)
+            if cv is None or not cv.winfo_exists():
+                return
+            if frac is None:
+                frac = getattr(self, "_gauge_frac", 0.0)
+            self._gauge_frac = frac
+            w = max(1, cv.winfo_width())
+            h = int(cv["height"])
+            cv.delete("all")
+            cv.create_rectangle(0, 0, w, h, fill=BRAND_SOFT, outline=LINE)
+            if frac > 0:
+                cv.create_rectangle(0, 0, max(2, int(w * frac)), h,
+                                    fill=BRAND, outline="")
+            # 지나온 단계 눈금 (게이지는 0 ~ 현재 목표, 웹 히어로와 같은 규칙)
+            goal = getattr(self, "_gauge_goal", GOAL_TIERS[-1]) or GOAL_TIERS[-1]
+            for g in GOAL_TIERS:
+                if g >= goal:
+                    continue
+                cv.create_line(int(w * g / goal), 0, int(w * g / goal), h,
+                               fill=CARD)
+
+        def _render_status_card(self, records=None, ser=None):
+            """상태 카드 다시 그리기 (기록이 바뀔 때마다)."""
+            if getattr(self, "status_card", None) is None:
+                return
+            try:
+                if ser is None:
+                    recs = records if records is not None else load_records()
+                    ser = serialize_records(recs, self.sets)[0]
+                else:
+                    recs = records if records is not None else []
+                lv = level_from_best(serialized_best(ser))
+                stk = streak_info(recs if records is not None
+                                  else load_records())
+                summ = achievement_summary(ser)
+            except Exception as e:
+                log_error("상태 카드 계산", e)
+                return
+            best, goal = lv["best_total"], lv["current_goal"]
+            for g, lbl in self.tier_lbls:
+                done = g in lv["achieved"]
+                cur = (g == goal) and not done
+                lbl.configure(
+                    text=f"{'✓' if done else ('▶' if cur else '○')} "
+                         f"{tier_label(g)} {g}",
+                    bg=BRAND_SOFT if done else (CARD if not cur else "#FBF0DC"),
+                    fg=BRAND_DARK if done else ("#8A5A00" if cur else SUB),
+                    highlightbackground=BRAND if done else LINE)
+            self._gauge_goal = goal
+            self._draw_status_gauge(1.0 if lv["tier"] == "perfect"
+                                    else gauge_fraction(best, goal))
+            if best is None:
+                self.gauge_lbl.configure(
+                    text=f"아직 기록이 없습니다 — 첫 목표 {goal}점"
+                         f"({tier_label(goal)})")
+            elif lv["tier"] == "perfect":
+                self.gauge_lbl.configure(
+                    text=f"최고 {best:g}점 · 만점 달성 — 남은 세트도 100점 도전")
+            else:
+                self.gauge_lbl.configure(
+                    text=f"최고 {best:g}점 / 목표 {goal}점({tier_label(goal)}) "
+                         f"— {max(0, goal - best):g}점 남음")
+            self.streak_lbl.configure(
+                text=f"연속 {stk['current']}일 (최고 {stk['best']}일) · "
+                     + ("오늘 응시 완료" if stk["today_done"] else "오늘 미응시"))
+            self.badge_count_lbl.configure(
+                text=f"도전 과제 {summ['done']}/{summ['total']}")
+            done_ids = {a["id"] for a in summ["items"] if a["done"]}
+            by_id = {a["id"]: a for a in summ["items"]}
+            for aid, chip in self.badge_chips:
+                a = by_id.get(aid) or {}
+                on = aid in done_ids
+                chip.configure(
+                    bg=BRAND_SOFT if on else BG,
+                    fg=BRAND_DARK if on else "#93A79A",
+                    highlightbackground=BRAND if on else LINE,
+                    text=(("✓ " if on else "· ") + str(a.get("icon") or "")))
+            self._apply_lock_banner()
+
+        def _apply_lock_banner(self):
+            """오늘 잠금 띠 + 1초 카운트다운 ('다음 응시까지 07:12:33')."""
+            if getattr(self, "lock_lbl", None) is None:
+                return
+            locked = self.daily_locked() and not self.exam_running
+            if not locked:
+                if self.lock_lbl.winfo_manager():
+                    self.lock_lbl.pack_forget()
+                if self._lock_after is not None:
+                    try:
+                        self.after_cancel(self._lock_after)
+                    except Exception:
+                        pass
+                    self._lock_after = None
+                return
+            if not self.lock_lbl.winfo_manager():
+                self.lock_lbl.pack(fill="x", pady=(7, 0))
+            self._tick_lock()
+
+        def _tick_lock(self):
+            self._lock_after = None
+            lbl = getattr(self, "lock_lbl", None)
+            if lbl is None or not lbl.winfo_exists() \
+                    or not lbl.winfo_manager():
+                return
+            left = lock_countdown_text()
+            lbl.configure(text=f"오늘 응시 완료 · 다음 응시까지 {left} "
+                               "(오답노트 모드·오답 재풀이·부분 연습은 지금도 "
+                               "할 수 있습니다)")
+            btn = getattr(self, "start_btn", None)
+            if btn is not None and not self.exam_running \
+                    and str(btn["state"]) == "disabled":
+                btn.configure(text=f"오늘 응시 완료 {left}")
+            self._lock_after = self.after(1000, self._tick_lock)
+
+        def show_achievements(self):
+            """도전 과제 상세 창 (달성/미달성 · 달성 일시)."""
+            try:
+                ser = serialize_records(load_records(), self.sets)[0]
+                summ = achievement_summary(ser)
+            except Exception as e:
+                log_error("도전 과제 계산", e)
+                return
+            lines = [f"[도전 과제 {summ['done']}/{summ['total']}]", ""]
+            group = None
+            for a in summ["items"]:
+                if a["group"] != group:
+                    group = a["group"]
+                    lines.append(f"— {group} —")
+                mark = "✓ 달성" if a["done"] else "○ 미달성"
+                when = f"  ({a['when']})" if a["when"] else ""
+                lines.append(f"  {mark}  [{a['icon']}] {a['name']}{when}")
+                lines.append(f"        {a['desc']}")
+            lines.append("")
+            lines.append("판정은 기록.json 의 시험·수동 기록만 보고 계산하며 "
+                         "루틴 웹페이지와 같은 정의를 씁니다.")
+            DiagnosisWindow(self, "\n".join(lines),
+                            title=f"{APP_TITLE} - 도전 과제",
+                            hint="완주·점수·연속 응시·정확도·속도로 나뉜 12개 "
+                                 "과제입니다. 달성하면 ✓ 로 바뀝니다.")
 
         def _toggle_auto_update(self):
             on = bool(self.auto_update_var.get())
@@ -7535,6 +8840,21 @@ if HAS_TK:
             prog.destroy()
             return ok, log
 
+        def _show_result_window(self, record, prev_records, show, html_path):
+            """채점 결과 창 — 직전 최고점 대비 증감 · 티어 승급 · 새 배지까지."""
+            prog = None
+            try:
+                sets = self.sets
+                before = serialize_records(prev_records, sets)[0]
+                after = serialize_records(prev_records + [record], sets)[0]
+                prog = progress_delta(before, after)
+            except Exception as e:
+                log_error("결과 연출 계산", e)
+            ResultWindow(self, show["result"], html_path,
+                         folder=os.path.dirname(html_path),
+                         copied=show["copied"], goal=show["goal"],
+                         linked=self.routine_alive(), progress=prog)
+
         def _grading_finished(self, exam, elapsed, practice, state, html_path):
             result = state.get("result")
             combined = ((state.get("stderr") or "") + "\n"
@@ -7569,25 +8889,32 @@ if HAS_TK:
                 CollapsibleErrorDialog(
                     self, f"{APP_TITLE} - 채점 실패", headline, combined)
                 score = None
+                show = None
             else:
                 score = result.get("total")
-                copied = self._copy_result_to_clipboard(result)
-                goal = (exam.get("plan") or {}).get("목표")
-                ResultWindow(self, result, html_path,
-                             folder=os.path.dirname(html_path),
-                             copied=copied, goal=goal,
-                             linked=self.routine_alive())
-                if os.path.isfile(html_path):
-                    open_file(html_path)
+                show = {"result": result,
+                        "copied": self._copy_result_to_clipboard(result),
+                        "goal": (exam.get("plan") or {}).get("목표")}
+            prev_records = load_records()      # 결과 연출용 (직전 최고점·배지)
             pinfo = exam.get("practice_info")
             record = {
                 "일시": exam["started"].strftime("%Y-%m-%d %H:%M"),
                 "세트명": exam["set"]["name"] + (" (연습)" if practice else ""),
                 "점수": score,
                 "소요시간": format_elapsed(elapsed),
+                "소요초": max(0, int(elapsed)),
                 "리포트": html_path if os.path.isfile(html_path) else None,
                 "mode": (pinfo.get("mode") or "부분연습") if pinfo else "시험",
             }
+            try:        # 채점 근거 (자동 재채점 판단용, v2.6.0)
+                record.update(grading_evidence(
+                    problem=exam["set"].get("problem"),
+                    answer=exam["set"].get("answer"),
+                    student=exam.get("student"),
+                    key=exam["set"].get("key"),
+                    grade_py=self.grade_py))
+            except Exception as e:
+                log_error("채점 근거 저장", e)
             if pinfo:
                 if pinfo.get("mode") == "오답재풀이":
                     record["영역"] = "오답재풀이(" + ",".join(
@@ -7606,6 +8933,10 @@ if HAS_TK:
                 messagebox.showwarning(
                     APP_TITLE, f"기록.json 저장에 실패했습니다: {e}",
                     parent=self)
+            if show is not None:       # 기록을 남긴 뒤 결과 창 (승급·새 배지 계산)
+                self._show_result_window(record, prev_records, show, html_path)
+                if os.path.isfile(html_path):
+                    open_file(html_path)
             # 단계 가이드에서 시작한 스텝: 채점 완료 시 자동 체크
             plan_info = exam.get("plan") or {}
             step_idx = plan_info.get("step")
@@ -8076,6 +9407,52 @@ def run_smoke():
     app.update()
     assert "자동 반영" in rw.link_lbl.cget("text")
     rw.destroy()
+    # v2.6.0 게임형 결과 연출: 큰 점수 + 합격선 게이지 + 티어 승급 + 새 배지
+    _ser_before = [{"id": "20260903100000", "date": "2026-09-03",
+                    "time": "10:00", "mode": "시험", "total": 72,
+                    "set": {"name": "스모크", "norm": "스모크"},
+                    "sheets": [], "wrong_items": [], "elapsed_sec": 2300}]
+    _ser_after = _ser_before + [{
+        "id": "20260904100000", "date": "2026-09-04", "time": "10:00",
+        "mode": "시험", "total": 84, "set": {"name": "스모크2", "norm": "스모크2"},
+        "sheets": [], "wrong_items": [], "elapsed_sec": 2350}]
+    _prog = progress_delta(_ser_before, _ser_after)
+    assert _prog["prev_best"] == 72 and _prog["best"] == 84         and _prog["best_delta"] == 12 and _prog["tier_up"] == [80], _prog
+    assert [a["id"] for a in _prog["new_badges"]] == ["tier80"],         _prog["new_badges"]
+    rw2 = ResultWindow(app, {"total": 84, "pass_line": 70, "sheets": []}, "",
+                       goal=80, progress=_prog)
+    app.update_idletasks()
+    app.update()
+    _texts = [w.cget("text") for w in rw2.winfo_children()[0].winfo_children()
+              if isinstance(w, tk.Label)]
+    assert any("80점 달성! 숙련 단계" in t for t in _texts), _texts
+    assert any("직전 최고 72점 대비 +12점" in t for t in _texts), _texts
+    assert rw2._gauge_target == 0.84 and rw2.score_gauge.winfo_exists()
+    for _ in range(ResultWindow.STEPS + 6):   # 단계 채우기 애니메이션 끝까지
+        app.update()
+        time.sleep(0.04)
+    assert rw2._gauge_step == ResultWindow.STEPS, rw2._gauge_step
+    rw2.destroy()
+    # 게임형 상태 카드: 티어 배지·게이지·연속·도전 과제 칩
+    app._render_status_card([], ser=_ser_after)
+    app.update_idletasks()
+    app.update()
+    assert [lbl.cget("text") for _g, lbl in app.tier_lbls][:2]         == ["✓ 합격 70", "✓ 숙련 80"], [lbl.cget("text")
+                                       for _g, lbl in app.tier_lbls]
+    assert "최고 84점 / 목표 90점(고득점)" in app.gauge_lbl.cget("text")
+    assert "도전 과제" in app.badge_count_lbl.cget("text")
+    assert len(app.badge_chips) == len(ACHIEVEMENT_DEFS) == 12
+    assert app.badge_chips[0][1].cget("text").startswith("✓")
+    app.show_achievements()                   # 상세 창 (달성/미달성 목록)
+    app.update_idletasks()
+    app.update()
+    _ach_win = [w for w in app.winfo_children()
+                if isinstance(w, DiagnosisWindow)
+                and "도전 과제" in w.title()]
+    _txt = _ach_win[-1].text_value if _ach_win else ""
+    assert _ach_win and "[도전 과제 " in _txt and "○ 미달성" in _txt \
+        and all(a["name"] in _txt for a in ACHIEVEMENT_DEFS), _txt[:200]
+    assert re.fullmatch(r"\d\d:\d\d:\d\d", lock_countdown_text())
     # 동작 브리지: 시험 중이면 오류, show 는 ok
     app.exam_running = True
     assert app.routine_action("start_exam", None, None, None, None) == \
@@ -8091,7 +9468,9 @@ def run_smoke():
     print("SMOKE OK: 창 생성/위젯 렌더/타이머/오답노트 패널/단계 가이드(세트 "
           "자동 선택·바꾸기·미발견 직접 선택)/오류 대화상자·로그/진단 창/"
           "시작 로그 창/Excel 확인 안내 창/PDF 회차 경고/안내 띠·자동 업데이트 "
-          "토글/루틴 연동 서버(상태·쓰기·페이지·퀴즈 버튼·결과 문구)/파괴 정상")
+          "토글/루틴 연동 서버(상태·쓰기·페이지·퀴즈 버튼·결과 문구)/"
+          "게임형 상태 카드(티어·게이지·연속·도전 과제 창)/결과 연출"
+          "(승급·새 배지·합격선 게이지)/파괴 정상")
 
 
 def _notify_no_tk():
