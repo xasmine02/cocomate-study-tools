@@ -1,209 +1,209 @@
 {
- "cells": {
-  "계산작업!E3": {
-   "value": "B",
-   "formula": "=IF(D3>=LARGE($D$3:$D$12,2),\"A\",IF(D3<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
+  "cells": {
+    "계산작업!E3": {
+      "value": "B",
+      "formula": "=IF(D3>=LARGE($D$3:$D$12,2),\"A\",IF(D3<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
+    },
+    "계산작업!E4": {
+      "value": "A",
+      "formula": "=IF(D4>=LARGE($D$3:$D$12,2),\"A\",IF(D4<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
+    },
+    "계산작업!E5": {
+      "value": "B",
+      "formula": "=IF(D5>=LARGE($D$3:$D$12,2),\"A\",IF(D5<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
+    },
+    "계산작업!E6": {
+      "value": "B",
+      "formula": "=IF(D6>=LARGE($D$3:$D$12,2),\"A\",IF(D6<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
+    },
+    "계산작업!E7": {
+      "value": "A",
+      "formula": "=IF(D7>=LARGE($D$3:$D$12,2),\"A\",IF(D7<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
+    },
+    "계산작업!E8": {
+      "value": "C",
+      "formula": "=IF(D8>=LARGE($D$3:$D$12,2),\"A\",IF(D8<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
+    },
+    "계산작업!E9": {
+      "value": "B",
+      "formula": "=IF(D9>=LARGE($D$3:$D$12,2),\"A\",IF(D9<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
+    },
+    "계산작업!E10": {
+      "value": "B",
+      "formula": "=IF(D10>=LARGE($D$3:$D$12,2),\"A\",IF(D10<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
+    },
+    "계산작업!E11": {
+      "value": "B",
+      "formula": "=IF(D11>=LARGE($D$3:$D$12,2),\"A\",IF(D11<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
+    },
+    "계산작업!E12": {
+      "value": "C",
+      "formula": "=IF(D12>=LARGE($D$3:$D$12,2),\"A\",IF(D12<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
+    },
+    "계산작업!I3": {
+      "value": "여",
+      "formula": "=CHOOSE(MID(H3,8,1),\"남\",\"여\",\"남\",\"여\")"
+    },
+    "계산작업!I4": {
+      "value": "남",
+      "formula": "=CHOOSE(MID(H4,8,1),\"남\",\"여\",\"남\",\"여\")"
+    },
+    "계산작업!I5": {
+      "value": "여",
+      "formula": "=CHOOSE(MID(H5,8,1),\"남\",\"여\",\"남\",\"여\")"
+    },
+    "계산작업!I6": {
+      "value": "남",
+      "formula": "=CHOOSE(MID(H6,8,1),\"남\",\"여\",\"남\",\"여\")"
+    },
+    "계산작업!I7": {
+      "value": "여",
+      "formula": "=CHOOSE(MID(H7,8,1),\"남\",\"여\",\"남\",\"여\")"
+    },
+    "계산작업!I8": {
+      "value": "남",
+      "formula": "=CHOOSE(MID(H8,8,1),\"남\",\"여\",\"남\",\"여\")"
+    },
+    "계산작업!I9": {
+      "value": "여",
+      "formula": "=CHOOSE(MID(H9,8,1),\"남\",\"여\",\"남\",\"여\")"
+    },
+    "계산작업!I10": {
+      "value": "남",
+      "formula": "=CHOOSE(MID(H10,8,1),\"남\",\"여\",\"남\",\"여\")"
+    },
+    "계산작업!D16": {
+      "value": 30000,
+      "formula": "=HLOOKUP(MID(A16,2,1)*1,$B$25:$D$26,2,TRUE)"
+    },
+    "계산작업!D17": {
+      "value": 45000,
+      "formula": "=HLOOKUP(MID(A17,2,1)*1,$B$25:$D$26,2,TRUE)"
+    },
+    "계산작업!D18": {
+      "value": 60000,
+      "formula": "=HLOOKUP(MID(A18,2,1)*1,$B$25:$D$26,2,TRUE)"
+    },
+    "계산작업!D19": {
+      "value": 30000,
+      "formula": "=HLOOKUP(MID(A19,2,1)*1,$B$25:$D$26,2,TRUE)"
+    },
+    "계산작업!D20": {
+      "value": 60000,
+      "formula": "=HLOOKUP(MID(A20,2,1)*1,$B$25:$D$26,2,TRUE)"
+    },
+    "계산작업!D21": {
+      "value": 45000,
+      "formula": "=HLOOKUP(MID(A21,2,1)*1,$B$25:$D$26,2,TRUE)"
+    },
+    "계산작업!D22": {
+      "value": 45000,
+      "formula": "=HLOOKUP(MID(A22,2,1)*1,$B$25:$D$26,2,TRUE)"
+    },
+    "계산작업!D23": {
+      "value": 30000,
+      "formula": "=HLOOKUP(MID(A23,2,1)*1,$B$25:$D$26,2,TRUE)"
+    },
+    "계산작업!J23": {
+      "value": 84.67,
+      "formula": "=ROUND(DAVERAGE($G$13:$J$21,4,$H$13:$H$14),2)"
+    },
+    "계산작업!D40": {
+      "value": "3명",
+      "formula": "=COUNTIFS(D31:D38,\">800000\",C31:C38,\">=\"&AVERAGE(C31:C38))&\"명\""
+    },
+    "분석작업-1!D4": {
+      "value": 540000,
+      "formula": "=B4*C4"
+    },
+    "분석작업-1!D5": {
+      "value": 660000,
+      "formula": "=B5*C5"
+    },
+    "분석작업-1!D6": {
+      "value": 660000,
+      "formula": "=B6*C6"
+    },
+    "분석작업-1!D7": {
+      "value": 530000,
+      "formula": "=B7*C7"
+    },
+    "분석작업-1!D8": {
+      "value": 610000,
+      "formula": "=B8*C8"
+    },
+    "분석작업-1!D9": {
+      "value": 600000.0,
+      "formula": "=AVERAGE(D4:D8)"
+    },
+    "매크로작업!F4": {
+      "value": 1270,
+      "formula": "=SUM(B4:E4)"
+    },
+    "매크로작업!F5": {
+      "value": 1860,
+      "formula": "=SUM(B5:E5)"
+    },
+    "매크로작업!F6": {
+      "value": 1150,
+      "formula": "=SUM(B6:E6)"
+    },
+    "매크로작업!F7": {
+      "value": 730,
+      "formula": "=SUM(B7:E7)"
+    },
+    "매크로작업!F8": {
+      "value": 1400,
+      "formula": "=SUM(B8:E8)"
+    }
   },
-  "계산작업!E4": {
-   "value": "A",
-   "formula": "=IF(D4>=LARGE($D$3:$D$12,2),\"A\",IF(D4<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
+  "groups": {
+    "계산작업": [
+      [
+        "E3:E12"
+      ],
+      [
+        "I3:I10"
+      ],
+      [
+        "D16:D23"
+      ],
+      [
+        "J23"
+      ],
+      [
+        "D40"
+      ]
+    ]
   },
-  "계산작업!E5": {
-   "value": "B",
-   "formula": "=IF(D5>=LARGE($D$3:$D$12,2),\"A\",IF(D5<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
+  "points": {
+    "기본작업-1": 5,
+    "기본작업-2": 10,
+    "기본작업-3": 5,
+    "계산작업": 40,
+    "분석작업-1": 10,
+    "분석작업-2": 10,
+    "매크로작업": 10,
+    "차트작업": 10
   },
-  "계산작업!E6": {
-   "value": "B",
-   "formula": "=IF(D6>=LARGE($D$3:$D$12,2),\"A\",IF(D6<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
-  },
-  "계산작업!E7": {
-   "value": "A",
-   "formula": "=IF(D7>=LARGE($D$3:$D$12,2),\"A\",IF(D7<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
-  },
-  "계산작업!E8": {
-   "value": "C",
-   "formula": "=IF(D8>=LARGE($D$3:$D$12,2),\"A\",IF(D8<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
-  },
-  "계산작업!E9": {
-   "value": "B",
-   "formula": "=IF(D9>=LARGE($D$3:$D$12,2),\"A\",IF(D9<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
-  },
-  "계산작업!E10": {
-   "value": "B",
-   "formula": "=IF(D10>=LARGE($D$3:$D$12,2),\"A\",IF(D10<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
-  },
-  "계산작업!E11": {
-   "value": "B",
-   "formula": "=IF(D11>=LARGE($D$3:$D$12,2),\"A\",IF(D11<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
-  },
-  "계산작업!E12": {
-   "value": "C",
-   "formula": "=IF(D12>=LARGE($D$3:$D$12,2),\"A\",IF(D12<=SMALL($D$3:$D$12,2),\"C\",\"B\"))"
-  },
-  "계산작업!I3": {
-   "value": "여",
-   "formula": "=CHOOSE(MID(H3,8,1),\"남\",\"여\",\"남\",\"여\")"
-  },
-  "계산작업!I4": {
-   "value": "남",
-   "formula": "=CHOOSE(MID(H4,8,1),\"남\",\"여\",\"남\",\"여\")"
-  },
-  "계산작업!I5": {
-   "value": "여",
-   "formula": "=CHOOSE(MID(H5,8,1),\"남\",\"여\",\"남\",\"여\")"
-  },
-  "계산작업!I6": {
-   "value": "남",
-   "formula": "=CHOOSE(MID(H6,8,1),\"남\",\"여\",\"남\",\"여\")"
-  },
-  "계산작업!I7": {
-   "value": "여",
-   "formula": "=CHOOSE(MID(H7,8,1),\"남\",\"여\",\"남\",\"여\")"
-  },
-  "계산작업!I8": {
-   "value": "남",
-   "formula": "=CHOOSE(MID(H8,8,1),\"남\",\"여\",\"남\",\"여\")"
-  },
-  "계산작업!I9": {
-   "value": "여",
-   "formula": "=CHOOSE(MID(H9,8,1),\"남\",\"여\",\"남\",\"여\")"
-  },
-  "계산작업!I10": {
-   "value": "남",
-   "formula": "=CHOOSE(MID(H10,8,1),\"남\",\"여\",\"남\",\"여\")"
-  },
-  "계산작업!D16": {
-   "value": 30000,
-   "formula": "=HLOOKUP(MID(A16,2,1)*1,$B$25:$D$26,2,TRUE)"
-  },
-  "계산작업!D17": {
-   "value": 45000,
-   "formula": "=HLOOKUP(MID(A17,2,1)*1,$B$25:$D$26,2,TRUE)"
-  },
-  "계산작업!D18": {
-   "value": 60000,
-   "formula": "=HLOOKUP(MID(A18,2,1)*1,$B$25:$D$26,2,TRUE)"
-  },
-  "계산작업!D19": {
-   "value": 30000,
-   "formula": "=HLOOKUP(MID(A19,2,1)*1,$B$25:$D$26,2,TRUE)"
-  },
-  "계산작업!D20": {
-   "value": 60000,
-   "formula": "=HLOOKUP(MID(A20,2,1)*1,$B$25:$D$26,2,TRUE)"
-  },
-  "계산작업!D21": {
-   "value": 45000,
-   "formula": "=HLOOKUP(MID(A21,2,1)*1,$B$25:$D$26,2,TRUE)"
-  },
-  "계산작업!D22": {
-   "value": 45000,
-   "formula": "=HLOOKUP(MID(A22,2,1)*1,$B$25:$D$26,2,TRUE)"
-  },
-  "계산작업!D23": {
-   "value": 30000,
-   "formula": "=HLOOKUP(MID(A23,2,1)*1,$B$25:$D$26,2,TRUE)"
-  },
-  "계산작업!J23": {
-   "value": 84.67,
-   "formula": "=ROUND(DAVERAGE($G$13:$J$21,4,$H$13:$H$14),2)"
-  },
-  "계산작업!D40": {
-   "value": "3명",
-   "formula": "=COUNTIFS(D31:D38,\">800000\",C31:C38,\">=\"&AVERAGE(C31:C38))&\"명\""
-  },
-  "분석작업-1!D4": {
-   "value": 540000,
-   "formula": "=B4*C4"
-  },
-  "분석작업-1!D5": {
-   "value": 660000,
-   "formula": "=B5*C5"
-  },
-  "분석작업-1!D6": {
-   "value": 660000,
-   "formula": "=B6*C6"
-  },
-  "분석작업-1!D7": {
-   "value": 530000,
-   "formula": "=B7*C7"
-  },
-  "분석작업-1!D8": {
-   "value": 610000,
-   "formula": "=B8*C8"
-  },
-  "분석작업-1!D9": {
-   "value": 600000.0,
-   "formula": "=AVERAGE(D4:D8)"
-  },
-  "매크로작업!F4": {
-   "value": 1270,
-   "formula": "=SUM(B4:E4)"
-  },
-  "매크로작업!F5": {
-   "value": 1860,
-   "formula": "=SUM(B5:E5)"
-  },
-  "매크로작업!F6": {
-   "value": 1150,
-   "formula": "=SUM(B6:E6)"
-  },
-  "매크로작업!F7": {
-   "value": 730,
-   "formula": "=SUM(B7:E7)"
-  },
-  "매크로작업!F8": {
-   "value": 1400,
-   "formula": "=SUM(B8:E8)"
+  "format_checks": {
+    "기본작업-2": [
+      {
+        "no": 1,
+        "range": "1행",
+        "check": {
+          "row_height": 28
+        },
+        "지시": "1행 높이를 28로 지정"
+      },
+      {
+        "no": 2,
+        "range": "A열",
+        "check": {
+          "col_width": 12
+        },
+        "지시": "A열 너비를 12로 지정"
+      }
+    ]
   }
- },
- "groups": {
-  "계산작업": [
-   [
-    "E3:E12"
-   ],
-   [
-    "I3:I10"
-   ],
-   [
-    "D16:D23"
-   ],
-   [
-    "J23"
-   ],
-   [
-    "D40"
-   ]
-  ]
- },
- "points": {
-  "기본작업-1": 5,
-  "기본작업-2": 10,
-  "기본작업-3": 5,
-  "계산작업": 40,
-  "분석작업-1": 10,
-  "분석작업-2": 10,
-  "매크로작업": 10,
-  "차트작업": 10
- },
- "format_checks": {
-  "기본작업-2": [
-   {
-    "no": 1,
-    "range": "1행",
-    "check": {
-     "row_height": 28
-    },
-    "지시": "1행 높이를 28로 지정"
-   },
-   {
-    "no": 2,
-    "range": "A열",
-    "check": {
-     "col_width": 12
-    },
-    "지시": "A열 너비를 12로 지정"
-   }
-  ]
- }
 }

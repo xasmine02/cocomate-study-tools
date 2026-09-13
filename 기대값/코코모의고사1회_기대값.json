@@ -601,11 +601,11 @@
         "range": "A1:G1",
         "check": {
           "merge": "A1:G1",
-          "align": "center",
+          "align_h": "center",
           "font_name": "돋움",
           "font_size": 16,
           "bold": true,
-          "font_color_rgb": "0000FF"
+          "font_color_rgb": "0070C0"
         }
       },
       {
@@ -644,7 +644,7 @@
       "formula": "$F3>=AVERAGE($F$3:$F$12)",
       "format": {
         "bold": true,
-        "font_color_rgb": "0000FF"
+        "font_color_rgb": "0070C0"
       }
     },
     "매크로작업": [

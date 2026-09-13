@@ -6,9 +6,9 @@
 시작 화면에서 모의고사 세트를 고르고 [시험 시작]을 누르면
 문제 파일 사본이 Excel로 열리고 타이머가 시작됩니다.
 제출하면 grade.py로 자동 채점해 점수와 리포트를 보여 줍니다.
-오늘의 학습(적응형 일정 v5, 9/3 시작·시험 2회): 매일 모의고사 1세트 40분 완주
-→ 채점 → 오답노트 → 오답 재풀이. 기록.json 기준으로 매번 재계산해 밀린 날의
-세트를 자동 재배치하고, 시험 전날까지 전 세트 완주를 보장하도록 용량을 올립니다.
+오늘의 학습(적응형 일정 v6, 9/3 시작·시험 2회): 하루 1세트 40분 완주 → 채점
+까지가 오늘 클리어(오답노트·오답 재풀이·함수 퀴즈는 선택). 시험 모드는 하루
+1회만 시작할 수 있고, 목표는 70 → 80 → 90 → 100 단계로 올라갑니다.
 
 v2.2.1: Excel 실행 강화 — Windows에서 EXCEL.EXE를 직접 찾아 실행하고 5초 뒤
 프로세스를 확인해 안 떴으면 재열기 안내, 타이머 [풀이 파일 열기], 시작 로그
@@ -32,14 +32,21 @@ v2.4.0: 루틴 웹 연동 — 프로그램 안에 로컬 HTTP 서버(127.0.0.1:8
 [웹에서 퀴즈 풀기]. 채점 결과는 클립보드 복사 대신 루틴 페이지에 자동 반영.
 v2.4.1: 시험일 변경 9/17(목)·9/18(금) 이틀 연속 — 학습일 Day 1~14 = 9/3~9/16(마감
 9/16), 구간은 시험일 목록에서 도출(학습일 없는 구간은 건너뜀 → 단일 구간), 9/12
-복기일 개념 제거(시험 1 저녁 복기 메모·실수 노트는 시험일 안내), 재응시 목표
-사다리 70→75→80→85 는 재응시가 배정된 날짜 순으로 분배(같은 날 2세트는 같은
-목표), 남는 용량은 재응시로 채움. 고정 일정표·안내문·D-day·루틴 페이지 동기화.
+복기일 개념 제거(시험 1 저녁 복기 메모·실수 노트는 시험일 안내).
+v2.5.0: 루틴 간소화 — ① 하루 1세트(= 시험 모드 하루 1회 제한, 오늘 응시했으면
+[시험 시작] 잠금 + 자정까지 남은 시간 표시. 오답 재풀이·부분 연습은 제한 없음).
+주말 2세트·밀림 승격·용량 계산·전 세트 완주 보장·'선택' 강등 경고는 폐지하고
+"남은 응시 기회 N회"로 표시. ② 목표 사다리 70 → 80 → 90 → 100: 현재 목표는
+아직 달성하지 못한 가장 낮은 단계(전체 기록 최고점 기준, 100 달성이면 만점).
+③ 세트 선택 = 미응시 → 70점 미만(최고점 낮은 순) → 현재 목표 미달(최고점 낮은
+순) → 전부 목표 이상이면 그 날은 자유 복습(빈 슬롯). ④ 하루 클리어 = 완주 +
+채점(점수는 조건 아님), 오답노트·오답 재풀이·함수 퀴즈는 선택 단계. ⑤ 연동
+규약에 level·streak·attempts_left·today_locked 추가(스키마 호환).
 
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "2.4.1"
+__version__ = "2.5.0"
 
 import argparse
 import hashlib
@@ -105,25 +112,30 @@ def _ensure_records_home():
     except OSError:
         pass
 
+_LOG_LOCK = threading.RLock()    # 시작 로그 읽고-쓰기 (루틴 서버 스레드와 공유)
+
+
 def startup_log(message, path=None, keep=STARTUP_LOG_KEEP):
     """시작 로그 1줄 append (채점결과/시험장_시작로그.txt, 최근 keep줄 유지).
 
     프로그램 시작·세트 선택·사본 생성·Excel/PDF 실행·예외처럼 "무슨 일이
     있었는지"를 pythonw(콘솔 없음)에서도 남깁니다. 실패는 조용히 무시.
-    반환: 기록한 한 줄.
+    여러 스레드(루틴 서버 동시 요청)가 같이 써도 줄이 사라지지 않도록
+    읽기-쓰기 전체를 잠급니다. 반환: 기록한 한 줄.
     """
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{stamp}] {__version__} " + str(message).replace("\n", " | ")
     p = path or STARTUP_LOG_PATH
     try:
-        os.makedirs(os.path.dirname(p), exist_ok=True)
-        old = []
-        if os.path.isfile(p):
-            with open(p, encoding="utf-8", errors="replace") as f:
-                old = f.read().splitlines()
-        old.append(line)
-        with open(p, "w", encoding="utf-8") as f:
-            f.write("\n".join(old[-keep:]) + "\n")
+        with _LOG_LOCK:
+            os.makedirs(os.path.dirname(p), exist_ok=True)
+            old = []
+            if os.path.isfile(p):
+                with open(p, encoding="utf-8", errors="replace") as f:
+                    old = f.read().splitlines()
+            old.append(line)
+            with open(p, "w", encoding="utf-8") as f:
+                f.write("\n".join(old[-keep:]) + "\n")
     except Exception:
         pass
     return line
@@ -208,7 +220,7 @@ SET_CONFIG_PATH = os.path.join(BASE_DIR, "세트설정.json")
 EXPECTED_DIR_NAME = "기대값"      # 자동 배포되는 세트별 기대값 JSON 폴더
 
 # 루틴 웹 연동 서버 (v2.4.0, 규약: 문서/연동_API.md v2.4.1)
-ROUTINE_API_VERSION = "2.4.1"          # /api/state 의 version (규약 버전)
+ROUTINE_API_VERSION = "2.5.0"          # /api/state 의 version (규약 버전)
 ROUTINE_HTML_NAME = "루틴.html"        # 시험장 폴더의 루틴 페이지 파일
 ROUTINE_DATA_KEY = "시험장/루틴.html"   # version.json set_files 키 (자동 업데이트)
 ROUTINE_PORT_DEFAULT = 8765
@@ -1658,7 +1670,7 @@ def classify_grading_error(rc, text):
 # ---------------------------------------------------------------------------
 # 오늘의 학습 — 14일 루틴 일정 (웹 루틴과 동일: 2026-09-03 시작, 시험 2회)
 #   학습일 Day 1~14 = 9/3(목)~9/16(수), 시험 1 = 9/17(목), 시험 2 = 9/18(금).
-#   매일 모의고사 1세트 40분 완주 → 채점 → 오답노트 → 오답 재풀이
+#   하루 1세트 40분 완주 → 채점 (여기까지가 클리어) · 목표 70→80→90→100
 # ---------------------------------------------------------------------------
 
 ROUTINE_START = date(2026, 9, 3)                     # Day 1 (9/3 목)
@@ -1666,6 +1678,9 @@ EXAM_DATES = [date(2026, 9, 17), date(2026, 9, 18)]  # 시험 1 · 시험 2 (이
 EXAM_DATE = EXAM_DATES[0]                            # (구 코드 호환)
 ROUTINE_TAG = "2026-09"     # 기록.json 루틴 세대 표시 (구 루틴 기록과 구분)
 PROGRESS_NS = "r0903"       # 세트설정.json '_진행' 키 접두 (구 루틴 진행과 분리)
+
+GOAL_TIERS = [70, 80, 90, 100]   # 목표 사다리 (70=합격선, 그 위는 승급 목표)
+DAILY_CAP = 1                    # 하루 용량 1세트 = 시험 모드 하루 1회
 
 PLAN_EXAM1, PLAN_EXAM2, PLAN_AFTER = 15, 16, 17     # 시험 1 / 시험 2 / 이후
 PLAN_ORDER = ([0] + list(range(1, 15))
@@ -1677,28 +1692,27 @@ ROUTINE_PLAN = {
         "할일": "내일 9/3(목)부터 Day 1이 시작됩니다. 프로그램 실행·채점 "
                "흐름 확인, 모의고사 세트·문제지 PDF 준비, 루틴 웹페이지 "
                "즐겨찾기까지 오늘 마쳐 두세요."},
-    1: {"제목": "1차 완주", "종류": "모의", "세트": ["2024 상시 1회"],
-        "목표": None},
-    2: {"제목": "1차 완주", "종류": "모의", "세트": ["코코 1회"],
-        "목표": None},
-    3: {"제목": "1차 완주", "종류": "모의",
-        "세트": ["2024 A형", "2024 상시 2회"], "목표": None},
-    4: {"제목": "1차 완주", "종류": "모의", "세트": ["코코 2회", "2024 B형"],
-        "목표": None},
-    5: {"제목": "1차 완주", "종류": "모의", "세트": ["24 2급 상시"],
-        "목표": None},
-    6: {"제목": "1차 완주", "종류": "모의", "세트": ["컴활 2급 상시"],
-        "목표": None},
-    7: {"제목": "재도전", "종류": "모의", "세트": ["2026 1회"], "목표": 65},
-    # 9/10(목)~9/16(수): 재응시 사다리 70·70·75·75·80·80·85 (주말 9/12·13 2세트)
-    8: {"제목": "재응시", "종류": "모의", "세트": [AUTO], "목표": 70},
-    9: {"제목": "재응시", "종류": "모의", "세트": [AUTO], "목표": 70},
-    10: {"제목": "재응시", "종류": "모의", "세트": [AUTO, AUTO], "목표": 75},
-    11: {"제목": "재응시", "종류": "모의", "세트": [AUTO, AUTO], "목표": 75},
-    12: {"제목": "재응시", "종류": "모의", "세트": [AUTO], "목표": 80},
-    13: {"제목": "재응시", "종류": "모의", "세트": [AUTO], "목표": 80},
+    # 하루 1세트 · 목표는 현재 단계(기본 70). d01~d09 = 첫응시 우선순위 9세트,
+    # d10~d14 는 기록을 보고 자동 선택(미응시 → 70점 미만 → 목표 미달 순).
+    1: {"제목": "첫 응시", "종류": "모의", "세트": ["2024 상시 1회"],
+        "목표": 70},
+    2: {"제목": "첫 응시", "종류": "모의", "세트": ["코코 1회"], "목표": 70},
+    3: {"제목": "첫 응시", "종류": "모의", "세트": ["2024 A형"], "목표": 70},
+    4: {"제목": "첫 응시", "종류": "모의", "세트": ["2024 상시 2회"],
+        "목표": 70},
+    5: {"제목": "첫 응시", "종류": "모의", "세트": ["코코 2회"], "목표": 70},
+    6: {"제목": "첫 응시", "종류": "모의", "세트": ["2024 B형"], "목표": 70},
+    7: {"제목": "첫 응시", "종류": "모의", "세트": ["24 2급 상시"],
+        "목표": 70},
+    8: {"제목": "첫 응시", "종류": "모의", "세트": ["컴활 2급 상시"],
+        "목표": 70},
+    9: {"제목": "첫 응시", "종류": "모의", "세트": ["2026 1회"], "목표": 70},
+    10: {"제목": "재응시", "종류": "모의", "세트": [AUTO], "목표": 70},
+    11: {"제목": "재응시", "종류": "모의", "세트": [AUTO], "목표": 70},
+    12: {"제목": "재응시", "종류": "모의", "세트": [AUTO], "목표": 70},
+    13: {"제목": "재응시", "종류": "모의", "세트": [AUTO], "목표": 70},
     14: {"제목": "시험 전 최종", "종류": "모의", "세트": [AUTO],
-         "목표": 85, "특별": ["실수노트"]},
+         "목표": 70, "특별": ["실수노트"]},
     PLAN_EXAM1: {"제목": "시험 1", "종류": "안내",
                  "할일": "시험 1 당일(9/17 목). 수험표·신분증 확인, 고사장 "
                         "30분 전 도착. 저장은 Ctrl+S 수시로, 계산작업은 한 "
@@ -1725,7 +1739,7 @@ PREP_STEPS = [
     {"이름": "루틴 웹페이지 즐겨찾기", "형": "안내", "분": 5,
      "설명": "웹 루틴 페이지에서 실수 노트·함수 사전 위치를 확인하고 "
             "즐겨찾기에 추가하세요. 내일 9/3(목) Day 1: 2024 상시 1회 "
-            "40분 완주로 시작합니다."},
+            "40분 완주로 시작합니다 — 하루 1세트, 완주 + 채점이면 클리어."},
 ]
 
 
@@ -1772,6 +1786,118 @@ def dday_text(today=None):
     return " · ".join(parts)
 
 
+def scored_exam_records(records):
+    """점수가 있는 시험·수동 기록 (부분연습·오답재풀이·중단 응시 제외).
+
+    제출 없이 닫은 응시(점수 None)는 '응시'로 세지 않습니다 — 다시 응시 가능.
+    """
+    out = []
+    for r in records or []:
+        if r.get("mode") in ("부분연습", "오답재풀이"):
+            continue
+        if not isinstance(r.get("점수"), (int, float)):
+            continue
+        if _record_date(r) is None:
+            continue
+        out.append(r)
+    return out
+
+
+def best_total(records):
+    """전체 기록 최고점 (없으면 None)."""
+    scores = [r["점수"] for r in scored_exam_records(records)]
+    return max(scores) if scores else None
+
+
+def level_info(records):
+    """목표 사다리 상태 → {tier, current_goal, best_total, achieved, next_goal}.
+
+    현재 목표 = 아직 달성하지 못한 가장 낮은 단계(전체 기록 최고점 기준).
+    예: 최고점 72 → 70 달성, 현재 목표 80. 100 달성이면 tier "perfect".
+    """
+    best = best_total(records)
+    achieved = [t for t in GOAL_TIERS
+                if best is not None and best >= t]
+    perfect = GOAL_TIERS[-1] in achieved
+    goal = GOAL_TIERS[-1] if perfect \
+        else next(t for t in GOAL_TIERS if t not in achieved)
+    return {"tier": "perfect" if perfect else goal, "current_goal": goal,
+            "best_total": best, "achieved": achieved,
+            "next_goal": None if perfect else goal}
+
+
+def goal_label(goal):
+    """목표 표시 문구: '목표 70점(합격선)' · '목표 80점(승급)'."""
+    if not goal:
+        return ""
+    return f"목표 {int(goal)}점(" \
+        + ("합격선" if int(goal) == PASS_LINE else "승급") + ")"
+
+
+def attempt_dates(records):
+    """응시한 날짜 집합 (점수 있는 시험·수동 기록이 있는 날)."""
+    return {_record_date(r) for r in scored_exam_records(records)}
+
+
+def exam_locked_today(records, today=None):
+    """하루 1회 제한: 오늘 이미 (점수 있는) 응시 기록이 있으면 True."""
+    today = today or date.today()
+    return today in attempt_dates(records)
+
+
+def streak_info(records, today=None):
+    """연속 응시 → {current, best, today_done}.
+
+    current = 오늘(오늘 미응시면 어제)까지 이어진 연속 응시 일수,
+    best = 루틴 시작일부터 오늘까지 가장 길었던 연속 일수.
+    """
+    today = today or date.today()
+    days = {d for d in attempt_dates(records)
+            if d and ROUTINE_START <= d <= today and d not in EXAM_DATES}
+    today_done = today in days
+    cur = 0
+    d = today if today_done else today - timedelta(days=1)
+    while d in days:
+        cur += 1
+        d -= timedelta(days=1)
+    best = run = 0
+    d = ROUTINE_START
+    while d <= today:
+        run = run + 1 if d in days else 0
+        best = max(best, run)
+        d += timedelta(days=1)
+    return {"current": cur, "best": best, "today_done": today_done}
+
+
+DAILY_LOCK_TITLE = "오늘 응시 완료 · 다음 응시는 내일"
+
+
+def lock_remaining_text(now=None):
+    """자정까지 남은 시간 문구: '약 7시간 12분'."""
+    now = now or datetime.now()
+    nxt = datetime.combine(now.date() + timedelta(days=1),
+                           datetime.min.time())
+    secs = max(0, int((nxt - now).total_seconds()))
+    h, m = secs // 3600, (secs % 3600) // 60
+    if h and m:
+        return f"약 {h}시간 {m}분"
+    if h:
+        return f"약 {h}시간"
+    return f"약 {max(1, m)}분"
+
+
+def daily_lock_message(now=None):
+    """하루 1회 제한 안내문."""
+    return (f"{DAILY_LOCK_TITLE}\n\n하루 1세트 루틴입니다 — 자정까지 "
+            f"{lock_remaining_text(now)} 남았습니다.\n오답노트 모드·오답 "
+            "재풀이·부분 연습은 지금도 할 수 있습니다.")
+
+
+def mandatory_step_indexes(steps):
+    """클리어에 필요한 필수 스텝 번호 (선택 표시가 없는 스텝)."""
+    return [i for i, s in enumerate(steps or []) if not s.get("선택")]
+
+
 def plan_slot_names(plan):
     """세트 슬롯 표시명 목록 (자동 슬롯은 '자동 선택')."""
     return [spec if spec != AUTO else "자동 선택"
@@ -1779,10 +1905,12 @@ def plan_slot_names(plan):
 
 
 def build_day_steps(plan, slot_names=None):
-    """일정 -> 스텝 시퀀스 (공통 템플릿, 세트 슬롯마다 ①~④ 반복).
+    """일정 -> 스텝 시퀀스 (세트 슬롯마다 필수 ①② + 선택 ③④).
 
-    ① 시험 모드 40분 완주 ② 채점·성적 복사(자동 체크) ③ 오답노트 모드
-    ④ 오답 재풀이 15분 → (특별: 마감일) 실수 노트 → ⑤ (선택) 함수 퀴즈.
+    ① 시험 모드 40분 완주 ② 채점·성적 확인 — 여기까지가 '오늘 클리어'.
+    ③ (선택) 오답노트 확인 ④ (선택) 오답 재풀이 15분
+    → (특별: 마감일) (선택) 실수 노트 → (선택) 함수 퀴즈.
+    점수는 클리어 조건이 아닙니다 (낮으면 그 세트가 이후 날짜에 다시 배정됨).
     """
     no = plan.get("no", 0)
     if plan.get("종류") != "모의":
@@ -1796,7 +1924,7 @@ def build_day_steps(plan, slot_names=None):
     for k, spec in enumerate(slots):
         name = names[k] if k < len(names) else "자동 선택"
         goal = goals[k]
-        g_txt = f" (목표 {goal}점)" if goal else ""
+        g_txt = f" ({goal_label(goal)})" if goal else ""
         n_txt = f" ({k + 1}/{len(slots)})" if len(slots) > 1 else ""
         auto_txt = (" 자동 선택된 세트는 창 위쪽에 이유와 함께 표시되며 "
                     "[다른 세트로 바꾸기]로 바꿀 수 있습니다."
@@ -1805,27 +1933,31 @@ def build_day_steps(plan, slot_names=None):
             {"이름": f"{name} 시험 모드 40분 완주{n_txt}", "형": "모의",
              "세트": spec, "슬롯": k, "목표": goal, "분": 40,
              "설명": f"{name} 40분 실전 완주{g_txt}. 제출하면 자동 채점되고 "
-                    "이 단계와 다음 '채점·성적 복사' 단계가 자동으로 "
-                    "체크됩니다." + auto_txt},
-            {"이름": f"채점·성적 복사{n_txt}", "형": "채점", "세트": spec,
+                    "이 단계와 다음 '채점·성적 확인' 단계가 자동으로 "
+                    "체크됩니다. 시험 모드는 하루 1회입니다." + auto_txt},
+            {"이름": f"채점·성적 확인{n_txt}", "형": "채점", "세트": spec,
              "슬롯": k, "분": 5,
              "설명": "채점이 끝나면 자동 체크되고, 결과는 루틴 페이지"
-                    "([루틴 열기])에 자동으로 반영됩니다. 성적 JSON은 "
-                    "클립보드에도 복사됩니다(아티팩트 페이지용)."},
-            {"이름": f"오답노트 모드{n_txt}", "형": "오답노트", "세트": spec,
-             "슬롯": k, "분": 15,
-             "설명": "틀린 항목의 해설을 하나씩 읽고 '이해했음'을 체크하세요. "
-                    "이전 풀이 사본이 함께 열립니다."},
-            {"이름": f"오답 재풀이 15분{n_txt}", "형": "오답재풀이",
-             "세트": spec, "슬롯": k, "분": 15,
-             "설명": "오답이 있던 시트만 새 사본(오답재풀이_*.xlsm)에서 15분 "
-                    "안에 다시 풀고 제출하세요. 그 시트들만 채점됩니다."},
+                    "([루틴 열기])에 자동으로 반영됩니다. 여기까지 하면 오늘은 "
+                    "클리어입니다 — 점수는 클리어 조건이 아닙니다(낮으면 그 "
+                    "세트가 이후 날짜에 자동으로 다시 배정됩니다)."},
+            {"이름": f"(선택) 오답노트 확인{n_txt}", "형": "오답노트",
+             "세트": spec, "슬롯": k, "분": 15, "선택": True,
+             "설명": "(선택) 틀린 항목의 해설을 훑어보는 도구입니다. 채점 "
+                    "리포트에서 이미 확인했다면 건너뛰어도 됩니다 — 클리어 "
+                    "조건이 아닙니다."},
+            {"이름": f"(선택) 오답 재풀이 15분{n_txt}", "형": "오답재풀이",
+             "세트": spec, "슬롯": k, "분": 15, "선택": True,
+             "설명": "(선택) 오답이 있던 시트만 새 사본(오답재풀이_*.xlsm)에서 "
+                    "다시 풀어 보는 도구입니다. 시간이 남을 때만 하세요 — "
+                    "클리어 조건이 아닙니다."},
         ])
     if "실수노트" in (plan.get("특별") or []):
-        steps.append({"이름": "실수 노트 정리", "형": "안내", "분": 10,
-                      "설명": "오늘까지의 오답에서 반복된 실수를 웹 루틴 실수 "
-                             "노트에 정리하세요. 내일 1차·모레 2차 시험장에서 "
-                             "볼 마지막 체크리스트입니다."})
+        steps.append({"이름": "(선택) 실수 노트 정리", "형": "안내", "분": 10,
+                      "선택": True,
+                      "설명": "(선택) 오늘까지의 오답에서 반복된 실수를 웹 루틴 "
+                             "실수 노트에 정리하세요. 내일 1차·모레 2차 "
+                             "시험장에서 볼 마지막 체크리스트입니다."})
     steps.append({"이름": "(선택) 함수 퀴즈", "형": "안내", "분": 10,
                   "선택": True, "웹탭": "quiz",
                   "설명": "(선택) 루틴 페이지 함수 퀴즈 10문제 — 오늘 틀린 "
@@ -1837,10 +1969,10 @@ def build_day_steps(plan, slot_names=None):
 
 def _default_todo(plan):
     names = plan_slot_names(plan)
-    txt = ("모의고사 " + " + ".join(names) + " 40분 완주 → 채점 → 오답노트 "
-           "→ 오답 재풀이 15분")
-    if len(names) > 1:
-        txt += f" (오늘은 {len(names)}세트)"
+    txt = "모의고사 " + " + ".join(names) + " 40분 완주 → 채점"
+    if plan.get("목표"):
+        txt += " · " + goal_label(plan["목표"])
+    txt += " (오답노트·오답 재풀이·함수 퀴즈는 선택)"
     if plan.get("메모"):
         txt += f"  [{plan['메모']}]"
     return txt
@@ -1881,8 +2013,8 @@ def plan_title(plan, today=None, set_names=None):
         if plan.get("적응형"):
             body = f"{plan['제목']}: {' + '.join(names)}" if names \
                 else plan["제목"]
-            if plan.get("남은세트") is not None and plan.get("종류") == "모의":
-                body += f" · 남은 세트 {plan['남은세트']}"
+            if plan.get("기회") is not None and plan.get("종류") == "모의":
+                body += f" · 남은 응시 기회 {plan['기회']}회"
         else:
             body = f"{plan['제목']} — {' + '.join(names)}" if names \
                 else plan["제목"]
@@ -2011,7 +2143,7 @@ def all_slot_specs():
         for spec in ROUTINE_PLAN[no].get("세트") or []:
             if spec != AUTO and spec not in specs:
                 specs.append(spec)
-    for spec in list(PRIORITY_SPECS) + [REDO_SPEC]:
+    for spec in list(PRIORITY_SPECS):
         if spec not in specs:
             specs.append(spec)
     return specs
@@ -2505,9 +2637,15 @@ def retry_payload_for_set(s, minutes=15, json_path=None):
 
 
 # ---------------------------------------------------------------------------
-# 적응형 일정 엔진 v5 — 기록(기록.json) 기준으로 매번 재계산 (웹 루틴과 동일 규격)
-#   전날·그전날 못 한 세트는 자동으로 풀에 남아 오늘 이후로 재배치되고,
-#   시험 전날(구간 마감)까지 전 세트 완주를 보장하도록 용량을 올린다.
+# 적응형 일정 엔진 v6 — 기록(기록.json) 기준으로 매번 재계산 (웹 루틴과 동일 규격)
+#   · 하루 용량은 언제나 1세트(= 시험 모드 하루 1회). 주말 2세트·밀림 승격·
+#     용량 확장·전 세트 완주 보장·'선택' 강등은 없다. 못 한 날은 그냥 지나가고
+#     남은 학습일 = 남은 응시 기회로만 표시한다(경고 아님).
+#   · 목표는 사다리 70 → 80 → 90 → 100. 현재 목표 = 아직 달성하지 못한 가장
+#     낮은 단계(전체 기록 최고점 기준). 100 달성이면 만점(tier "perfect").
+#   · 세트 선택 ① 미응시(우선순위 순) ② 70점 미만(최고점 낮은 순, kind retry)
+#     ③ 현재 목표 미달(최고점 낮은 순, kind goal) ④ 전부 현재 목표 이상이면
+#     그 날은 비워 둔다(자유 복습 — 필수 과제 없음).
 #   구간은 시험일 목록에서 도출: 이전 시험일 다음 날 ~ 다음 시험일 전날,
 #   학습일이 하나도 없는 구간(9/18 앞)은 건너뛰므로 이 일정은 단일 구간(9/3~9/16).
 # ---------------------------------------------------------------------------
@@ -2515,12 +2653,6 @@ def retry_payload_for_set(s, minutes=15, json_path=None):
 PRIORITY_SPECS = ["2024 상시 1회", "코코 1회", "2024 A형", "2024 상시 2회",
                   "코코 2회", "2024 B형", "24 2급 상시", "컴활 2급 상시",
                   "2026 1회"]          # 첫응시 고정 우선순위 (그 외 신규는 이름순)
-REDO_SPEC = "2026 1회"                # 필수 재도전 (루틴 중 미응시면)
-REDO_GOAL = 65
-RETRY_MIN = 2                         # 재응시 최소(재도전 포함) — 부족하면 평일 승격
-RETRY_MIN_SEG1 = RETRY_MIN            # (구 이름 호환)
-RETRY_GOALS = [70, 75, 80, 85]        # 재응시 목표 사다리 (배정된 날짜 순으로 분배)
-WEEKEND_CAP, WEEKDAY_CAP = 2, 1
 
 
 def study_segments():
@@ -2556,10 +2688,8 @@ def segment_for(today):
 
 
 def base_capacity(d, seg_end):
-    """기본 용량: 주말 2 / 평일 1 / 마감일(시험 전날) 1(+실수노트)."""
-    if d == seg_end:
-        return 1
-    return WEEKEND_CAP if d.weekday() >= 5 else WEEKDAY_CAP
+    """기본 용량: 언제나 1세트 (하루 1회 응시). 마감일도 1(+실수 노트)."""
+    return DAILY_CAP
 
 
 def exam_records_by_set(sets, records):
@@ -2605,207 +2735,117 @@ def _slot(kind, s, goal=None, why="", spec=None):
 def build_adaptive_plan(today, records, sets):
     """적응형 일정 계산 (결정적: 같은 입력이면 같은 출력).
 
-    반환 dict: kind, seg, start, end, days{날짜: [슬롯...]}, boost_days,
-    demoted, missed_days, reason, remaining, warning, retry_target.
-    슬롯: {kind: first|redo|retry, set, name, goal, auto, why, spec}
+    반환 dict: kind, seg, start, end, days{날짜: [슬롯...]}, free{날짜: 빈 슬롯},
+    level, streak, attempts_left, today_locked, passed_sets, total_sets,
+    all_clear, missed_days, reason, remaining.
+    슬롯: {kind: first|retry|goal, set, name, goal, auto, why, spec}
+    (boost_days·demoted·warning·retry_target 은 폐지 — 규약 호환용 빈 값)
     """
     seg = segment_for(today)
-    plan = {"today": today, "kind": seg["kind"], "days": {}, "boost_days": [],
-            "demoted": [], "missed_days": [], "reason": "", "remaining": 0,
-            "warning": None, "retry_target": 0, "seg": seg.get("seg")}
+    lv = level_info(records)
+    plan = {"today": today, "kind": seg["kind"], "days": {}, "free": {},
+            "boost_days": [], "demoted": [], "missed_days": [], "reason": "",
+            "remaining": 0, "warning": None, "retry_target": 0,
+            "seg": seg.get("seg"), "level": lv,
+            "streak": streak_info(records, today), "attempts_left": 0,
+            "today_locked": False, "passed_sets": 0,
+            "total_sets": len(sets or []), "all_clear": False,
+            "retry_queue": []}
     if seg["kind"] != "study":
         plan.update(seg)
         return plan
     start, end, seg_start = seg["start"], seg["end"], seg["seg_start"]
     plan.update({"start": start, "end": end, "seg_start": seg_start})
     by_set = exam_records_by_set(sets, records)
-    recs_all = [r for r in records
-                if r.get("mode") not in ("부분연습", "오답재풀이")
-                and _record_date(r)]
-    done_today = len([r for r in recs_all if _record_date(r) == today])
+    recs_all = scored_exam_records(records)
     by_date = {}
     for r in recs_all:
         by_date.setdefault(_record_date(r), []).append(r)
     plan["_recs_by_date"] = by_date
+    plan["today_locked"] = today in by_date        # 오늘 이미 응시 → 잠금
 
-    # 학습일·기본 용량 (승격 후보 = 평일, 이른 날부터 → 마감일은 최후)
+    # 학습일 · 용량 (하루 1세트, 오늘 이미 응시했으면 0)
     days = []
     d = start
     while d <= end:
         if d not in EXAM_DATES:
             days.append(d)
         d += timedelta(days=1)
-    cap = {dd: base_capacity(dd, end) for dd in days}
-    if today in cap:
-        cap[today] = max(0, cap[today] - done_today)
-    boostable = [dd for dd in days
-                 if dd.weekday() < 5 and not (dd == today and done_today >= 2)]
+    cap = {dd: DAILY_CAP for dd in days}
+    if today in cap and plan["today_locked"]:
+        cap[today] = 0
+    plan["attempts_left"] = sum(cap.values())      # 남은 응시 기회
 
-    # 풀
+    # 풀 — ① 미응시(우선순위) ② 70점 미만 ③ 현재 목표 미달
+    goal = lv["current_goal"]
     ordered = prioritized_sets(sets)
     first_pool = [(s, lab) for s, lab in ordered if not by_set.get(s["norm"])]
-    redo_set = None
-    rs, _how = match_slot(sets, REDO_SPEC)
-    if rs and by_set.get(rs["norm"]) and not any(
-            _record_date(r) >= ROUTINE_START for r in by_set[rs["norm"]]):
-        redo_set = rs                           # 루틴 전 기록만 있음 → 재도전 필수
-    mandatory = []
-    for s, lab in first_pool:
-        goal = REDO_GOAL if lab == REDO_SPEC else None
-        sl = _slot("first", s, goal, f"첫 응시 · 우선순위 {lab}", spec=s["name"])
-        sl["counts_as_retry"] = (lab == REDO_SPEC)   # 2026 1회는 재도전 몫
-        mandatory.append(sl)
-        if redo_set is not None and lab == REDO_SPEC:
-            redo_set = None
-    if redo_set is not None:
-        pos = len(mandatory)
-        for i, sl in enumerate(mandatory):
-            if sl["why"].endswith("신규"):
-                pos = i
-                break
-        redo_slot = _slot("redo", redo_set, REDO_GOAL,
-                          "2026 1회 재도전 (루틴 중 미응시)",
-                          spec=redo_set["name"])
-        redo_slot["counts_as_retry"] = True
-        mandatory.insert(pos, redo_slot)
-    attempted = [(s, lab) for s, lab in ordered if by_set.get(s["norm"])]
+    attempted = [s for s, _lab in ordered if by_set.get(s["norm"])]
+    bests = {s["norm"]: _best(by_set[s["norm"]]) for s in attempted}
 
-    def recent(s):
-        last = max(_record_date(r) for r in by_set[s["norm"]])
-        return (today - last).days < 2
+    def _b(s):
+        b = bests.get(s["norm"])
+        return b if b is not None else -1
 
-    def retry_key(s):
-        b = _best(by_set[s["norm"]])
-        return (b if b is not None else -1, s["name"])
+    def _key(s):
+        return (_b(s), s["name"])
 
-    def retried_in_routine(s):
-        """루틴 중 재응시(첫 기록 이후의 기록이 구간 안) 여부."""
-        return any(_record_date(r) >= seg_start and i > 0
-                   for i, r in enumerate(by_set[s["norm"]]))
+    plan["passed_sets"] = len([s for s in attempted if _b(s) >= PASS_LINE])
+    below_pass = sorted((s for s in attempted if _b(s) < PASS_LINE), key=_key)
+    below_goal = sorted((s for s in attempted
+                         if PASS_LINE <= _b(s) < goal), key=_key)
+    retry_pool = [("retry", s) for s in below_pass] \
+        + [("goal", s) for s in below_goal]
+    # 전 세트가 현재 목표 이상 (세트가 있을 때만 의미 있음)
+    plan["all_clear"] = bool(sets) and not first_pool and not retry_pool
+    # 재응시 후보 대기줄 (앞이 1순위) — 표시·테스트용
+    plan["retry_queue"] = [{"kind": k, "name": s["name"],
+                            "norm": s.get("norm") or "",
+                            "best": bests.get(s["norm"])}
+                           for k, s in retry_pool]
 
-    # 재응시 풀: 아직 재응시 안 한 세트 먼저, 각 그룹은 최고점 오름차순(동점 이름순),
-    # 오늘·어제 응시한 세트는 그룹 뒤로
-    groups = ([s for s, _l in attempted if not retried_in_routine(s)],
-              [s for s, _l in attempted if retried_in_routine(s)])
-    retry_pool = []
-    for g in groups:
-        retry_pool.extend(sorted((s for s in g if not recent(s)), key=retry_key))
-        retry_pool.extend(sorted((s for s in g if recent(s)), key=retry_key))
-    retries_done = 0
-    redo_norm = rs["norm"] if rs else None
-    for s, _l in attempted:
-        recs = by_set[s["norm"]]
-        if s["norm"] == redo_norm:              # 2026 1회: 루틴 중 응시 = 재도전 완료
-            if any(_record_date(r) >= seg_start for r in recs):
-                retries_done += 1
-            continue
-        for i, r in enumerate(recs):
-            if _record_date(r) >= seg_start and i > 0:
-                retries_done += 1
-
-    # 필요량(첫응시 전부 + 재도전 + 재응시 최소) vs 용량 — 단계적 확장/축소
-    #   ① 평일 승격(이른 날부터, 마감일 최후) ② 재응시 최소 축소(최소 1)
-    #   ③ 첫응시 뒤에서부터 '선택' 강등
-    retry_target = RETRY_MIN
-    demoted = []
-    boost_days = []
-    while True:
-        redo_in = any(sl.get("counts_as_retry") for sl in mandatory)
-        extra = max(0, retry_target - retries_done - (1 if redo_in else 0))
-        required = len(mandatory) + extra
-        total_cap = sum(cap.values())
-        if required <= total_cap:
-            break
-        nxt = next((dd for dd in boostable if dd not in boost_days), None)
-        if nxt is not None:                       # ① 평일 용량 2로
-            boost_days.append(nxt)
-            cap[nxt] += 1
-            continue
-        if retry_target > 1:                      # ② 재응시 축소 (최소 1)
-            retry_target -= 1
-            continue
-        if mandatory:                             # ③ 첫응시 뒤에서부터 강등
-            sl = mandatory.pop()
-            demoted.append(sl)
-            continue
-        break
-    plan["retry_target"] = retry_target
-
-    # 배정 1: 첫응시·재도전(우선순위 순)을 가장 이른 슬롯부터, 하루 안 중복 없음
-    queue = list(mandatory)
+    queue = [_slot("first", s, goal, f"첫 응시 · 우선순위 {lab}",
+                   spec=s["name"]) for s, lab in first_pool]
     per_day = {dd: [] for dd in days}
-    for dd in days:
-        while len(per_day[dd]) < cap[dd] and queue:
-            pick = None
-            for i, sl in enumerate(queue):      # 같은 날 같은 세트 금지
-                if all(x["set"]["norm"] != sl["set"]["norm"] for x in per_day[dd]):
-                    pick = queue.pop(i)
-                    break
-            if pick is None:
-                break
-            per_day[dd].append(dict(pick, date=dd))
-    for sl in queue:                            # 배정 못 한 필수 슬롯은 강등 처리
-        demoted.append(sl)
-    for sl in demoted:
-        sl["kind"] = "optional"
-
-    # 배정 2: 남는 용량은 전부 재응시 — 풀을 순환(최고점 낮은 세트부터), 같은 날
-    # 이미 있는 세트는 건너뛰고 풀이 비었거나 전부 겹치면 '자동 선택'(당일 기록 기준)
-    def _retry_slot(s):
-        why = ("재응시 · 최고점 " + (f"{_best(by_set[s['norm']]):g}점"
-                                  if _best(by_set[s["norm"]]) is not None
-                                  else "점수 없음")) if s else "재응시 · 자동 선택"
-        return _slot("retry", s, None, why)
-
     cursor = 0
     for dd in days:
         while len(per_day[dd]) < cap[dd]:
-            s = None
+            if queue:
+                per_day[dd].append(dict(queue.pop(0), date=dd))
+                continue
+            pick = None
             for _try in range(len(retry_pool)):
                 cand = retry_pool[cursor % len(retry_pool)]
                 cursor += 1
-                if all(x["set"] is None or x["set"]["norm"] != cand["norm"]
-                       for x in per_day[dd]):
-                    s = cand
+                if all(x["set"]["norm"] != cand[1]["norm"]
+                       for x in per_day[dd]):      # 같은 날 같은 세트 금지
+                    pick = cand
                     break
-            per_day[dd].append(dict(_retry_slot(s), date=dd))
-    # 재응시 목표 사다리 70→75→80→85: 재응시가 배정된 날짜 순으로 4단계 분배
-    # (같은 날 2세트는 같은 목표). 예: 7일이면 70·70·75·75·80·80·85.
-    retry_days = [dd for dd in days
-                  if any(sl["kind"] == "retry" for sl in per_day[dd])]
-    for rank, dd in enumerate(retry_days):
-        level = min(len(RETRY_GOALS) - 1,
-                    (rank * len(RETRY_GOALS)) // max(1, len(retry_days)))
-        for sl in per_day[dd]:
-            if sl["kind"] == "retry":
-                sl["goal"] = RETRY_GOALS[level]
+            if pick is None:                       # 배정할 세트 없음 → 자유 복습
+                break
+            kind, s = pick
+            b = bests.get(s["norm"])
+            b_txt = f"{b:g}점" if b is not None else "점수 없음"
+            why = (f"재응시 · 최고점 {b_txt} (합격선 {PASS_LINE} 미달)"
+                   if kind == "retry"
+                   else f"목표 {goal}점 도전 · 최고점 {b_txt}")
+            per_day[dd].append(dict(_slot(kind, s, goal, why), date=dd))
+        plan["free"][dd] = max(0, cap[dd] - len(per_day[dd]))
     plan["days"] = {dd: per_day[dd] for dd in days}
-    plan["boost_days"] = boost_days
-    plan["demoted"] = [sl["name"] for sl in demoted]
     plan["remaining"] = sum(len(v) for v in per_day.values())
 
-    # 재배치 사유
+    # 응시 없이 지나간 날 (표시용 — 경고·재배치 아님)
     missed = []
     dd = seg_start
     while dd < min(today, end + timedelta(days=1)):
-        if dd not in EXAM_DATES and not any(
-                _record_date(r) == dd for r in recs_all):
+        if dd not in EXAM_DATES and dd not in by_date:
             missed.append(dd)
         dd += timedelta(days=1)
     plan["missed_days"] = missed
-    n_days = len([dd for dd in days if cap[dd] > 0])
-    reason = ""
-    if missed or boost_days or demoted:
-        if missed:
-            reason = "·".join(f"{m.month}/{m.day}" for m in missed) + " 미완주 → "
-        reason += f"남은 세트 {plan['remaining']}개를 {n_days}일에 재배치"
-        if boost_days:
-            reason += "(평일도 2세트)"
-    plan["reason"] = reason
-    if demoted:
-        plan["warning"] = (f"용량 부족: {len(demoted)}세트는 '선택'으로 강등 — "
-                           + ", ".join(plan["demoted"])
-                           + " (남는 시간에 추가 응시하세요)")
+    left = plan["attempts_left"]
+    plan["reason"] = (f"만점 달성 · 남은 응시 기회 {left}회"
+                      if lv["tier"] == "perfect"
+                      else f"현재 목표 {goal}점 · 남은 응시 기회 {left}회")
     return plan
 
 
@@ -2821,9 +2861,12 @@ def adaptive_day_plan(adaptive, no):
     if d is None or not (1 <= base["no"] <= 14):
         return base
     today = adaptive["today"]
+    lv = adaptive.get("level") or level_info([])
     plan = dict(base)
     plan["적응형"] = True
     plan["특별"] = []
+    plan["레벨"] = lv
+    plan["기회"] = adaptive.get("attempts_left", 0)
     if d < adaptive["start"]:                          # 지난 날: 기록 요약
         recs = adaptive.get("_recs_by_date", {}).get(d, [])
         plan.update({"종류": "지난", "세트": [], "세트객체": [], "스텝": [],
@@ -2833,11 +2876,12 @@ def adaptive_day_plan(adaptive, no):
             plan["세트표시"] = [f"{r.get('세트명', '?')}"
                             + (f"({r['점수']}점)" if r.get("점수") is not None
                                else "") for r in recs]
-            plan["할일"] = "완주한 날입니다."
+            plan["할일"] = "응시하고 채점까지 끝낸 날입니다 (클리어)."
         else:
-            plan["제목"] = "미완주"
+            plan["제목"] = "응시 없음"
             plan["세트표시"] = []
-            plan["할일"] = "이 날 완주 기록이 없어 남은 세트를 오늘 이후로 재배치했습니다."
+            plan["할일"] = ("이 날은 응시 기록이 없습니다 — 하루 1세트 "
+                          "루틴이라 지난 기회는 되돌리지 않습니다 (경고 아님).")
         return plan
     if d not in adaptive["days"]:                      # 다음 구간 등 범위 밖
         plan.update({"종류": "안내", "세트": [], "세트객체": [], "스텝": [],
@@ -2849,7 +2893,7 @@ def adaptive_day_plan(adaptive, no):
     plan["세트객체"] = [sl["set"] for sl in slots]
     plan["슬롯사유"] = [sl["why"] for sl in slots]
     plan["목표들"] = [sl["goal"] for sl in slots]
-    plan["목표"] = next((g for g in plan["목표들"] if g), None)
+    plan["목표"] = lv["current_goal"]
     plan["종류"] = "모의"
     plan["제목"] = "오늘" if d == today else "예정"
     plan["남은세트"] = adaptive["remaining"]
@@ -2857,27 +2901,43 @@ def adaptive_day_plan(adaptive, no):
         plan["특별"].append("실수노트")
     if d == today:
         plan["사유"] = adaptive.get("reason") or ""
-        plan["경고"] = adaptive.get("warning")
+        plan["경고"] = None
+        plan["잠금"] = bool(adaptive.get("today_locked"))
+        recs = adaptive.get("_recs_by_date", {}).get(d, [])
+        low = [r for r in recs
+               if isinstance(r.get("점수"), (int, float))
+               and r["점수"] < PASS_LINE]
+        if low:                            # 합격선 미달일 때만 안내 (강제 없음)
+            plan["안내"] = (f"오늘 점수가 합격선 {PASS_LINE}점에 못 미쳤어요 — "
+                          "리포트에서 틀린 부분만 확인해 두면 됩니다 (체크는 "
+                          "필수 아님). 이 세트는 이후 날짜에 다시 배정됩니다.")
     names = [sl["name"] for sl in slots]
     if not slots:
-        plan["제목"] = "오늘 완료" if d == today else "예정 없음"
-        plan["할일"] = ("오늘 몫을 완주했습니다 — 오답노트 모드로 복습하거나 "
-                      "쉬세요." if d == today else
-                      "이 날은 배정된 세트가 없습니다 (여유일).")
+        if d == today and adaptive.get("today_locked"):
+            plan["제목"] = "오늘 응시 완료"
+            plan["할일"] = ("오늘 몫(1세트)을 마쳤습니다 — 다음 응시는 내일. "
+                          "남는 시간엔 오답노트·실수 노트·함수 퀴즈(선택).")
+        elif adaptive.get("all_clear"):
+            plan["제목"] = "전 세트 목표 달성"
+            plan["할일"] = (f"전 세트가 현재 목표 {lv['current_goal']}점을 "
+                          "넘었습니다 — 자유 복습. 필수 과제 없음 — 남는 "
+                          "시간엔 실수 노트·함수 퀴즈.")
+        else:
+            plan["제목"] = "자유 복습"
+            plan["할일"] = ("필수 과제 없음 — 남는 시간엔 실수 노트·함수 "
+                          "퀴즈.")
         plan["스텝"] = []
         return plan
-    goal_txt = " ".join(f"[{n} 목표 {g}점]" for n, g in zip(names, plan["목표들"])
-                        if g)
-    plan["할일"] = ("모의고사 " + " + ".join(names)
-                  + " 40분 완주 → 채점 → 오답노트 → 오답 재풀이 15분"
-                  + (f" (오늘은 {len(names)}세트)" if len(names) > 1 else "")
-                  + (" " + goal_txt if goal_txt else ""))
+    plan["할일"] = ("모의고사 " + " + ".join(names) + " 40분 완주 → 채점 · "
+                  + goal_label(plan["목표"])
+                  + " (오답노트·오답 재풀이·함수 퀴즈는 선택)")
     plan["스텝"] = build_day_steps(plan, names)
     return plan
 
 
-STEP_DONE_MESSAGE = ("오늘 완료! 채점 결과는 루틴 페이지([루틴 열기])에 "
-                     "자동 반영되어 있습니다.")
+STEP_DONE_MESSAGE = ("오늘 클리어! 완주 + 채점까지 끝났습니다 — 오답노트·오답 "
+                     "재풀이·함수 퀴즈는 선택입니다. 채점 결과는 루틴 페이지"
+                     "([루틴 열기])에 자동 반영되어 있습니다.")
 
 
 def sheet_names_of(path):
@@ -4038,10 +4098,14 @@ def _seg_end_for(d):
 
 
 def serialize_slot(sl, by_set):
-    """엔진 슬롯 → {kind, set{name,norm,pdf}|null, goal, why, best, counts_as_retry}."""
+    """엔진 슬롯 → {kind, set{name,norm,pdf}|null, goal, why, best, counts_as_retry}.
+
+    kind: first(첫 응시) · retry(합격선 70 미달 재응시) · goal(현재 목표 도전).
+    redo 는 2.5.0에서 쓰지 않지만 값으로는 허용합니다(구 규약 호환).
+    """
     s = sl.get("set")
     kind = sl.get("kind") or "first"
-    if kind not in ("first", "redo", "retry"):
+    if kind not in ("first", "redo", "retry", "goal"):
         kind = "retry" if s is None else "first"
     return {
         "kind": kind,
@@ -4063,14 +4127,14 @@ def _day_title(d, today, kind, slots, promoted, deadline, recs_by_date):
         return "다음 구간"
     if kind == "past":
         recs = recs_by_date.get(d) or []
-        return "완료" if recs else "미완주"
+        return "완료" if recs else "응시 없음"
     parts = []
     if slots:
-        parts.append(f"{len(slots)}세트" + (" (승격)" if promoted else ""))
+        parts.append(f"{len(slots)}세트")
     elif d == today and recs_by_date.get(d):
-        parts.append("오늘 완료")
+        parts.append("오늘 응시 완료")
     else:
-        parts.append("여유일")
+        parts.append("자유 복습")
     if deadline:
         parts.append("실수 노트")
     return " + ".join(parts)
@@ -4088,6 +4152,7 @@ def serialize_days(adaptive, today, recs_by_date, by_set, dates=None):
     end = adaptive.get("end") if study else None
     boost = set(adaptive.get("boost_days") or []) if study else set()
     days_map = (adaptive.get("days") or {}) if study else {}
+    free_map = (adaptive.get("free") or {}) if study else {}
     deadlines = {sg["end"] for sg in study_segments()}
     if dates is None:
         dates = []
@@ -4117,6 +4182,7 @@ def serialize_days(adaptive, today, recs_by_date, by_set, dates=None):
                                 recs_by_date),
             "capacity": capacity, "promoted": promoted,
             "deadline": d in deadlines, "review_day": False,
+            "free": int(free_map.get(d, 0)) if kind in ("mock", "rest") else 0,
             "slots": slots,
         })
     return out
@@ -4141,8 +4207,22 @@ def serialize_plan(adaptive, today, records, sets, preview=None):
     recs_by_date = adaptive.get("_recs_by_date") if study else None
     if not recs_by_date:
         recs_by_date = _recs_by_date(records)
+    lv = adaptive.get("level") or level_info(records or [])
+    stk = adaptive.get("streak") or streak_info(records or [], today)
     plan = {
         "kind": adaptive.get("kind"),
+        "level": lv,
+        "streak": stk,
+        "attempts_left": int(adaptive.get("attempts_left") or 0),
+        "today_locked": bool(adaptive.get("today_locked")),
+        "passed_sets": int(adaptive.get("passed_sets") or 0),
+        "total_sets": int(adaptive.get("total_sets") or len(sets or [])),
+        "all_clear": bool(adaptive.get("all_clear")),
+        "retry_queue": [{"kind": str(q.get("kind") or "retry"),
+                         "set": str(q.get("norm") or ""),
+                         "name": str(q.get("name") or ""),
+                         "best": q.get("best")}
+                        for q in adaptive.get("retry_queue") or []],
         "seg": adaptive.get("seg") if study else None,
         "today": today.isoformat(),
         "start": _iso(adaptive.get("start")) if study else None,
@@ -4202,13 +4282,18 @@ def build_state(sets, records=None, cfg=None, today=None, exam_running=False,
     recs, review, index = serialize_records(records, sets, cfg)
     checks = {str(k): bool(v) for k, v in
               _cfg_section(cfg, WEB_CHECKS_KEY).items()}
+    plan_json = serialize_plan(adaptive, today, records, sets, preview)
     return {
         "version": ROUTINE_API_VERSION,
         "app_version": __version__,
         "today": today.isoformat(),
         "generated": generated or routine_generated(),
         "exam_running": bool(exam_running),
-        "plan": serialize_plan(adaptive, today, records, sets, preview),
+        "level": plan_json["level"],
+        "streak": plan_json["streak"],
+        "attempts_left": plan_json["attempts_left"],
+        "today_locked": plan_json["today_locked"],
+        "plan": plan_json,
         "sets": serialize_sets(sets, records, index, review),
         "records": recs,
         "review": review,
@@ -4865,11 +4950,15 @@ if HAS_TK:
             if goal is not None and not partial:
                 diff = total - goal
                 if diff >= 0:
-                    g_txt = f"오늘 목표 {goal}점 달성! (+{diff}점)"
+                    nxt = next((t for t in GOAL_TIERS if t > goal), None)
+                    g_txt = (f"목표 {goal}점 달성! (+{diff}점)"
+                             + (f" — 다음 목표 {nxt}점" if nxt
+                                else " — 만점 달성!"))
                     g_fg, g_bg = BRAND_DARK, BRAND_SOFT
                 else:
-                    g_txt = f"오늘 목표 {goal}점까지 {-diff}점 — 오답노트로 " \
-                            "복습 후 재도전!"
+                    g_txt = (f"목표 {goal}점까지 {-diff}점 — 완주·채점까지 "
+                             "했으니 오늘은 클리어입니다. 리포트에서 틀린 "
+                             "부분만 확인해 두세요(선택).")
                     g_fg, g_bg = "#8A5A00", "#FBF0DC"
                 tk.Label(frm, text=g_txt, bg=g_bg, fg=g_fg,
                          font=("Malgun Gothic", 9, "bold"), padx=10, pady=5,
@@ -5523,7 +5612,8 @@ if HAS_TK:
 
 
     class StepGuideWindow(tk.Toplevel):
-        """오늘 일정 단계 가이드 — 매일 '완주 → 채점 → 오답노트 → 오답 재풀이'.
+        """오늘 일정 단계 가이드 — 필수 '완주 → 채점'(여기까지가 클리어) +
+        선택 '오답노트 확인 · 오답 재풀이 · 함수 퀴즈'.
 
         세트 슬롯(고정/자동 선택)을 창을 열 때 확정해 위쪽에 이유와 함께
         표시하고, [다른 세트로 바꾸기]로 바꿀 수 있습니다. 진행 상태는
@@ -5823,9 +5913,17 @@ if HAS_TK:
 
         # --- 상태 ---
 
+        def _required_steps(self):
+            """클리어에 필요한 필수 스텝 번호 (선택 단계 제외)."""
+            return mandatory_step_indexes(self.steps)
+
         def _all_done(self):
-            return bool(self.steps) and \
-                all(i in self.done for i in range(len(self.steps)))
+            """오늘 클리어 여부 = 필수 스텝(완주·채점) 전부 완료.
+
+            선택 단계(오답노트 확인·오답 재풀이·함수 퀴즈)는 조건이 아닙니다.
+            """
+            req = self._required_steps()
+            return bool(req) and all(i in self.done for i in req)
 
         def current_index(self):
             """첫 미완료 스텝 (전부 완료면 마지막)."""
@@ -5856,11 +5954,16 @@ if HAS_TK:
                     f" {mark} {i + 1}. {st['이름']}  ({st.get('분', '?')}분)")
                 if i in self.done:
                     self.listbox.itemconfigure(i, foreground=SUB)
-            n_done = len([i for i in self.done
-                          if 0 <= i < len(self.steps)])
-            self.progress_lbl.configure(
-                text=f"{n_done}/{len(self.steps)} 완료 · 체크는 자동 저장 "
-                     "(껐다 켜도 이어짐)")
+            req = self._required_steps()
+            n_req = len([i for i in req if i in self.done])
+            opt = [i for i in range(len(self.steps)) if i not in req]
+            n_opt = len([i for i in opt if i in self.done])
+            txt = f"필수 {n_req}/{len(req)} 완료"
+            if opt:
+                txt += f" · 선택 {n_opt}/{len(opt)}"
+            txt += (" · 필수(완주·채점)만 끝내면 오늘 클리어 · 체크는 자동 저장"
+                    if req else " · 체크는 자동 저장")
+            self.progress_lbl.configure(text=txt)
             if select is None:
                 select = cur
             select = max(0, min(select, len(self.steps) - 1)) \
@@ -5880,10 +5983,14 @@ if HAS_TK:
             state = "완료" if i in self.done else (
                 "지금 할 차례" if i == self.current_index() else "대기")
             kind = st.get("형", "안내")
-            lines = [f"{i + 1}. {st['이름']}  ·  {kind}  ·  예상 "
+            need = "선택" if st.get("선택") else "필수"
+            lines = [f"{i + 1}. {st['이름']}  ·  {kind}  ·  {need}  ·  예상 "
                      f"{st.get('분', '?')}분  ·  {state}",
                      "", st.get("설명", "")]
             lines.append("")
+            if st.get("선택"):
+                lines.append("선택 단계입니다 — 체크하지 않아도 오늘 클리어에 "
+                             "영향이 없습니다.")
             if kind in ("안내", "채점"):
                 lines.append("이 단계는 직접 하고 [완료 체크]를 누르면 "
                              "됩니다." if kind == "안내" else
@@ -5894,8 +6001,9 @@ if HAS_TK:
                              "열립니다. 제출·채점까지 끝나면 자동으로 "
                              "체크됩니다.")
             elif kind == "오답노트":
-                lines.append("[이 단계 시작]을 누르면 오답노트 모드가 열립니다. "
-                             "다 보고 나면 [완료 체크]를 누르세요.")
+                lines.append("[이 단계 시작]을 누르면 오답노트 모드가 열립니다 "
+                             "(선택 도구). 채점 리포트에서 틀린 부분을 이미 "
+                             "확인했다면 건너뛰어도 됩니다.")
             elif kind == "오답재풀이":
                 lines.append("[이 단계 시작]을 누르면 오답 시트 목록으로 새 "
                              "사본과 15분 타이머가 열리고, 제출하면 그 "
@@ -6322,7 +6430,8 @@ if HAS_TK:
         def refresh_records(self):
             records = load_records()
             if getattr(self, "plan_title_lbl", None) is not None:
-                self.recompute_plan()      # 새 기록 반영 (밀린 세트 재배치)
+                self.recompute_plan()      # 새 기록 반영 (일정 재계산)
+            self._apply_daily_lock()       # 하루 1회 제한 반영
             if not records:
                 self.records_lbl.configure(text="아직 응시 기록이 없습니다.")
                 return
@@ -6346,6 +6455,26 @@ if HAS_TK:
                 return None
             return self.sets[sel[0]]
 
+        def daily_locked(self, records=None):
+            """하루 1회 제한: 오늘 이미 (점수 있는) 응시 기록이 있으면 True."""
+            try:
+                recs = records if records is not None else load_records()
+                return exam_locked_today(recs, date.today())
+            except Exception:
+                return False
+
+        def _apply_daily_lock(self):
+            """[시험 시작] 버튼에 하루 1회 제한 반영 (진행 중이면 그대로)."""
+            btn = getattr(self, "start_btn", None)
+            if btn is None or self.exam_running:
+                return
+            if self.daily_locked():
+                btn.configure(state="disabled", text="오늘 응시 완료")
+                return
+            s = self._selected_set()
+            btn.configure(state="normal", text="재응시 (새로 시작)"
+                          if (s and set_records(s["name"])) else "시험 시작")
+
         def _show_info(self):
             s = self._selected_set()
             if not s:
@@ -6353,6 +6482,7 @@ if HAS_TK:
             recs = set_records(s["name"])
             self.start_btn.configure(
                 text="재응시 (새로 시작)" if recs else "시험 시작")
+            self._apply_daily_lock()
             self.review_btn.configure(
                 state="normal" if find_latest_result_json(s) else "disabled")
             summ = records_summary(load_records()).get(s["name"], {})
@@ -6522,6 +6652,8 @@ if HAS_TK:
                 return True, None
             if action in ("start_exam", "start_retry") and self.exam_running:
                 return False, "시험 진행 중"
+            if action == "start_exam" and self.daily_locked():
+                return False, DAILY_LOCK_TITLE
             if action == "start_exam":
                 if s is None:
                     picks = pick_set_for_retry(self.sets, load_records(), 1)
@@ -6928,6 +7060,11 @@ if HAS_TK:
                 messagebox.showinfo(APP_TITLE, "이미 시험이 진행 중입니다.",
                                     parent=self)
                 return
+            if not practice and self.daily_locked():    # 하루 1세트
+                messagebox.showinfo(APP_TITLE, daily_lock_message(),
+                                    parent=self)
+                self._apply_daily_lock()
+                return
             s = self._selected_set()
             if not s:
                 messagebox.showinfo(APP_TITLE, "먼저 세트를 선택하세요.",
@@ -7109,7 +7246,7 @@ if HAS_TK:
                     pass
             self._excel_warn = None
             self.start_btn.configure(state="normal", text="시험 시작")
-            self.refresh_records()
+            self.refresh_records()         # 하루 1회 제한도 여기서 반영
             self._show_info()
             if self.updater.pending:      # 시험 중 미뤄 둔 업데이트 → 지금 적용
                 self.after(500, self._apply_update_now)
@@ -7162,16 +7299,19 @@ if HAS_TK:
             if reasons:
                 todo += "\n자동 선택: " + " / ".join(reasons)
             if plan.get("사유"):
-                todo += "\n재배치: " + plan["사유"]
-            if plan.get("경고"):
-                todo += "\n경고: " + plan["경고"]
+                todo += "\n진행: " + plan["사유"]
+            if plan.get("안내"):
+                todo += "\n안내: " + plan["안내"]
+            if plan.get("잠금"):
+                todo += (f"\n{DAILY_LOCK_TITLE} (자정까지 "
+                         f"{lock_remaining_text()})")
             steps = plan.get("스텝")
             if steps:
                 tag = plan_day_tag(plan["no"])
-                n_done = len([i for i in (load_step_progress(tag)
-                                          if tag else set())
-                              if 0 <= i < len(steps)])
-                todo += f"  [스텝 {n_done}/{len(steps)} 완료]"
+                done = (load_step_progress(tag) if tag else set())
+                req = mandatory_step_indexes(steps)
+                n_done = len([i for i in req if i in done])
+                todo += f"  [필수 {n_done}/{len(req)} 완료]"
             self.plan_todo_lbl.configure(text=todo)
             today_no = routine_day_no()
             self.plan_start_btn.configure(
@@ -7541,7 +7681,8 @@ def run_smoke():
     app._render_plan_card()
     t3 = app.plan_title_lbl.cget("text")
     assert "Day 3" in t3 and "9/5(토)" in t3, t3
-    assert any(k in t3 for k in ("오늘", "예정", "완료", "미완주", "1차 완주")), t3
+    assert any(k in t3 for k in ("오늘", "예정", "완료", "응시 없음",
+                                 "첫 응시", "재응시", "자유 복습")), t3
     assert app.recalc_btn.cget("text") == "일정 다시 계산"
     ad = app.recompute_plan()
     assert ad is None or ad.get("kind") in ("study", "exam", "after"), ad
@@ -7564,24 +7705,33 @@ def run_smoke():
     app._shift_plan(1)                       # 이틀 연속: 시험 1 → 시험 2
     assert app.plan_no == PLAN_EXAM2
     assert "9/18(금)" in app.plan_title_lbl.cget("text")
-    # 단계 가이드 창 — 2세트 날(Day 3): ①~④ ×2 + (선택) 퀴즈 = 9스텝
+    # 단계 가이드 창 — 하루 1세트(Day 3): 필수 ①② + 선택 ③④⑤ = 5스텝
     save_step_progress("d03", set())
     guide = StepGuideWindow(app, plan_for_day(3))
     app.update_idletasks()
     app.update()
-    assert guide.listbox.size() == 9, guide.listbox.size()
-    assert "0/9" in guide.progress_lbl.cget("text")
+    assert guide.listbox.size() == 5, guide.listbox.size()
+    assert guide._required_steps() == [0, 1], guide._required_steps()
+    assert "필수 0/2" in guide.progress_lbl.cget("text")
     assert guide.current_index() == 0
     assert "▶" in guide.listbox.get(0)
-    assert "세트 1:" in guide.pick_lbl.cget("text"), guide.pick_lbl.cget("text")
+    assert "세트:" in guide.pick_lbl.cget("text"), guide.pick_lbl.cget("text")
     guide.listbox.selection_clear(0, "end")
     guide.listbox.selection_set(0)
-    guide.toggle_check()          # 1단계 완료 체크
-    assert 0 in guide.done and "1/9" in guide.progress_lbl.cget("text")
+    guide.toggle_check()          # ① 완주 체크
+    assert 0 in guide.done and "필수 1/2" in guide.progress_lbl.cget("text")
     assert guide.selected_index() == 1, "다음 미완료 스텝 자동 포커스"
     assert "[v]" in guide.listbox.get(0) and "▶" in guide.listbox.get(1)
-    guide.mark_step_done(1)       # 채점 완료 자동 체크 경로
-    assert "2/9" in guide.progress_lbl.cget("text")
+    _orig_info = messagebox.showinfo
+    _cleared = []
+    messagebox.showinfo = lambda *a, **k: _cleared.append(a)   # 축하 모달 차단
+    try:
+        guide.mark_step_done(1)   # ② 채점 자동 체크 → 필수 완료 = 클리어
+    finally:
+        messagebox.showinfo = _orig_info
+    assert "필수 2/2" in guide.progress_lbl.cget("text")
+    assert guide._all_done() is True, "필수만 끝나도 클리어"
+    assert _cleared and "클리어" in _cleared[0][1], _cleared
     assert load_step_progress("d03") == {0, 1}, "진행 상태 저장"
     guide.destroy()
     guide2 = StepGuideWindow(app, plan_for_day(3))   # 재시작 후 이어하기
@@ -7613,15 +7763,15 @@ def run_smoke():
     assert len(calls) == 1, "모의 스텝 -> start_exam 호출"
     practice_arg, pend = calls[0]
     assert practice_arg is None and pend == {
-        "day": "d01", "목표": None, "step": 0, "done_steps": [0, 1]}, \
+        "day": "d01", "목표": 70, "step": 0, "done_steps": [0, 1]}, \
         (practice_arg, pend)
     assert app.minutes_var.get() == 40
     guide3.destroy()
     save_step_progress("d01", set())
-    # 자동 선택 날(Day 8): 기록 없음 -> 신규 세트 우선 + 이유 표시 + 세트 바꾸기
-    save_step_progress("d08", set())
-    save_auto_picks("d08", [])
-    guide4 = StepGuideWindow(app, plan_for_day(8))
+    # 자동 선택 날(Day 10): 기록 없음 -> 신규 세트 우선 + 이유 표시 + 세트 바꾸기
+    save_step_progress("d10", set())
+    save_auto_picks("d10", [])
+    guide4 = StepGuideWindow(app, plan_for_day(10))
     app.update_idletasks()
     app.update()
     ptxt = guide4.pick_lbl.cget("text")
@@ -7638,13 +7788,14 @@ def run_smoke():
     assert guide4.slot_sets[0][0] is other
     assert "직접 선택" in guide4.pick_lbl.cget("text")
     assert guide4.steps[0]["이름"].startswith(other["name"]), guide4.steps[0]
-    assert load_auto_picks("d08")[0]["세트"] == other["name"], "선택 저장"
+    assert load_auto_picks("d10")[0]["세트"] == other["name"], "선택 저장"
     guide4.destroy()
-    save_auto_picks("d08", [])
-    save_step_progress("d08", set())
+    save_auto_picks("d10", [])
+    save_step_progress("d10", set())
     app.sets, app.start_exam = saved_sets, saved_start
     app._pending_plan = None
-    # v2.1.1: 2세트 날(Day 3) 한 슬롯만 미발견 -> 다른 슬롯 정상 시작 + 직접 선택 대체
+    # v2.1.1: 2슬롯 plan(합성) 한 슬롯만 미발견 -> 다른 슬롯 정상 시작 + 직접 선택
+    #  (2.5.0은 하루 1세트이므로 2슬롯 처리 경로만 합성 plan으로 확인)
     fake_s2r = {"name": "2024년 상시2회 2급", "norm": "smoke상시2", "dir": BASE_DIR,
                 "problem": "p3", "answer": "a3", "key": None, "pdf": None}
     fake_A = {"name": "컴활2급 A형", "norm": "smokeA", "dir": BASE_DIR,
@@ -7662,7 +7813,11 @@ def run_smoke():
     cfg_before.pop("_슬롯매핑", None)
     save_set_config(cfg_before)
     save_step_progress("d03", set())
-    guide5 = StepGuideWindow(app, plan_for_day(3))
+    _plan2 = dict(plan_for_day(3), 세트=["2024 A형", "2024 상시 2회"],
+                  목표들=[70, 70])
+    _plan2["스텝"] = build_day_steps(_plan2)
+    assert len(_plan2["스텝"]) == 9, len(_plan2["스텝"])   # 4×2 + 퀴즈
+    guide5 = StepGuideWindow(app, _plan2)
     app.update_idletasks()
     app.update()
     assert guide5.missing_slots() == [0], guide5.pick_text()
