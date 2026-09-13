@@ -13,6 +13,25 @@
 의존성: Python 3.8+ / openpyxl (표준 라이브러리 외 유일한 의존성)
 
 변경 이력:
+    2.0.3  이의제기 4건 반영 (코코 모의고사 1회 리포트 — 자체 제작 문제지 기준)
+           - 수식 비교: 비교 연산자의 좌우 교환 동치(A>=B ↔ B<=A, > ↔ <, =, <>)
+             를 정규화에 추가 — 부등호 어순만 반대인 조건부 서식·계산 수식은
+             같은 식으로 채점. 조건부 서식 진단에 '어순만 다른 건 인정했고
+             남은 차이는 참조 고정($)'임을 명시.
+           - 기본작업-2 표시 형식: 코드가 달라도 그 셀 값의 화면 표시가 같으면
+             정답 처리(예: 정수 범위에서 0"개" ↔ G/표준"개"). 'G/표준'을
+             General과 동치로 정규화. 리포트는 정규화 결과 대신 원문 코드를
+             그대로 보여주고 General은 한국어 'G/표준'으로 표기(따옴표가
+             사라져 '0개'·'General개'로 깨져 보이던 표시 결함 제거).
+           - 기본작업-3 조건부 서식 해설: 다른 세트 예시(LEFT($A4,4))를 인용하던
+             고정 문구를 이 문제의 실제 적용 범위·기준 열·판정식으로 생성.
+           - 매크로작업: (a) 학생 파일의 xl/vbaProject.bin을 OLE(CFB) 해석 +
+             MS-OVBA 압축 해제로 읽어 매크로 이름과 코드(Interior.Color,
+             Font.Bold, FormulaR1C1 등)를 추출 — 실행 결과 서식이 없어도 지시
+             동작이 코드에 있으면 인정(둘 중 하나면 득점). (b) 리포트에 발견한
+             매크로 이름·단추 앵커/텍스트/연결 매크로·비교 셀과 정답/내 답 서식
+             값을 반드시 표기하고, 읽을 수 없으면 '판정 불가: 이유'로 명시
+             (정답·내 답이 '-'만 나오던 표시 결함 제거).
     2.0.2  이의제기 5건 반영 (2026 상시 복원 1회 리포트 — 공식 문제지 PDF 기준)
            - 기대값(--key) 확장: exclude(정답 파일 잔여 서식 등 채점 제외
              목록: 시트별 {range, kinds, why}), chart(차트 축 지시를 명시:
@@ -55,7 +74,7 @@
     2.0.0  리포트 이의제기 기능(카드별 [이의제기] + 복사 텍스트) 및 학습 로그
 """
 
-__version__ = "2.0.2"
+__version__ = "2.0.3"
 
 import argparse
 import html as html_mod
@@ -153,9 +172,105 @@ def formula_text(raw):
     return None
 
 
-def norm_formula(f):
+# 비교 연산자의 좌우 교환 동치: A>=B 와 B<=A 는 엑셀에서 같은 조건이다.
+# (조건부 서식 '평균 이상'을 =$F3>=AVERAGE(...) / =AVERAGE(...)<=$F3 로 쓰는 차이)
+_CMP_MIRROR = {">": "<", "<": ">", ">=": "<=", "<=": ">=", "=": "=", "<>": "<>"}
+_CMP_TOKENS = (">=", "<=", "<>", ">", "<", "=")
+
+
+def _split_top(s, sep=","):
+    """괄호 깊이 0의 구분자로만 자른다."""
+    parts, cur, depth = [], "", 0
+    for ch in s:
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        if ch == sep and depth == 0:
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    parts.append(cur)
+    return parts
+
+
+def _canon_cmp_one(s):
+    """이 조각의 최상위 비교 연산자가 정확히 하나면 표준 순서로 재배열."""
+    hits = []
+    depth = 0
+    i = 0
+    while i < len(s):
+        ch = s[i]
+        if ch == "(":
+            depth += 1
+        elif ch == ")":
+            depth -= 1
+        elif depth == 0:
+            for op in _CMP_TOKENS:
+                if s.startswith(op, i):
+                    hits.append((i, op))
+                    i += len(op) - 1
+                    break
+        i += 1
+    if len(hits) != 1:
+        return s
+    pos, op = hits[0]
+    lhs, rhs = s[:pos], s[pos + len(op):]
+    if not lhs or not rhs:
+        return s
+    lhs, op, rhs = min((lhs, op, rhs), (rhs, _CMP_MIRROR[op], lhs))
+    return lhs + op + rhs
+
+
+def _canon_cmp_seg(seg):
+    """괄호 안(함수 인수)부터 재귀로 표준화한 뒤 이 단계의 비교식을 정렬."""
+    out = []
+    i, n = 0, len(seg)
+    while i < n:
+        if seg[i] == "(":
+            depth, j = 0, i
+            while j < n:
+                if seg[j] == "(":
+                    depth += 1
+                elif seg[j] == ")":
+                    depth -= 1
+                    if depth == 0:
+                        break
+                j += 1
+            inner = seg[i + 1:j] if j < n else seg[i + 1:]
+            out.append("(" + ",".join(_canon_cmp_seg(a)
+                                      for a in _split_top(inner)) + ")")
+            i = j + 1 if j < n else n
+            continue
+        out.append(seg[i])
+        i += 1
+    return _canon_cmp_one("".join(out))
+
+
+def canon_compare(f):
+    """정규화된 수식의 비교식을 좌우 교환 동치로 통일 (문자열 리터럴 보호)."""
+    if not f or not any(op in f for op in ("<", ">", "=")):
+        return f
+    lits = []
+
+    def _mask(m):
+        lits.append(m.group(0))
+        return "\x01%d\x01" % (len(lits) - 1)
+
+    try:
+        masked = re.sub(r'"(?:[^"]|"")*"', _mask, f)
+        done = _canon_cmp_seg(masked)
+        return re.sub(r"\x01(\d+)\x01",
+                      lambda m: lits[int(m.group(1))], done)
+    except Exception:
+        return f
+
+
+def norm_formula(f, swap_cmp=True):
     """수식 정규화. 문자열 리터럴은 보존, 나머지는 대문자화·공백/$/' 제거.
-    RANK( 는 RANK.EQ( 와 동일 취급, _xlfn. 접두사 제거, 시트명 속 '정답' 제거."""
+    RANK( 는 RANK.EQ( 와 동일 취급, _xlfn. 접두사 제거, 시트명 속 '정답' 제거.
+    swap_cmp=True면 비교 연산자의 좌우 교환(A>=B ↔ B<=A)까지 동치 처리."""
     if f is None:
         return None
     if not isinstance(f, str):
@@ -178,7 +293,18 @@ def norm_formula(f):
             p = re.sub(r"\bFALSE\b", "0", p)
             p = re.sub(r"\bTRUE\b", "1", p)
             out.append(p)
-    return "".join(out)
+    joined = "".join(out)
+    return canon_compare(joined) if swap_cmp else joined
+
+
+def cmp_order_swapped(a, b):
+    """두 수식이 '부등호 좌우 순서'만 다른가 (그 외 차이는 없음)."""
+    try:
+        return (norm_formula(a) == norm_formula(b)
+                and norm_formula(a, swap_cmp=False)
+                != norm_formula(b, swap_cmp=False))
+    except Exception:
+        return False
 
 
 def _as_number(v):
@@ -360,10 +486,18 @@ class Book:
         try:
             wbxml = self.zf.read("xl/workbook.xml").decode("utf-8", "replace")
             relsxml = self.zf.read("xl/_rels/workbook.xml.rels").decode("utf-8", "replace")
-            rels = dict(re.findall(r'Id="(rId\d+)"[^>]*Target="([^"]+)"', relsxml))
+            # 속성 순서(Id/Target)는 저장 도구마다 달라 태그 단위로 읽는다
+            rels = {}
+            for tag in re.findall(r"<Relationship\b[^>]*>", relsxml):
+                rid = re.search(r'Id="([^"]+)"', tag)
+                tgt = re.search(r'Target="([^"]+)"', tag)
+                if rid and tgt:
+                    rels[rid.group(1)] = tgt.group(1)
             for m in re.finditer(r'<sheet[^>]*name="([^"]+)"[^>]*r:id="(rId\d+)"', wbxml):
                 name = html_mod.unescape(m.group(1))
                 target = rels.get(m.group(2), "")
+                if not target:
+                    continue
                 if target.startswith("/"):
                     part = target.lstrip("/")
                 else:
@@ -382,6 +516,29 @@ class Book:
             return self.zf.read(part).decode("utf-8", "replace")
         except KeyError:
             return None
+
+    def sheet_rels(self, sheet_name):
+        """시트의 관계(rels) {Id: 파트 경로}."""
+        part = self.sheet_part.get(sheet_name)
+        if not part:
+            return {}
+        rels_part = re.sub(r"worksheets/(sheet\d+\.xml)$",
+                           r"worksheets/_rels/\1.rels", part)
+        try:
+            x = self.zf.read(rels_part).decode("utf-8", "replace")
+        except KeyError:
+            return {}
+        out = {}
+        for m in re.finditer(r'<Relationship\b[^>]*>', x):
+            tag = m.group(0)
+            rid = re.search(r'Id="([^"]+)"', tag)
+            tgt = re.search(r'Target="([^"]+)"', tag)
+            if not (rid and tgt):
+                continue
+            t = tgt.group(1)
+            out[rid.group(1)] = t.lstrip("/") if t.startswith("/") else \
+                os.path.normpath("xl/worksheets/" + t).replace("\\", "/")
+        return out
 
     def sheet_rel_targets(self, sheet_name):
         """시트의 관계(rels) 대상 파트 경로 목록."""
@@ -404,6 +561,87 @@ class Book:
 
     def has_vba(self):
         return any("vbaProject" in n for n in self.zf.namelist())
+
+    def vba_modules(self):
+        """[(모듈명, 소스)] — vbaProject.bin을 해석해 캐시. 없으면 []."""
+        if getattr(self, "_vba_mods", None) is None:
+            mods = []
+            for n in self.zf.namelist():
+                if n.endswith("vbaProject.bin"):
+                    try:
+                        mods = vba_module_sources(self.zf.read(n))
+                    except Exception:
+                        mods = []
+                    break
+            self._vba_mods = mods
+        return self._vba_mods
+
+    def vba_units(self):
+        """모든 모듈의 매크로 단위 [{'name','ranges','kinds'}]."""
+        if getattr(self, "_vba_units", None) is None:
+            units = []
+            for _name, src in self.vba_modules():
+                units.extend(vba_macro_units(src))
+            self._vba_units = units
+        return self._vba_units
+
+    def form_controls(self, sheet_name):
+        """시트의 양식 컨트롤(단추) [{'text','macro','anchor'}].
+
+        Excel은 단추를 레거시 VML(x:FmlaMacro·x:Anchor)과 시트 XML의
+        <controls>(controlPr/anchor) 두 곳에 기록한다 — 둘 다 읽는다.
+        """
+        out = []
+        for t in self.sheet_rel_targets(sheet_name):
+            if "vmlDrawing" not in t:
+                continue
+            try:
+                x = self.zf.read(t).decode("utf-8", "replace")
+            except KeyError:
+                continue
+            for sh in re.findall(r"<v:shape\b.*?</v:shape>", x, re.S):
+                if "ObjectType=\"Button\"" not in sh and "o:button" not in sh:
+                    continue
+                mac = re.search(r"<x:FmlaMacro>\s*([^<]*)</x:FmlaMacro>", sh)
+                anc = re.search(r"<x:Anchor>\s*([^<]*)</x:Anchor>", sh)
+                txt = re.findall(r"<font[^>]*>([^<]*)</font>", sh) or \
+                    re.findall(r"<div[^>]*>([^<]*)</div>", sh)
+                rng = "?"
+                if anc:
+                    nums = [n.strip() for n in anc.group(1).split(",")]
+                    if len(nums) >= 8:
+                        rng = _anchor_range(nums[0], nums[2], nums[4], nums[6])
+                name = (mac.group(1).strip() if mac else "")
+                out.append({"text": html_mod.unescape(txt[0]).strip()
+                            if txt else "", "anchor": rng,
+                            "macro": name.split("!")[-1] if name else ""})
+        rels = self.sheet_rels(sheet_name)
+        x = self.sheet_xml(sheet_name) or ""
+        for blob in re.findall(r"<control\b.*?(?:</control>|/>)", x, re.S):
+            a = re.search(r"<from>.*?<col>(\d+)</col>.*?<row>(\d+)</row>.*?"
+                          r"</from>.*?<to>.*?<col>(\d+)</col>.*?<row>(\d+)"
+                          r"</row>.*?</to>", blob, re.S)
+            rng = _anchor_range(*a.groups()) if a else "?"
+            if any(o["anchor"] == rng for o in out):
+                continue        # VML에서 이미 읽은 같은 단추
+            nm = re.search(r'name="([^"]*)"', blob)
+            label = html_mod.unescape(nm.group(1)) if nm else ""
+            rid = re.search(r'r:id="(rId\d+)"', blob)
+            text, macro = label, ""
+            if rid and rels.get(rid.group(1)):
+                try:
+                    cx = self.zf.read(rels[rid.group(1)]).decode(
+                        "utf-8", "replace")
+                    mt = re.search(r"<text>([^<]*)</text>", cx)
+                    if mt:
+                        text = html_mod.unescape(mt.group(1)).strip()
+                    mm = re.search(r'fmlaMacro="([^"]*)"', cx)
+                    if mm:
+                        macro = html_mod.unescape(mm.group(1)).split("!")[-1]
+                except KeyError:
+                    pass
+            out.append({"text": text, "anchor": rng, "macro": macro})
+        return out
 
     def has_pivot_for_sheet(self, sheet_name):
         return any("pivotTable" in t for t in self.sheet_rel_targets(sheet_name))
@@ -442,6 +680,276 @@ class Book:
                 n for n in self.zf.namelist() if re.match(r"xl/charts/chart\d+\.xml$", n)
             )
         return charts
+
+
+# ---------------------------------------------------------------------------
+# 매크로(VBA) 코드 읽기 — xl/vbaProject.bin
+#   구조: OLE 복합 문서(CFB) 안의 모듈 스트림 + MS-OVBA 압축 컨테이너.
+#   매크로 이름과 코드(Interior.Color, Font.Bold, FormulaR1C1 …)를 뽑아
+#   '실행 결과 서식'이 없어도 지시 동작을 수행하는 코드가 있으면 인정한다.
+# ---------------------------------------------------------------------------
+
+_CFB_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+_CFB_FREESECT = 0xFFFFFFFF
+_CFB_ENDOFCHAIN = 0xFFFFFFFE
+
+
+def cfb_streams(data):
+    """OLE 복합 문서(CFB)의 {스트림 이름: 바이트}. 최소 구현, 실패하면 {}."""
+    import struct
+    if len(data) < 512 or data[:8] != _CFB_MAGIC:
+        return {}
+    try:
+        ssz = 1 << struct.unpack_from("<H", data, 30)[0]
+        msz = 1 << struct.unpack_from("<H", data, 32)[0]
+        n_fat = struct.unpack_from("<I", data, 44)[0]
+        dir_first = struct.unpack_from("<I", data, 48)[0]
+        cutoff = struct.unpack_from("<I", data, 56)[0] or 4096
+        mini_first = struct.unpack_from("<I", data, 60)[0]
+        difat_first = struct.unpack_from("<I", data, 68)[0]
+        n_difat = struct.unpack_from("<I", data, 72)[0]
+        if ssz < 64 or msz < 8:
+            return {}
+
+        def sector(i):
+            off = 512 + i * ssz
+            return data[off:off + ssz]
+
+        difat = list(struct.unpack_from("<109I", data, 76))
+        nxt, guard = difat_first, 0
+        while nxt not in (_CFB_ENDOFCHAIN, _CFB_FREESECT) \
+                and guard <= n_difat + 8:
+            blk = sector(nxt)
+            if len(blk) < ssz:
+                break
+            vals = struct.unpack_from("<%dI" % (ssz // 4), blk, 0)
+            difat.extend(vals[:-1])
+            nxt = vals[-1]
+            guard += 1
+        fat = []
+        for s in difat[:n_fat or len(difat)]:
+            if s in (_CFB_ENDOFCHAIN, _CFB_FREESECT):
+                continue
+            blk = sector(s)
+            if len(blk) < ssz:
+                break
+            fat.extend(struct.unpack_from("<%dI" % (ssz // 4), blk, 0))
+
+        def read_chain(start, size=None):
+            out, cur, seen = [], start, 0
+            while cur not in (_CFB_ENDOFCHAIN, _CFB_FREESECT) \
+                    and cur < len(fat) and seen < len(fat) + 8:
+                out.append(sector(cur))
+                cur = fat[cur]
+                seen += 1
+            buf = b"".join(out)
+            return buf if size is None else buf[:size]
+
+        minifat = []
+        if mini_first not in (_CFB_ENDOFCHAIN, _CFB_FREESECT):
+            mb = read_chain(mini_first)
+            minifat = list(struct.unpack_from("<%dI" % (len(mb) // 4), mb, 0))
+        dir_bytes = read_chain(dir_first)
+        entries = []
+        for i in range(0, len(dir_bytes) - 127, 128):
+            e = dir_bytes[i:i + 128]
+            nlen = struct.unpack_from("<H", e, 64)[0]
+            name = e[:max(0, min(64, nlen - 2))].decode("utf-16-le", "replace")
+            entries.append((name, e[66], struct.unpack_from("<I", e, 116)[0],
+                            struct.unpack_from("<Q", e, 120)[0]))
+        mini_stream = b""
+        for (_nm, etype, start, size) in entries:
+            if etype == 5:
+                mini_stream = read_chain(start,
+                                         size if size < (1 << 31) else None)
+                break
+
+        def read_mini(start, size):
+            out, cur = bytearray(), start
+            while cur not in (_CFB_ENDOFCHAIN, _CFB_FREESECT) \
+                    and len(out) < size:
+                out += mini_stream[cur * msz:cur * msz + msz]
+                if cur >= len(minifat):
+                    break
+                cur = minifat[cur]
+            return bytes(out[:size])
+
+        streams = {}
+        for (name, etype, start, size) in entries:
+            if etype != 2 or not size or size > (1 << 26):
+                continue
+            try:
+                streams[name] = read_mini(start, size) if size < cutoff \
+                    else read_chain(start, size)
+            except Exception:
+                continue
+        return streams
+    except Exception:
+        return {}
+
+
+def ovba_decompress(data, start):
+    """MS-OVBA CompressedContainer 압축 해제 (RLE). 실패하면 None."""
+    if start >= len(data) or data[start] != 0x01:
+        return None
+    out = bytearray()
+    pos, n = start + 1, len(data)
+    chunks = 0
+    try:
+        while pos + 1 < n:
+            hdr = data[pos] | (data[pos + 1] << 8)
+            pos += 2
+            if (hdr >> 12) & 0x07 != 0b011:
+                # 컨테이너 뒤의 여분 바이트(스트림 슬랙)면 여기까지가 본문
+                return bytes(out) if chunks else None
+            chunks += 1
+            end = min(pos + (hdr & 0x0FFF) + 1, n)
+            chunk_start = len(out)
+            if not (hdr >> 15) & 1:              # 비압축 청크
+                out += data[pos:end]
+                pos = end
+                continue
+            p = pos
+            while p < end:
+                flags = data[p]
+                p += 1
+                for bit in range(8):
+                    if p >= end:
+                        break
+                    if not (flags >> bit) & 1:
+                        out.append(data[p])
+                        p += 1
+                        continue
+                    if p + 1 >= end:
+                        p = end
+                        break
+                    tok = data[p] | (data[p + 1] << 8)
+                    p += 2
+                    diff = len(out) - chunk_start
+                    bc = max(4, (diff - 1).bit_length()) if diff else 4
+                    lbc = 16 - bc
+                    length = (tok & ((1 << lbc) - 1)) + 3
+                    src = len(out) - (((tok >> lbc) & ((1 << bc) - 1)) + 1)
+                    if src < 0:
+                        return None
+                    for _ in range(length):
+                        out.append(out[src])
+                        src += 1
+            pos = end
+            if len(out) > 4 * 1024 * 1024:
+                break
+        return bytes(out)
+    except Exception:
+        return None
+
+
+def vba_module_sources(bin_bytes):
+    """vbaProject.bin -> [(모듈명, 소스 문자열)]. 읽지 못하면 []."""
+    mods = []
+    streams = cfb_streams(bin_bytes)
+    for name, body in streams.items():
+        if name in ("dir", "PROJECT", "PROJECTwm", "_VBA_PROJECT") \
+                or name.startswith("__SRP_"):
+            continue
+        for i, b in enumerate(body):
+            if b != 0x01:
+                continue
+            raw = ovba_decompress(body, i)
+            if not raw or b"Attribute VB_Name" not in raw:
+                continue
+            txt = None
+            for enc in ("cp949", "utf-8", "latin-1"):
+                try:
+                    txt = raw.decode(enc)
+                    break
+                except UnicodeDecodeError:
+                    continue
+            if txt:
+                mods.append((name, txt))
+            break
+    return mods
+
+
+# VBA 코드에서 읽어내는 '지시 동작' -> 채점 서식 종류
+VBA_ACTION_KINDS = (
+    (r"\.Interior\b|\.ColorIndex\b(?=[^\n]*Interior)", "fill"),
+    (r"\.Font\b", "font"),
+    (r"\.NumberFormat(?:Local)?\b", "number_format"),
+    (r"\.(?:Horizontal|Vertical)Alignment\b|\.WrapText\b|\.Orientation\b",
+     "alignment"),
+    (r"\.Borders?\b|\.BorderAround\b", "border"),
+    (r"\.Merge\b|\.MergeCells\b", "merge"),
+    (r"\.Formula(?:R1C1|Array)?\b|\.Value2?\b|\.AutoFill\b|\.FillDown\b"
+     r"|\.AutoSum\b", "value"),
+)
+VBA_KIND_LABEL = {"fill": "채우기", "font": "글꼴", "number_format": "표시 형식",
+                  "alignment": "맞춤", "border": "테두리", "merge": "병합",
+                  "value": "값/수식"}
+
+
+def vba_macro_units(source):
+    """모듈 소스 -> [{'name': 매크로명, 'ranges': [...], 'kinds': {...}}]."""
+    units = []
+    cur = None
+    for line in (source or "").splitlines():
+        s = line.strip()
+        if s.startswith("'"):
+            continue
+        m = re.match(r"^(?:Public\s+|Private\s+)?(?:Sub|Function)\s+"
+                     r"([^\s(]+)", s, re.I)
+        if m:
+            cur = {"name": m.group(1).strip(), "ranges": [], "kinds": set()}
+            units.append(cur)
+            continue
+        if re.match(r"^End\s+(?:Sub|Function)\b", s, re.I):
+            cur = None
+            continue
+        if cur is None:
+            continue
+        for m in re.finditer(r'Range\(\s*"([^"]+)"', s, re.I):
+            cur["ranges"].append(m.group(1).replace("$", "").upper())
+        for m in re.finditer(r"\[\s*([A-Za-z]{1,3}\d+(?::[A-Za-z]{1,3}\d+)?)"
+                             r"\s*\]", s):
+            cur["ranges"].append(m.group(1).replace("$", "").upper())
+        for pat, kind in VBA_ACTION_KINDS:
+            if re.search(pat, s, re.I):
+                cur["kinds"].add(kind)
+    return units
+
+
+def vba_covers(units, coord, kind):
+    """(셀, 서식 종류)를 수행하는 매크로 이름 — 없으면 None."""
+    from openpyxl.utils import range_boundaries
+    from openpyxl.utils.cell import coordinate_to_tuple
+    try:
+        r, c = coordinate_to_tuple(str(coord).upper())
+    except Exception:
+        return None
+    for u in units:
+        if kind not in u["kinds"]:
+            continue
+        for rng in u["ranges"]:
+            try:
+                c1, r1, c2, r2 = range_boundaries(
+                    rng if ":" in rng else f"{rng}:{rng}")
+            except Exception:
+                continue
+            if None in (c1, r1, c2, r2):
+                continue
+            if r1 <= r <= r2 and c1 <= c <= c2:
+                return u["name"]
+    return None
+
+
+def _anchor_range(col1, row1, col2, row2):
+    """0-based 열/행 앵커 -> 'F3:G4' 표기."""
+    from openpyxl.utils import get_column_letter
+    try:
+        a = f"{get_column_letter(int(col1) + 1)}{int(row1) + 1}"
+        b = f"{get_column_letter(int(col2) + 1)}{int(row2) + 1}"
+        return a if a == b else f"{a}:{b}"
+    except Exception:
+        return "?"
 
 
 # ---------------------------------------------------------------------------
@@ -599,6 +1107,193 @@ def _norm_font_name(name):
 # 바꾸므로 리터럴("c")을 유지하고, 그 외 문자는 따옴표를 벗겨도 표시 동일.
 _NF_SIGNIFICANT = set('0123456789#?.,%eEgG@ymdhsSbBnN*_/:[]"\\;aA')
 
+# 한국어 Excel의 '일반' 표시 형식 코드. 사용자 지정 칸에 'G/표준'을 입력하면
+# 파일에는 'General'로 저장되므로 같은 코드로 다뤄야 한다.
+_NF_GENERAL_KO = "G/표준"
+
+
+def _nf_split_quoted(s):
+    """표시 형식 코드를 [코드, 리터럴, 코드, ...] 로 분리 (홀수 인덱스=리터럴)."""
+    return re.split(r'("(?:[^"]|"")*")', str(s))
+
+
+def _nf_general_alias(s):
+    """따옴표 밖의 'G/표준'을 'General'로 (동치 코드 통일)."""
+    parts = _nf_split_quoted(s)
+    return "".join(p if i % 2 else p.replace(_NF_GENERAL_KO, "General")
+                   for i, p in enumerate(parts))
+
+
+def nf_display(nf):
+    """리포트 표기용 표시 형식 코드 — 원문 그대로, General만 한국어 'G/표준'.
+
+    정규화 결과('0개')를 그대로 보여주면 리터럴 따옴표가 사라져 형식 코드가
+    깨져 보이므로, 화면에는 반드시 사용자가 입력한 원문 코드를 쓴다.
+    """
+    s = str(nf) if nf not in (None, "") else "General"
+    parts = _nf_split_quoted(s)
+    return "".join(p if i % 2 else re.sub(r"General", _NF_GENERAL_KO, p,
+                                          flags=re.IGNORECASE)
+                   for i, p in enumerate(parts))
+
+
+def _nf_general_str(v):
+    """General(G/표준) 표시 근사 — 정수는 그대로, 실수는 불필요한 0 제거."""
+    f = float(v)
+    if f == int(f) and abs(f) < 1e15:
+        return str(int(f))
+    return ("%.10f" % f).rstrip("0").rstrip(".")
+
+
+def _nf_sections(s):
+    """표시 형식 섹션 분해 (따옴표 안 ';' 보호)."""
+    secs, cur, in_q = [], "", False
+    for ch in s:
+        if ch == '"':
+            in_q = not in_q
+        if ch == ";" and not in_q:
+            secs.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    secs.append(cur)
+    return secs
+
+
+def _nf_parse_section(sec):
+    """섹션 -> (접두 문자열, 숫자 코어 코드, 접미 문자열). 미지원이면 None."""
+    pre, post = [], []
+    cur = pre
+    core = None
+    i, n = 0, len(sec)
+    while i < n:
+        ch = sec[i]
+        if ch == '"':
+            j = sec.find('"', i + 1)
+            if j == -1:
+                return None
+            cur.append(sec[i + 1:j])
+            i = j + 1
+            continue
+        if ch == "\\" and i + 1 < n:
+            cur.append(sec[i + 1])
+            i += 2
+            continue
+        if ch == "_" and i + 1 < n:
+            cur.append(" ")
+            i += 2
+            continue
+        if ch == "[":
+            j = sec.find("]", i)
+            if j == -1:
+                return None
+            i = j + 1                      # [빨강]·[$₩-412] 등은 표시 비교 제외
+            continue
+        if sec[i:i + 7].lower() == "general":
+            if core is not None:
+                return None
+            core, cur = "General", post
+            i += 7
+            continue
+        if ch in "0#?.,%":
+            if core is None:
+                core, cur = "", post
+            elif core == "General" or post:
+                return None                # 코어가 두 번 등장: 미지원
+            core += ch
+            i += 1
+            continue
+        if ch in "@*/" or ch in "eE" or ch.lower() in "ymdhsb":
+            return None                    # 텍스트·채움·분수·지수·날짜: 판정 보류
+        cur.append(ch)
+        i += 1
+    if core is None:
+        return None
+    return "".join(pre), core, "".join(post)
+
+
+def _nf_render_core(v, core):
+    """숫자 코어 코드로 값을 렌더. 실패하면 None."""
+    if core == "General":
+        return _nf_general_str(v)
+    body = core
+    scale = 1.0
+    pct_pre = pct_post = ""
+    if "%" in body:
+        scale *= 100.0 ** body.count("%")
+        pct_pre = "%" * (len(body) - len(body.lstrip("%")))
+        pct_post = "%" * (len(body) - len(body.rstrip("%")))
+        body = body.replace("%", "")
+    m = re.search(r"(,+)$", body)
+    if m:
+        scale /= 1000.0 ** len(m.group(1))
+        body = body[:m.start()]
+    thousands = "," in body
+    body = body.replace(",", "")
+    int_pat, _, dec_pat = body.partition(".")
+    dec = len(re.findall(r"[0#?]", dec_pat))
+    from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
+    try:
+        d = Decimal(str(v * scale)).quantize(Decimal(1).scaleb(-dec),
+                                             rounding=ROUND_HALF_UP)
+    except (InvalidOperation, ValueError, OverflowError):
+        return None
+    neg = d < 0
+    txt = f"{-d if neg else d:f}"
+    itxt, _, dtxt = txt.partition(".")
+    min_int = int_pat.count("0")
+    if len(itxt) < min_int:
+        itxt = itxt.rjust(min_int, "0")
+    if min_int == 0 and itxt == "0":
+        itxt = ""                          # '#.##' 처럼 정수 자리 표기가 없는 코드
+    if thousands and itxt:
+        groups, t = [], itxt
+        while len(t) > 3:
+            groups.insert(0, t[-3:])
+            t = t[:-3]
+        groups.insert(0, t)
+        itxt = ",".join(groups)
+    out = pct_pre + itxt + ("." + dtxt if dec else "") + pct_post
+    return ("-" if neg else "") + out
+
+
+def nf_render(value, nf):
+    """값을 표시 형식 코드로 렌더한 화면 문자열. 판정 불가하면 None.
+
+    동치 판정용(정수 범위에서 0"개" ↔ G/표준"개")이므로 숫자 값과 숫자/일반
+    형식만 지원하고, 날짜·시간·지수·분수·텍스트 형식은 None(보류)을 돌려준다.
+    """
+    if value is None or isinstance(value, bool) \
+            or isinstance(value, (datetime, date, time)):
+        return None
+    v = _as_number(value)
+    if v is None:
+        return None
+    secs = _nf_sections(_nf_general_alias(str(nf or "General").strip()))
+    used_neg = False
+    if v < 0 and len(secs) >= 2 and secs[1].strip():
+        sec, used_neg = secs[1], True
+    elif v == 0 and len(secs) >= 3 and secs[2].strip():
+        sec = secs[2]
+    else:
+        sec = secs[0]
+    parsed = _nf_parse_section(sec)
+    if parsed is None:
+        return None
+    pre, core, post = parsed
+    body = _nf_render_core(abs(v) if used_neg else v, core)
+    if body is None:
+        return None
+    return pre + body + post
+
+
+def nf_same_display(value, nf_a, nf_b):
+    """코드는 달라도 이 값의 화면 표시가 같은가 (둘 다 렌더 가능할 때만)."""
+    if _norm_number_format(nf_a) == _norm_number_format(nf_b):
+        return True
+    ra = nf_render(value, nf_a)
+    return ra is not None and ra == nf_render(value, nf_b)
+
 
 def _norm_number_format(nf):
     """표시 형식 코드 정규화 — 표시가 동일한 저장 변형을 통일.
@@ -610,6 +1305,7 @@ def _norm_number_format(nf):
       (단 0, y 등 코드 문자는 따옴표 유지 — 의미가 다름)
     """
     s = (nf or "General").strip()
+    s = _nf_general_alias(s)
     if s in ("", "General"):
         return "General"
     # 로캘/통화 토큰: [$기호-로캘] -> 기호
@@ -833,6 +1529,35 @@ def fmt_signature_m(ws, r, c, kind, members, anchors):
     return fmt_signature(ws.cell(r, c), kind)
 
 
+def cell_raw_m(ws, r, c, members, attr):
+    """병합 인지 원본 속성 (표시 형식 원문·값). 실패하면 None."""
+    if ws is None:
+        return None
+    if (r, c) in members:
+        r, c = members[(r, c)]
+    try:
+        return getattr(ws.cell(r, c), attr)
+    except Exception:
+        return None
+
+
+def nf_display_equal(sha, shs, r, c, a_members, s_members):
+    """이 셀의 표시 형식이 코드는 달라도 화면 표시가 같은가.
+
+    정답 셀의 값을 두 코드로 렌더해 비교한다 (정수 범위에서 0"개" ↔ G/표준"개").
+    """
+    if shs is None:
+        return False
+    nf_a = cell_raw_m(sha, r, c, a_members, "number_format")
+    nf_s = cell_raw_m(shs, r, c, s_members, "number_format")
+    if nf_a is None or nf_s is None:
+        return False
+    val = cell_raw_m(sha, r, c, a_members, "value")
+    if val is None:
+        val = cell_raw_m(shs, r, c, s_members, "value")
+    return nf_same_display(val, nf_a, nf_s)
+
+
 # ---------------------------------------------------------------------------
 # 서식 속성 한국어 표기 / 조작 경로 힌트 / 범위 표기
 # ---------------------------------------------------------------------------
@@ -899,8 +1624,12 @@ def describe_fill(sig):
     return "채우기 있음"
 
 
-def props_for_kind(kind, sig_a, sig_s):
-    """실제로 다른 속성만 (한국어 속성명, 정답, 내 답) 목록으로."""
+def props_for_kind(kind, sig_a, sig_s, raw_a=None, raw_s=None):
+    """실제로 다른 속성만 (한국어 속성명, 정답, 내 답) 목록으로.
+
+    raw_a/raw_s: 표시 형식 등 '사용자가 입력한 원문'이 있으면 그것을 표기
+    (정규화 결과를 보여주면 리터럴 따옴표가 사라져 코드가 깨져 보임).
+    """
     out = []
     if kind == "alignment":
         sa = sig_a if isinstance(sig_a, tuple) else (None, None, False, 0)
@@ -930,18 +1659,21 @@ def props_for_kind(kind, sig_a, sig_s):
         out.append({"name": "테두리", "expected": describe_border(sig_a),
                     "got": describe_border(sig_s)})
     elif kind == "number_format":
-        exp = str(sig_a)
-        mean = explain_number_format(exp)
+        exp_raw = raw_a if raw_a not in (None, "") else sig_a
+        got_raw = raw_s if raw_s not in (None, "") else sig_s
+        exp = nf_display(exp_raw)
+        mean = explain_number_format(exp_raw)
         out.append({"name": "표시 형식",
                     "expected": exp + (f" — {mean}" if mean else ""),
-                    "got": str(sig_s) if sig_s is not None else "확인 불가"})
+                    "got": nf_display(got_raw) if got_raw is not None
+                    else "확인 불가"})
     elif kind == "style":
         out.append({"name": "셀 스타일", "expected": str(sig_a),
                     "got": str(sig_s)})
     return out
 
 
-def hints_for_kind(kind, sig_a):
+def hints_for_kind(kind, sig_a, raw_a=None):
     """실제 차이 난 속성에서 파생한 조작 경로 힌트."""
     if kind == "alignment" and isinstance(sig_a, tuple):
         h = sig_a[0]
@@ -963,7 +1695,8 @@ def hints_for_kind(kind, sig_a):
     if kind == "merge":
         return ["범위를 선택하고 홈 탭 → '병합하고 가운데 맞춤'"]
     if kind == "number_format":
-        return [f"Ctrl+1 → 표시 형식 → 사용자 지정: {sig_a}"]
+        code = nf_display(raw_a if raw_a not in (None, "") else sig_a)
+        return [f"Ctrl+1 → 표시 형식 → 사용자 지정: {code}"]
     if kind == "border":
         return ["홈 탭 → 테두리 → 모든 테두리/바깥쪽 테두리"]
     if kind == "fill":
@@ -1146,6 +1879,51 @@ CF_ROW_PRINCIPLE = (
     "로 씁니다. 그래야 B~H열의 셀도 각 행의 A열 값을 검사해 행 전체가 같은 "
     "색이 됩니다. A열만 선택하거나(범위 오답) 상대참조 A4를 쓰면(참조 오답) "
     "실제 시험에서는 오답입니다.")
+
+
+def cf_row_principle(rule, ws_a=None):
+    """'행 전체' 조건부 서식 원칙을 이 문제의 실제 범위·기준 열로 설명.
+
+    정답 규칙의 혼합참조($F3 같은 '열만 고정')를 찾아, 적용 범위의 열 구간과
+    기준 열(머리글 이름까지 있으면 함께)로 문장을 만든다. 찾지 못하면 일반
+    문구(CF_ROW_PRINCIPLE)로 돌아간다.
+    """
+    try:
+        from openpyxl.utils import column_index_from_string, \
+            get_column_letter, range_boundaries
+        sq = (rule.get("sqref") or "").split()[0]
+        formula = (rule.get("formulas") or [""])[0]
+        m = re.search(r"\$([A-Z]{1,3})(?!\$)(\d+)", formula.upper())
+        if not (sq and formula and m):
+            return CF_ROW_PRINCIPLE
+        col, row = m.group(1), m.group(2)
+        c1, r1, c2, _r2 = range_boundaries(sq if ":" in sq else f"{sq}:{sq}")
+        first, last = get_column_letter(c1), get_column_letter(c2)
+        head = ""
+        if ws_a is not None:
+            try:
+                hv = ws_a.cell(r1 - 1, column_index_from_string(col)).value
+                if isinstance(hv, str) and hv.strip():
+                    head = f"({hv.strip()})"
+            except Exception:
+                head = ""
+        txt = (
+            f"'행 전체'에 서식을 적용하려면 ① 적용 범위를 표 전체({sq})로 선택한 "
+            f"뒤 규칙을 만들고 ② 수식은 기준 열만 고정한 혼합참조(${col}{row})로 "
+            f"씁니다. 그래야 {first}~{last}열의 모든 셀이 같은 행의 "
+            f"{col}열{head}을 검사해 행 전체가 같은 서식이 됩니다. "
+            f"$를 빼고 {col}{row}으로 쓰면 {first}열 셀은 {first}{row}을, "
+            f"그 옆 열 셀은 자기 열의 셀을 검사하게 되어 행 전체가 칠해지지 "
+            f"않고, 반대로 ${col}${row}처럼 행까지 고정하면 모든 행이 "
+            f"{row}행만 검사합니다.")
+        if "AVERAGE(" in formula.upper():
+            rng = re.search(r"AVERAGE\(([^)]*)\)", formula.upper())
+            inner = rng.group(1) if rng else ""
+            txt += (f" 평균 기준은 AVERAGE({inner})처럼 범위를 행·열 모두 "
+                    "고정($)해야 모든 행이 같은 평균과 비교합니다.")
+        return txt
+    except Exception:
+        return CF_ROW_PRINCIPLE
 
 
 def shift_formula(formula, dr, dc):
@@ -2470,6 +3248,7 @@ def grade_basic2(res, ctx):
     s_merges = {str(x).upper() for x in shs.merged_cells.ranges} \
         if shs is not None else set()
 
+    nf_same = []       # 코드는 다르지만 화면 표시가 같아 정답 처리한 셀
     for cl in clusters:
         fails = []
         for u in cl:
@@ -2498,6 +3277,16 @@ def grade_basic2(res, ctx):
                 cmp_a, cmp_s = sig_a, sig_s
                 if k == "alignment" and _blank_answer_cell(sha, r, c):
                     cmp_a, cmp_s = _blank_align_sig(sig_a), _blank_align_sig(sig_s)
+                if k == "number_format":
+                    u["raw_a"] = cell_raw_m(sha, r, c, a_members,
+                                            "number_format")
+                    u["raw_s"] = cell_raw_m(shs, r, c, s_members,
+                                            "number_format")
+                    # 코드가 달라도 그 셀 값의 화면 표시가 같으면 정답 처리
+                    if cmp_a != cmp_s and nf_display_equal(
+                            sha, shs, r, c, a_members, s_members):
+                        nf_same.append(u["coord"])
+                        continue
                 if cmp_a != cmp_s:
                     u["sig_a"], u["sig_s"] = sig_a, sig_s
                     fails.append(u)
@@ -2554,10 +3343,11 @@ def grade_basic2(res, ctx):
             else:
                 # 속성 행마다 이 클러스터의 diff 셀/범위를 명시해 인용
                 where = _kind_loc(k)
-                for p in props_for_kind(k, u.get("sig_a"), u.get("sig_s")):
+                for p in props_for_kind(k, u.get("sig_a"), u.get("sig_s"),
+                                        u.get("raw_a"), u.get("raw_s")):
                     p["name"] = f"{p['name']}({where})"
                     props.append(p)
-                hints.extend(hints_for_kind(k, u.get("sig_a")))
+                hints.extend(hints_for_kind(k, u.get("sig_a"), u.get("raw_a")))
         uniq_hints = []
         for h in hints:
             if h not in uniq_hints:
@@ -2571,6 +3361,13 @@ def grade_basic2(res, ctx):
         res.details.append(
             "[서식] " + ", ".join(loc[:4]) + " 불일치: "
             + ", ".join(dict.fromkeys(p["name"] for p in props)))
+
+    if nf_same:
+        locs = ", ".join(compress_coords(nf_same)[:4])
+        res.notes.append(
+            f"표시 형식 코드가 정답 파일과 다르지만({locs}) 그 값의 화면 표시가 "
+            "같아 정답 처리했습니다. 실제 시험도 표시 예(예: 460 → 460개)와 "
+            "같게 보이면 정답으로 봅니다.")
 
     # --- 별도 항목 채점 ---
     for kind, payload in standalone:
@@ -3017,6 +3814,11 @@ def grade_basic3(res, ctx):
                         f"정답 {exp_f}. 행마다 기준 열을 검사하려면 열만 고정한 "
                         "혼합참조($A4)여야 합니다 — A4(상대)는 B열에서 B4를 "
                         "검사하고, $A$4(절대)는 모든 행이 4행만 검사합니다.")
+                    if cmp_order_swapped(stu_f, exp_f):
+                        diffs.append(
+                            "부등호의 좌우 순서만 바꾼 식(A>=B ↔ B<=A)은 같은 "
+                            "조건이므로 정답으로 인정했습니다 — 감점 사유는 "
+                            "참조 고정($)뿐입니다.")
                 elif is_cellis:
                     diffs.append(f"조건 불일치: 정답 {exp_c} / 내 답 {stu_c} "
                                  f"({_rng_txt(v['formula_bad'])})")
@@ -3065,7 +3867,7 @@ def grade_basic3(res, ctx):
                         "표 전체 범위를 먼저 선택하고, 수식은 열만 고정하는 "
                         "혼합참조($A4)를 쓰며, 텍스트 비교는 큰따옴표"
                         "(\"...\")로 감쌉니다.")
-                point = CF_ROW_PRINCIPLE
+                point = cf_row_principle(rule, book_a.raw[asheet])
             add_card(res, "조건부 서식", res.alloc / len(target), "cf",
                      formula=None if is_cellis else exp_f, props=props,
                      note=f"정답 규칙: 적용 범위 {sq} / 유형 {typ_ko}"
@@ -3379,8 +4181,55 @@ def grade_analysis(res, ctx):
                              "수동 확인을 권장합니다.")
 
 
+def _macro_fmt_desc(kind, sig, raw=None):
+    """매크로 서식 결과 표기용 한국어 서식 값. 읽을 수 없으면 None."""
+    if sig == "?":
+        return None
+    if kind == "font":
+        return describe_font(sig)
+    if kind == "fill":
+        return describe_fill(sig)
+    if kind == "border":
+        return describe_border(sig)
+    if kind == "number_format":
+        return nf_display(raw if raw not in (None, "") else sig)
+    if kind == "alignment":
+        sa = sig if isinstance(sig, tuple) else (None, None, False, 0)
+        return (f"가로 {H_ALIGN_KO.get(sa[0], sa[0])} / "
+                f"세로 {V_ALIGN_KO.get(sa[1], sa[1])}"
+                + (", 텍스트 줄 바꿈" if len(sa) > 2 and sa[2] else ""))
+    return str(sig)
+
+
+def _macro_evidence_notes(res, book_a, book_s, asheet, ssheet):
+    """리포트에 남길 매크로 근거: 매크로 이름·단추 앵커/텍스트/연결 매크로."""
+    names_s = [u["name"] for u in book_s.vba_units()] if book_s else []
+    if names_s:
+        res.notes.append("내 파일 VBA 코드에서 찾은 매크로: "
+                         + ", ".join(dict.fromkeys(names_s)))
+    elif book_s and book_s.has_vba():
+        res.notes.append("내 파일에 매크로(vbaProject)는 있지만 코드를 읽지 "
+                         "못했습니다 — 매크로 이름·코드는 판정에 쓰지 않았습니다.")
+    btns = book_s.form_controls(ssheet) if (book_s and ssheet) else []
+    if btns:
+        res.notes.append("내 파일 단추: " + " / ".join(
+            f"[{b['anchor']}] 텍스트 '{b['text'] or '(없음)'}'"
+            + (f" → {b['macro']} 매크로" if b["macro"] else " → 연결 매크로 확인 불가")
+            for b in btns[:4]))
+    elif ssheet and book_s.sheet_has_drawing(ssheet):
+        res.notes.append("내 파일에 단추/도형은 있지만 앵커·연결 매크로를 "
+                         "읽지 못했습니다.")
+    return names_s
+
+
 def grade_macro(res, ctx):
-    """매크로작업: 결과 값+서식 diff 비례(8점 분량) + 단추/도형 존재 +2점."""
+    """매크로작업: 결과 값+서식 diff 비례(8점 분량) + 단추/도형 존재 +2점.
+
+    결과 서식이 없어도 학생 파일의 VBA 코드(xl/vbaProject.bin)에 지시 동작이
+    있으면 인정한다 (둘 중 하나면 득점). 리포트에는 발견한 매크로 이름·단추
+    앵커·비교 셀과 정답/내 답 서식 값을 남기고, 읽을 수 없으면 '판정 불가:
+    이유'로 명시한다.
+    """
     book_a, book_s = ctx["book_a"], ctx["book_s"]
     asheet, ssheet = ctx["asheet"], ctx["ssheet"]
     judge = ctx["judge"]
@@ -3389,14 +4238,21 @@ def grade_macro(res, ctx):
     result_pts = max(0, res.alloc - 2)
     units_total = 0
     units_ok = 0
+    vba_units = book_s.vba_units() if book_s else []
+    vba_credit = []          # 코드로 인정한 항목 (셀, 종류, 매크로명)
     # 값 diff
     wrong_cells = []
     for (r, c, co) in ctx["vdiffs"]:
         units_total += 1
         if judge.judge(r, c)[0]:
             units_ok += 1
-        else:
-            wrong_cells.append((r, c, co))
+            continue
+        mac = vba_covers(vba_units, co, "value")
+        if mac:
+            units_ok += 1
+            vba_credit.append((co, "value", mac))
+            continue
+        wrong_cells.append((r, c, co))
     # 서식 diff (셀 단위, 병합 인지 + edge 테두리)
     from openpyxl.utils.cell import coordinate_to_tuple
     a_members, a_anchors = merge_maps(sha)
@@ -3417,24 +4273,60 @@ def grade_macro(res, ctx):
                 ok = s_edges is not None and all(
                     (s_edges.get(key) or None) == (style or None)
                     for key, style in edge_info.get(coord, []))
-                if ok:
+                mac = None if ok else vba_covers(vba_units, coord, "border")
+                if ok or mac:
                     units_ok += 1
-                else:
-                    fmt_bad.append(f"{coord}(테두리)")
+                    if mac:
+                        vba_credit.append((coord, "border", mac))
+                    continue
+                exp_b, got_b = _border_props(
+                    [{"coord": coord, "edges": edge_info.get(coord, [])}],
+                    s_edges)
+                fmt_bad.append({
+                    "coord": coord, "kind": "border",
+                    "expected": exp_b, "got": got_b,
+                    "why": None if shs is not None else
+                    f"학생 파일에 '{asheet}' 시트가 없습니다"})
             continue
         for coord in payload:
             units_total += 1
+            sig_a = sig_s = "?"
             try:
                 r, c = coordinate_to_tuple(coord)
-                ok = shs is not None and \
-                    fmt_signature_m(sha, r, c, kind, a_members, a_anchors) \
-                    == fmt_signature_m(shs, r, c, kind, s_members, s_anchors)
+                sig_a = fmt_signature_m(sha, r, c, kind, a_members, a_anchors)
+                sig_s = fmt_signature_m(shs, r, c, kind, s_members,
+                                        s_anchors) if shs is not None else "?"
+                ok = shs is not None and sig_a == sig_s
+                if not ok and kind == "number_format" and shs is not None \
+                        and nf_display_equal(sha, shs, r, c, a_members,
+                                             s_members):
+                    ok = True
             except Exception:
                 ok = False
-            if ok:
+            mac = None if ok else vba_covers(vba_units, coord, kind)
+            if ok or mac:
                 units_ok += 1
-            else:
-                fmt_bad.append(f"{coord}({FMT_KIND_LABEL.get(kind, kind)})")
+                if mac:
+                    vba_credit.append((coord, kind, mac))
+                continue
+            raw_a = raw_s = None
+            if kind == "number_format":
+                try:
+                    raw_a = cell_raw_m(sha, r, c, a_members, "number_format")
+                    raw_s = cell_raw_m(shs, r, c, s_members, "number_format")
+                except Exception:
+                    pass
+            exp_d = _macro_fmt_desc(kind, sig_a, raw_a)
+            got_d = _macro_fmt_desc(kind, sig_s, raw_s)
+            why = None
+            if shs is None:
+                why = f"학생 파일에 '{asheet}' 시트가 없습니다"
+            elif exp_d is None:
+                why = "정답 파일의 서식을 읽을 수 없습니다"
+            elif got_d is None:
+                why = "내 파일의 서식을 읽을 수 없습니다"
+            fmt_bad.append({"coord": coord, "kind": kind,
+                            "expected": exp_d, "got": got_d, "why": why})
     if units_total:
         earned = int(round(result_pts * units_ok / units_total))
     else:
@@ -3456,17 +4348,56 @@ def grade_macro(res, ctx):
     if fmt_bad:
         by_kind = {}
         for b in fmt_bad:
-            m = re.match(r"^([A-Z]+\d+)\((.+)\)$", b)
-            if m:
-                by_kind.setdefault(m.group(2), []).append(m.group(1))
-        chips = [f"{k}: {', '.join(compress_coords(v)[:3])}"
-                 for k, v in by_kind.items()] or fmt_bad[:5]
+            by_kind.setdefault(b["kind"], []).append(b["coord"])
+        chips = [f"{FMT_KIND_LABEL.get(k, k)}: {', '.join(compress_coords(v)[:3])}"
+                 for k, v in by_kind.items()]
         res.details.append("매크로 서식 불일치: " + ", ".join(chips))
-        add_card(res, "매크로 서식 결과", 0, "macro",
-                 cells=[{"coord": ch, "expected": None, "got": None,
-                         "formula": None} for ch in chips[:5]],
+        cells = []
+        for b in fmt_bad[:6]:
+            label = FMT_KIND_LABEL.get(b["kind"], b["kind"])
+            if b["why"]:
+                exp = got = f"판정 불가: {b['why']}"
+                if b["expected"]:
+                    exp = b["expected"]
+                cells.append({"coord": f"{b['coord']} ({label})",
+                              "expected": exp, "got": got, "formula": None})
+            else:
+                cells.append({"coord": f"{b['coord']} ({label})",
+                              "expected": b["expected"],
+                              "got": b["got"] or "(서식 없음)",
+                              "formula": None})
+        props = []
+        for k, coords in by_kind.items():
+            first = next(b for b in fmt_bad if b["kind"] == k)
+            props.append({
+                "name": f"{FMT_KIND_LABEL.get(k, k)}"
+                        f"({', '.join(compress_coords(coords)[:2])})",
+                "expected": first["expected"]
+                or f"판정 불가: {first['why'] or '알 수 없음'}",
+                "got": first["got"]
+                or f"판정 불가: {first['why'] or '알 수 없음'}"})
+        code_note = ""
+        if vba_units:
+            code_note = (" 내 VBA 코드에는 이 셀·서식을 지정하는 문장이 "
+                         "없었습니다.")
+        elif book_s.has_vba():
+            code_note = " 내 파일의 VBA 코드를 읽지 못해 코드 인정은 못 했습니다."
+        else:
+            code_note = (" 내 파일에 매크로(vbaProject)가 없습니다 — 매크로는 "
+                         "xlsm(매크로 사용 통합 문서)으로 저장해야 남습니다.")
+        add_card(res, "매크로 서식 결과", 0, "macro", cells=cells, props=props,
+                 note="정답 파일의 매크로 실행 결과 서식과 내 파일을 셀 단위로 "
+                      "비교했습니다." + code_note,
                  hint="서식 매크로가 지시한 서식(채우기·글꼴 등)을 정확히 "
-                      "기록했는지 확인하세요.")
+                      "기록하고, 기록 후 단추를 눌러 실제로 실행했는지 "
+                      "확인하세요.")
+    if vba_credit:
+        txt = ", ".join(f"{co}({FMT_KIND_LABEL.get(k, k)}) ← {m}"
+                        for co, k, m in vba_credit[:5])
+        res.notes.append(
+            "실행 결과 서식/값은 정답과 다르지만 매크로 코드에 해당 동작이 "
+            f"있어 인정했습니다: {txt}. 실제 시험은 '생성하여 실행'까지 "
+            "요구하므로 단추를 눌러 결과까지 남기세요.")
     # 단추/도형 존재 +2
     btn_a = book_a.sheet_has_drawing(asheet)
     btn_s = ssheet and book_s.sheet_has_drawing(ssheet)
@@ -3482,12 +4413,13 @@ def grade_macro(res, ctx):
     else:
         earned += 2 if units_total == 0 or units_ok == units_total else 0
     res.earned = min(res.alloc, earned)
+    _macro_evidence_notes(res, book_a, book_s, asheet, ssheet)
     # vba 보존 경고
     if book_a.has_vba() and not book_s.has_vba():
         res.notes.append("학생 파일에 매크로(vbaProject)가 없습니다. "
                          "매크로는 xlsm 형식으로 저장해야 보존됩니다.")
-    res.notes.append("매크로 코드 자체가 아니라 실행 결과(값/서식)를 기준으로 "
-                     "채점합니다.")
+    res.notes.append("매크로는 실행 결과(값·서식)를 기준으로 채점하고, 결과가 "
+                     "없으면 VBA 코드에 지시 동작이 있는지까지 확인합니다.")
 
 
 def grade_chart(res, ctx):
@@ -4182,8 +5114,9 @@ def explain_formula(formula):
 def explain_number_format(nf):
     """number_format 코드 문자열의 한국어 해설."""
     try:
-        if not nf or nf == "General":
-            return "기본 표시 형식(General)입니다."
+        nf = nf_display(nf)
+        if not nf or nf in ("General", _NF_GENERAL_KO):
+            return f"기본 표시 형식({_NF_GENERAL_KO})입니다."
         lits = [x for x in re.findall(r'"([^"]*)"', nf) if x.strip()]
         s = re.sub(r'"[^"]*"', "", nf)
         low = s.lower()
