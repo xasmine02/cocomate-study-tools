@@ -229,9 +229,8 @@
   .g-tick{position:absolute; top:0; bottom:0; width:1px; background:var(--card); opacity:.9}
   .g-gauge-label{margin:6px 0 0; font-size:13.5px; font-weight:600}
   .g-lines{margin-top:4px; display:flex; flex-wrap:wrap; gap:4px 14px; align-items:baseline; font-size:12.5px; color:var(--muted)}
-  .g-lock{color:var(--warn); font-weight:600}
-  .g-lock[hidden]{display:none}
-  .g-lock .gl-time{font-family:"IBM Plex Mono", ui-monospace, monospace}
+  .g-bands{color:var(--muted)}
+  .g-bands .gb-todo{color:var(--warn); font-weight:700}
   .g-badges{margin-top:11px; display:grid; grid-template-columns:repeat(auto-fill, minmax(148px, 1fr)); gap:6px}
   .g-badge{display:flex; align-items:center; gap:7px; padding:5px 8px; border:1px solid var(--line); background:var(--bg); min-width:0}
   .g-badge .gb-icon{flex:0 0 auto; min-width:38px; text-align:center; padding:1px 5px; border:1px solid var(--line); background:var(--card); font-size:11px; font-weight:700; font-family:"IBM Plex Mono", ui-monospace, monospace; color:var(--muted)}
@@ -465,6 +464,37 @@
   .rc-bar-val{text-align:right; color:var(--muted); font-variant-numeric:tabular-nums}
   .rc-weak{margin:10px 0 0; font-size:13px; color:var(--warn); font-weight:700}
 
+  /* ---------- 점수대 세트 보드 (2.7.0) ---------- */
+  .board-summary{margin:14px 0 0; font-size:13.5px; font-weight:700; color:var(--muted)}
+  .board-summary .bs-todo{color:var(--warn)}
+  .set-board{display:grid; gap:14px; margin-top:10px}
+  .band-group{background:var(--card); border:1px solid var(--line); box-shadow:var(--shadow); padding:12px 14px}
+  .band-group.todo{border-color:var(--warn)}
+  .band-head{display:flex; align-items:baseline; gap:8px 10px; flex-wrap:wrap}
+  .band-chip{
+    font-size:12.5px; font-weight:700; padding:2px 10px; white-space:nowrap;
+    border:1px solid var(--line); background:var(--bg); color:var(--muted);
+  }
+  .band-chip.todo{border-color:var(--warn); background:var(--warn-soft); color:var(--warn)}
+  .band-chip.ok{border-color:var(--accent); background:var(--accent-soft); color:var(--accent-deep)}
+  .band-desc{font-size:12.5px; color:var(--muted); min-width:0}
+  .band-sets{display:grid; gap:8px; margin-top:10px}
+  .bset{border:1px solid var(--line); background:var(--bg); padding:9px 11px; min-width:0}
+  .bset-head{display:flex; align-items:baseline; gap:6px 12px; flex-wrap:wrap}
+  .bset-name{font-weight:700; color:var(--accent-deep); min-width:0; overflow-wrap:anywhere}
+  .bset-best{
+    margin-left:auto; font-size:12.5px; font-weight:700; white-space:nowrap;
+    font-variant-numeric:tabular-nums; color:var(--ink);
+  }
+  .bset-meta{margin:3px 0 0; font-size:12.5px; color:var(--muted); font-variant-numeric:tabular-nums; overflow-wrap:anywhere}
+  .bset-hist{font-family:"IBM Plex Mono", ui-monospace, monospace}
+  .bset-up{margin:3px 0 0; font-size:12.5px; font-weight:700; color:var(--accent-deep)}
+  .bset .act-row{margin-top:7px}
+  .board-note{margin:10px 0 0; font-size:12.5px; color:var(--muted)}
+  @media (max-width:420px){
+    .bset-best{margin-left:0; flex-basis:100%}
+  }
+
   /* ---------- 함수 퀴즈 ---------- */
   .sr-only{position:absolute; width:1px; height:1px; overflow:hidden; clip:rect(0 0 0 0); clip-path:inset(50%)}
   .quiz-bar{
@@ -688,7 +718,7 @@
         <div class="hero-top">
           <div class="hero-title">
             <p class="fx"><span class="fx-tag">fx</span><code>=DATE(2026,9,17)-TODAY()</code><span class="fx-out" id="fx-out">11</span></p>
-            <p class="hero-sub"><strong>9/3 (목) 시작 · 9/16 (수) 마감</strong> · 하루 한 세트 40분 완주 → 채점이면 그 날 클리어 · 시험 모드는 하루 1회 · 목표는 70 → 80 → 90 → 100 · <strong>1차 9/17 (목)</strong> · <strong>2차 9/18 (금)</strong> 이틀 연속 — 70점 합격</p>
+            <p class="hero-sub"><strong>9/3 (목) 시작 · 9/16 (수) 마감</strong> · 하루 한 세트 40분 완주 → 채점이면 그 날 클리어 · 응시 횟수 제한 없음(예습·복습 자유) · 목표는 70 → 80 → 90 → 100 · <strong>1차 9/17 (목)</strong> · <strong>2차 9/18 (금)</strong> 이틀 연속 — 70점 합격</p>
           </div>
           <div class="hero-d"><div class="d-num" id="d-num" aria-label="1차 시험까지 남은 날">D-11</div><p class="d-sub" id="d-sub">2차 9/18 (금) · D-12</p></div>
         </div>
@@ -701,7 +731,7 @@
           <p class="g-gauge-label" id="tier-label"></p>
           <div class="g-lines">
             <span class="g-streak" id="streak-line"></span>
-            <span class="g-lock" id="lock-line" hidden></span>
+            <span class="g-bands" id="band-line"></span>
           </div>
           <div class="g-badges" id="badge-grid"></div>
           <p class="g-badge-note" id="badge-note"></p>
@@ -738,7 +768,7 @@
           </div>
           <div class="strip-legend">
             <span class="key"><i class="k-today"></i>오늘 (자동 표시)</span>
-            <span class="key"><i class="k-mock"></i>모의 1세트 (하루 1회)</span>
+            <span class="key"><i class="k-mock"></i>모의 추천 1세트 (횟수 제한 없음)</span>
             <span class="key"><i class="k-mock2"></i>자유 복습</span>
             <span class="key"><i class="k-exam"></i>시험일 (1차 9/17 · 2차 9/18)</span>
           </div>
@@ -758,7 +788,7 @@
       </div>
 
       <div class="sec-head"><h2>오늘의 할 일 <span id="today-date"></span></h2></div>
-      <p class="sec-sub" id="today-sub">오늘 배정 카드 — 하루 한 세트입니다. 완주 + 채점이면 오늘은 클리어이고, 70점 미만인 세트와 현재 목표(70 → 80 → 90 → 100)에 못 미친 세트가 다음 날짜에 다시 배정됩니다. 기록이 바뀌면 매 로드 때 다시 계산합니다.</p>
+      <p class="sec-sub" id="today-sub">오늘 <strong>추천</strong> 카드 — 하루 한 세트가 기준이지만 응시 횟수 제한은 없습니다(예습·복습 자유). 완주 + 채점이면 오늘은 클리어이고, 70점 미만인 세트와 현재 목표(70 → 80 → 90 → 100)에 못 미친 세트가 다음 날짜에 다시 추천됩니다. 기록이 바뀌면 매 로드 때 다시 계산합니다.</p>
       <div id="today-slot"></div>
 
       <div class="sec-head"><h2>내 성적</h2></div>
@@ -783,6 +813,11 @@
         <p class="import-status" aria-live="polite"></p>
       </div>
       <div id="results-list" class="result-list"></div>
+
+      <div class="sec-head"><h2>세트 보드 — 점수대별</h2></div>
+      <p class="sec-sub" id="board-sub">세트를 최고점 구간(미응시 · 미달 · 합격 · 숙련 · 고득점 · 만점)으로 묶었습니다. 아직 목표에 못 미친 세트가 위쪽에 모입니다 — 골라서 다시 풀면 최고점이 갱신되고 밴드가 올라갑니다. 응시 횟수 제한은 없습니다.</p>
+      <p class="board-summary" id="board-summary" aria-live="polite"></p>
+      <div id="set-board" class="set-board"></div>
 
       <div class="sec-head"><h2>배점 구조 — 어디서 70점을 만드나</h2></div>
       <p class="sec-sub">12문항 · 100점 만점 · 합격선 70점 · 시험시간 40분 · MS Office 2021 (LTSC) 기준</p>
@@ -815,7 +850,7 @@
   <!-- ============ 탭 2 · 일정 (9/3 – 9/16) ============ -->
   <section role="tabpanel" id="panel-stage1" aria-labelledby="tab-stage1" hidden>
     <div class="sec-head"><h2>일정 — 하루 한 세트 (9/3 – 9/16)</h2></div>
-    <p class="sec-sub">하루 1세트 40분 완주 → 채점까지가 그 날 클리어(오답노트·오답 재풀이·함수 퀴즈는 선택) · 시험 모드는 하루 1회 · 목표는 70(합격선) → 80 → 90 → 100 단계로 올라가고, 현재 목표는 지금까지의 최고점으로 정해집니다 · 세트 선택은 ① 미응시 ② 70점 미만(최고점 낮은 순) ③ 현재 목표 미달 순, 더 배정할 세트가 없으면 그 날은 자유 복습 · 9/17 (목) 1차 · 9/18 (금) 2차 시험</p>
+    <p class="sec-sub">하루 한 세트 40분 완주 → 채점까지가 그 날 클리어(오답노트·오답 재풀이·함수 퀴즈는 선택) · <strong>응시 횟수 제한 없음</strong> — 날짜별 세트는 강제가 아니라 <strong>추천</strong>이라 예습·복습으로 얼마든지 더 풀 수 있습니다 · 목표는 70(합격선) → 80 → 90 → 100 단계로 올라가고, 현재 목표는 지금까지의 최고점으로 정해집니다 · 추천 순서는 ① 미응시 ② 70점 미만(최고점 낮은 순) ③ 현재 목표 미달 순, 더 추천할 세트가 없으면 그 날은 자유 복습 · 9/17 (목) 1차 · 9/18 (금) 2차 시험</p>
     <p class="sec-sub" id="fixed-plan"></p>
     <div class="day-grid" id="grid-prep">
       <article class="day-card" data-day="d00">
@@ -837,7 +872,7 @@
       </article>
     </div>
     <div class="sec-head"><h2>날짜별 배정 — 자동 재계산</h2></div>
-    <p class="sec-sub">하루 1세트 — 지난 날은 완료/응시 없음, 오늘은 진행 중, 앞으로는 예정. 기록이 바뀌면 다음 로드 때 자동으로 다시 계산됩니다(70점 미만 세트는 다시 배정, 현재 목표를 넘긴 세트는 빠짐). 마감일 9/16은 마지막 세트 + 실수 노트 1회독.</p>
+    <p class="sec-sub">하루 추천 한 세트 — 지난 날은 완료/응시 없음, 오늘은 진행 중, 앞으로는 예정. 기록이 바뀌면 다음 로드 때 자동으로 다시 계산됩니다(70점 미만 세트는 다시 추천, 현재 목표를 넘긴 세트는 빠짐). 마감일 9/16은 마지막 세트 + 실수 노트 1회독.</p>
     <div class="day-grid" id="grid-stage1"></div>
   </section>
 
@@ -1364,7 +1399,7 @@
   var ROUTINE_START = "2026-09-03";
   var EXAM_DATES = ["2026-09-17", "2026-09-18"];   /* 시험 1 · 시험 2 (이틀 연속) */
   var GOAL_TIERS = [70, 80, 90, 100];        /* 목표 사다리 (70 = 합격선, 그 위는 승급 목표) */
-  var PASS_LINE = 70, DAILY_CAP = 1;         /* 하루 1세트 = 시험 모드 하루 1회 */
+  var PASS_LINE = 70, DAILY_CAP = 1;         /* 하루 추천 1세트 (v2.7.0: 응시 횟수 제한은 없음) */
   var AUTO_NAME = "자동 선택";
   /* 고정 일정표 — 시험장 ROUTINE_PLAN d01~d14 와 글자 그대로 동일.
      하루 1세트: d01~d09 는 첫응시 우선순위 9세트, d10~d14 는 기록을 보고 자동 선택(null).
@@ -1475,7 +1510,7 @@
     }
     return { kind: "after" };
   }
-  /* 기본 용량: 주말·평일·마감일 구분 없이 언제나 1세트 (하루 1회 응시) */
+  /* 기본 용량: 주말·평일·마감일 구분 없이 언제나 추천 1세트 (응시 횟수 제한이 아님) */
   function baseCapacity(d, segEnd) { return DAILY_CAP; }
   /* 점수가 있는 시험·수동 기록만 (부분연습·오답재풀이·중단 응시 제외) */
   function scoredRecords(records) {
@@ -1621,6 +1656,82 @@
     done.forEach(function(a){ if (!latest || a.when > latest.when) { latest = a; } });
     return { done: done.length, total: items.length, items: items, latest: latest };
   }
+
+  /* ===== 점수대 밴드 · 세트 보드 (시험장 2.7.0 과 같은 정의 — 규약 sets[].band · bands) =====
+     세트의 최고점을 여섯 구간으로 나눠 "아직 목표에 못 미친(미완성) 세트"를 위쪽에 모아 보여 준다.
+     입력은 규약 records[] 하나뿐이라 연동 모드·폴백 모드가 언제나 같은 보드를 낸다.
+     색만으로 구분하지 않도록 화면에는 밴드 이름 글자를 언제나 함께 쓴다. */
+  var SCORE_BANDS = [
+    { id: "none",    name: "미응시",  desc: "아직 응시 기록이 없는 세트 — 먼저 한 번 풀어 보세요" },
+    { id: "fail",    name: "미달",    desc: "최고점이 합격선 70점에 못 미친 세트 — 1순위로 다시 풀기" },
+    { id: "pass",    name: "합격",    desc: "합격선은 넘겼지만 아직 80점 미만" },
+    { id: "skilled", name: "숙련",    desc: "80점대 — 90점까지 한 걸음" },
+    { id: "high",    name: "고득점",  desc: "90점대 — 만점까지 한 걸음" },
+    { id: "perfect", name: "만점",    desc: "100점 — 더 올릴 점수가 없는 세트" }
+  ];
+  var BAND_LABELS = {};
+  SCORE_BANDS.forEach(function(b){ BAND_LABELS[b.id] = b.name; });
+  /* 최고점 → 밴드 id (기록 없음 none · 0~69 fail · 70~79 pass · 80~89 skilled · 90~99 high · 100 perfect) */
+  function scoreBand(best) {
+    if (typeof best !== "number" || !isFinite(best)) { return "none"; }
+    if (best >= 100) { return "perfect"; }
+    if (best >= 90) { return "high"; }
+    if (best >= 80) { return "skilled"; }
+    if (best >= PASS_LINE) { return "pass"; }
+    return "fail";
+  }
+  function bandLabel(id) { return BAND_LABELS[id] || ""; }
+  /* 세트 하나의 진행 상황 (시험장 set_progress 와 동일) */
+  function setProgress(norm, records) {
+    var key = String(norm || "");
+    var recs = key ? achRecords(records).filter(function(r){ return r.norm === key; }) : [];
+    var scores = recs.map(function(r){ return r.total; });
+    var best = null;
+    scores.forEach(function(v){ if (best === null || v > best) { best = v; } });
+    var prev = scores.slice(0, -1), prevBest = null;
+    prev.forEach(function(v){ if (prevBest === null || v > prevBest) { prevBest = v; } });
+    var improved = scores.length > 0 && (prevBest === null || scores[scores.length - 1] > prevBest);
+    return { attempts: scores.length, best: best, band: scoreBand(best), scores: scores,
+             last_date: recs.length ? recs[recs.length - 1].date : null,
+             prev_best: prevBest, prev_band: prevBest === null ? "none" : scoreBand(prevBest),
+             best_delta: (improved && prevBest !== null) ? (best - prevBest) : null,
+             improved: improved };
+  }
+  /* 점수대 세트 보드 (시험장 score_board 와 동일) — sets 는 {name, norm|key} 목록 */
+  function scoreBoard(sets, records) {
+    var rows = (sets || []).map(function(s){
+      var norm = String((s && (s.norm !== undefined ? s.norm : s.key)) || "");
+      var row = { name: String((s && s.name) || ""), norm: norm };
+      var pg = setProgress(norm, records);
+      Object.keys(pg).forEach(function(k){ row[k] = pg[k]; });
+      return row;
+    });
+    var bands = SCORE_BANDS.map(function(b){
+      var mine = [];
+      rows.forEach(function(r, i){ if (r.band === b.id) { mine.push({ i: i, r: r }); } });
+      if (b.id !== "none") {
+        mine.sort(function(a, c){
+          if (a.r.best !== c.r.best) { return a.r.best - c.r.best; }
+          if (a.r.name !== c.r.name) { return a.r.name < c.r.name ? -1 : 1; }
+          return a.i - c.i;
+        });
+      }
+      return { id: b.id, name: b.name, desc: b.desc, count: mine.length,
+               sets: mine.map(function(x){ return x.r.norm; }) };
+    });
+    return { sets: rows, bands: bands };
+  }
+  /* 밴드 개수 요약 한 줄: '미응시 3 · 미달 2 · 합격 1' (빈 밴드는 뺀다) */
+  function bandSummaryText(bands) {
+    var parts = (bands || []).filter(function(b){ return b.count; })
+      .map(function(b){ return b.name + " " + b.count; });
+    return parts.length ? parts.join(" · ") : "세트 없음";
+  }
+  /* 최고점 갱신 문구: '최고 58 → 76 (+18)'. 갱신이 아니면 '' */
+  function bestUpdateText(row) {
+    if (!row || !row.improved || row.prev_best === null || row.prev_best === undefined) { return ""; }
+    return "최고 " + row.prev_best + " → " + row.best + " (+" + row.best_delta + ")";
+  }
   /* 목표 문구: '목표 70점(합격선)' · '목표 80점(승급)' */
   function goalLabel(goal) {
     if (!goal) { return ""; }
@@ -1665,7 +1776,7 @@
   }
   /*
    * 적응형 일정 — 시험장 v2.5.0 build_adaptive_plan 과 동일 규격 (결정적)
-   *  · 하루 용량은 언제나 1세트(= 시험 모드 하루 1회). 오늘 이미 응시했으면 오늘 용량 0.
+   *  · 하루 **추천** 1세트. v2.7.0: 응시 횟수 제한이 없어 오늘 이미 응시했어도 추천은 그대로 남는다.
    *    주말 2세트·밀림 승격·용량 확장·'선택' 강등·전 세트 완주 보장은 없앴다(경고도 없음).
    *  · 목표는 사다리 70 → 80 → 90 → 100. 현재 목표 = 아직 달성하지 못한 가장 낮은 단계(전체 기록 최고점 기준).
    *  · 세트 선택 ① 미응시(우선순위 순, kind first) ② 70점 미만(최고점 낮은 순, kind retry)
@@ -1691,15 +1802,14 @@
     var byDate = {};
     scoredRecords(recs).forEach(function(r){ (byDate[r.date] = byDate[r.date] || []).push(r); });
     plan.todayRecords = byDate[today] || [];
-    plan.todayLocked = (byDate[today] || []).length > 0;      /* 하루 1회 제한 */
+    plan.todayLocked = false;              /* v2.7.0: 응시 제한 없음 (하위 호환 필드) */
 
-    /* 학습일 · 용량 (하루 1세트, 오늘 이미 응시했으면 0) */
+    /* 학습일 · 용량 (하루 추천 1세트 — 오늘 이미 응시했어도 그대로 둔다) */
     var days = [];
     for (var d = start; d <= end; d = addDays(d, 1)) { if (EXAM_DATES.indexOf(d) < 0) { days.push(d); } }
     var cap = {};
     days.forEach(function(dd){ cap[dd] = DAILY_CAP; });
-    if (cap[today] !== undefined && plan.todayLocked) { cap[today] = 0; }
-    days.forEach(function(dd){ plan.attemptsLeft += cap[dd]; });
+    plan.attemptsLeft = days.length;       /* 남은 학습일 (오늘 포함) */
 
     /* 풀 — ① 미응시(우선순위) ② 70점 미만 ③ 현재 목표 미달 */
     var goal = lv.current_goal;
@@ -1766,8 +1876,8 @@
       if (EXAM_DATES.indexOf(md) < 0 && !(byDate[md] && byDate[md].length)) { missed.push(md); }
     }
     plan.missed = missed;
-    plan.reason = lv.tier === "perfect" ? ("만점 달성 · 남은 응시 기회 " + plan.attemptsLeft + "회")
-                                        : ("현재 목표 " + goal + "점 · 남은 응시 기회 " + plan.attemptsLeft + "회");
+    plan.reason = lv.tier === "perfect" ? ("만점 달성 · 남은 학습일 " + plan.attemptsLeft + "일")
+                                        : ("현재 목표 " + goal + "점 · 남은 학습일 " + plan.attemptsLeft + "일");
     plan.doneInPhase = scoredRecords(recs).filter(function(r){
       return r.date >= segStart && r.date <= end && r.date <= today && EXAM_DATES.indexOf(r.date) < 0;
     }).length;
@@ -1779,8 +1889,8 @@
     if (!plan) { return ""; }
     if (plan.kind === "exam") { return plan.examNo === 1 ? "오늘은 1차 시험일 — 시험 후 저녁에는 세트 없이 복기 메모·실수 노트 1회독만 (시험일 탭)." : "오늘은 2차 시험일 — 아침에 실수 노트와 어제 복기 메모만 훑고 출발 (시험일 탭)."; }
     if (plan.kind === "after") { return "루틴(9/3 – 9/16)과 시험 2회(9/17·18)가 끝났습니다."; }
-    if (plan.reason) { return plan.reason + (plan.todayLocked ? " · 오늘 응시 완료 — 다음 응시는 내일" : ""); }
-    return "하루 1세트 진행 중 — 남은 응시 기회 " + plan.attemptsLeft + "회 (마감 " + fmtMD(plan.deadline) + ")";
+    if (plan.reason) { return plan.reason + (plan.todayRecords.length ? " · 오늘 " + plan.todayRecords.length + "회 응시함 (횟수 제한 없음)" : ""); }
+    return "하루 한 세트 추천 — 남은 학습일 " + plan.attemptsLeft + "일 (마감 " + fmtMD(plan.deadline) + ")";
   }
   function validateResult(j) {
     var missing = [];
@@ -1942,12 +2052,12 @@
     /* 클리어 = 완주 + 채점 (수동 기록은 점수 입력이 채점) — 점수·오답노트·재풀이는 조건이 아님 */
     return { graded: graded, noWrong: noWrong, manual: manual, review: review, retry: retry, cleared: graded || manual };
   }
-  /* 오늘 카드 클리어: 오늘 배정이 남지 않았고(= 응시 완료) 오늘 기록이 완주+채점까지 끝났으면 클리어 */
+  /* 오늘 카드 클리어 = 오늘 기록이 완주 + 채점까지 끝났으면 클리어.
+     v2.7.0: 응시 제한이 없어 오늘 추천 슬롯은 응시 뒤에도 남으므로 배정 잔량은 클리어 조건이 아니다. */
   function todayCleared() {
     if (!plan || plan.phase === 0) { return false; }
     var td = plan.days.filter(function(x){ return x.date === plan.today; })[0];
     if (!td) { return false; }
-    if (td.items.length) { return false; }
     if (!plan.todayRecords.length) { return false; }
     if (linked()) { return plan.todayRecords.every(function(r){ return stageOf(r).cleared; }); }
     return tasksDone(dayKey(plan.today));
@@ -1957,14 +2067,14 @@
     if (!plan || plan.phase === 0) { return out; }
     var td = plan.days.filter(function(x){ return x.date === plan.today; })[0];
     if (!td) { return out; }
-    if (td.items.length) { out.push("세트 " + td.items.length + "개 완주 + 채점"); }
+    if (td.items.length && !plan.todayRecords.length) { out.push("추천 세트 " + td.items.length + "개 완주 + 채점"); }
     if (linked()) {
       plan.todayRecords.forEach(function(r){
         if (stageOf(r).cleared) { return; }
         out.push(r.name + ": ② 채점");
       });
     } else if (plan.todayRecords.length && !tasksDone(dayKey(plan.today))) { out.push("① 완주 · ② 채점 체크"); }
-    if (!td.items.length && !plan.todayRecords.length) { out.push(plan.allClear ? "전 세트 목표 달성 — 자유 복습" : "오늘 배정 없음 — 자유 복습"); }
+    if (!td.items.length && !plan.todayRecords.length) { out.push(plan.allClear ? "전 세트 목표 달성 — 자유 복습" : "오늘 추천 없음 — 자유 복습"); }
     return out;
   }
   function makeClone(card) {
@@ -2164,8 +2274,8 @@
     var freeSlots = day ? (day.free || 0) : 0;
     var capTxt;
     if (mode === "past") { capTxt = recs.length ? "응시 완료" : "응시 없음"; }
-    else if (day && items.length) { capTxt = day.deadlineDay ? "마감일 · 1세트 + 실수노트" : "1세트"; }
-    else if (mode === "today" && recs.length) { capTxt = "오늘 응시 완료"; }
+    else if (day && items.length) { capTxt = day.deadlineDay ? "마감일 · 추천 1세트 + 실수노트" : "추천 1세트"; }
+    else if (mode === "today" && recs.length) { capTxt = "오늘 " + recs.length + "회 응시함"; }
     else if (freeSlots > 0) { capTxt = "자유 복습"; }
     else { capTxt = "배정 없음"; }
     var stTxt, stCls;
@@ -2177,11 +2287,11 @@
     if (mode === "next") {
       h3 = "다음 구간 — 시험 후 기록을 반영해 시험장이 자동 계산";
     } else if (mode === "past") {
-      h3 = recs.length ? recs.map(function(r){ return setName(r.set, r.name); }).join(" + ") : "응시 없음 — 하루 1세트라 지난 기회는 되돌리지 않습니다";
+      h3 = recs.length ? recs.map(function(r){ return setName(r.set, r.name); }).join(" + ") : "응시 없음 — 지난 날은 되돌리지 않습니다 (세트 보드에서 언제든 다시 풀 수 있어요)";
     } else if (items.length) {
       h3 = items.map(function(it){ return (it.kind === "retry" ? "재응시 · " : (it.kind === "goal" ? "목표 도전 · " : (it.kind === "redo" ? "재도전 · " : ""))) + dispName(it); }).join(" + ");
     } else if (mode === "today" && recs.length) {
-      h3 = "오늘 응시 완료 — " + recs.map(function(r){ return setName(r.set, r.name); }).join(" + ") + " · 다음 응시는 내일";
+      h3 = "오늘 응시 — " + recs.map(function(r){ return setName(r.set, r.name); }).join(" + ") + " · 더 풀어도 됩니다 (횟수 제한 없음)";
     } else if (plan && plan.allClear) {
       h3 = "전 세트 목표 달성 — 자유 복습 (필수 과제 없음)";
     } else {
@@ -2320,7 +2430,7 @@
   function renderFixedPlan() {
     var el = document.getElementById("fixed-plan");
     if (!el) { return; }
-    el.textContent = "기본 일정표(기록 없을 때 · 하루 1세트): " + FIXED_PLAN.map(function(f){
+    el.textContent = "기본 일정표(기록 없을 때 · 하루 추천 1세트): " + FIXED_PLAN.map(function(f){
       var body = f.sets.map(function(k){ return k ? (SET_SHORT[k] || k) : "자동 선택"; }).join("+");
       return fmtMD(f.date) + " " + body + (f.special ? "+실수 노트" : "");
     }).join(" · ") + " · 목표는 기록 최고점에 따라 70 → 80 → 90 → 100 으로 올라갑니다";
@@ -2356,7 +2466,7 @@
         (plan.level.tier === "perfect" ? "만점 달성" : "현재 목표 " + plan.level.current_goal + "점")
         + " · 최고 " + (plan.level.best_total === null ? "—" : plan.level.best_total + "점")
         + " · 연속 " + plan.streak.current + "일(최고 " + plan.streak.best + "일)"
-        + " · 남은 응시 기회 " + plan.attemptsLeft + "회 · 합격 " + plan.passedSets + "/" + plan.totalSets + "세트 · 마감 " + fmtMD(plan.deadline);
+        + " · 남은 학습일 " + plan.attemptsLeft + "일 · 합격 " + plan.passedSets + "/" + plan.totalSets + "세트 · 마감 " + fmtMD(plan.deadline);
     }
   }
   /* ---------- 게임형 히어로 (티어 · 게이지 · 연속 · 도전 과제 · 오늘 잠금) ---------- */
@@ -2379,23 +2489,18 @@
     return out;
   }
   function gameRecords() { return linked() ? arr(api.st.records) : fallbackAchRecords(); }
-  /* 자정까지 남은 시간 'HH:MM:SS' (브라우저 시계 기준) */
-  function lockCountdown() {
-    var now = new Date();
-    var next = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1, 0, 0, 0, 0);
-    var secs = Math.max(0, Math.floor((next - now) / 1000));
-    return pad(Math.floor(secs / 3600)) + ":" + pad(Math.floor(secs % 3600 / 60)) + ":" + pad(secs % 60);
-  }
-  function renderLockLine() {
-    var el = document.getElementById("lock-line");
+  /* 히어로 점수대 줄 — '점수대 미응시 3 · 미달 2 …' + 아직 합격선을 못 넘은 세트 수 */
+  function renderBandLine(board) {
+    var el = document.getElementById("band-line");
     if (!el) { return; }
-    if (!plan || !plan.todayLocked || iso !== plan.today) { el.hidden = true; el.textContent = ""; return; }
-    el.hidden = false;
     el.textContent = "";
-    el.appendChild(document.createTextNode("오늘 응시 완료 · 다음 응시까지 "));
+    if (!board || !board.bands.length) { return; }
+    var todo = board.bands.filter(function(b){ return b.id === "none" || b.id === "fail"; })
+      .reduce(function(a, b){ return a + b.count; }, 0);
+    el.appendChild(document.createTextNode("점수대 " + bandSummaryText(board.bands) + " · "));
     var t = document.createElement("span");
-    t.className = "gl-time";
-    t.textContent = lockCountdown();
+    t.className = "gb-todo";
+    t.textContent = todo ? ("미완성 " + todo + "세트") : "전 세트 합격선 통과";
     el.appendChild(t);
   }
   function renderGame() {
@@ -2446,9 +2551,8 @@
     var sline = document.getElementById("streak-line");
     if (sline) {
       sline.textContent = "연속 " + stk.current + "일 (최고 " + stk.best + "일) · "
-        + (stk.today_done ? "오늘 응시 완료" : "오늘 미응시");
+        + (stk.today_done ? "오늘 응시함" : "오늘 미응시");
     }
-    renderLockLine();
     /* 도전 과제 그리드 */
     var summ = achievementSummary(recs);
     var grid = document.getElementById("badge-grid");
@@ -2560,7 +2664,7 @@
     else if (iso === EXAM2_ISO) { note.textContent = "오늘은 2차 시험일입니다. 아침에 실수 노트와 어제 복기 메모만 한 번 훑고 출발하세요."; }
     else if (plan.phase === 0) { note.textContent = "루틴 기간이 지났습니다."; }
     else if (!card) { note.textContent = "오늘은 배정이 없습니다."; }
-    else if (plan.todayLocked) { note.textContent = "오늘 응시 완료 — 하루 1세트 루틴입니다. 다음 응시는 내일, 남는 시간엔 오답노트·실수 노트·함수 퀴즈(선택)."; }
+    else if (plan.todayRecords.length) { note.textContent = "오늘 " + plan.todayRecords.length + "회 응시했습니다 — 응시 횟수 제한은 없어요. 아래 세트 보드에서 점수를 올리고 싶은 세트를 골라 바로 다시 풀 수 있습니다."; }
     else if (plan.allClear) { note.textContent = "전 세트가 현재 목표를 넘었습니다 — 오늘은 자유 복습."; }
     else { note.textContent = "오늘 한 세트, 40분 완주 → 채점이면 클리어 (" + (plan.level.tier === "perfect" ? "만점 달성" : goalLabel(plan.level.current_goal)) + ")."; }
     slot.appendChild(note);
@@ -2583,7 +2687,7 @@
     if (status) {
       status.textContent = plan.phase === 0 ? "루틴 종료" :
         fmtMD(iso) + " · 합격 " + plan.progress.done + " / 전체 " + plan.progress.need + "세트"
-        + (td && td.items.length ? " · 오늘 " + td.items.length + "세트" : (plan.todayLocked ? " · 오늘 응시 완료" : " · 자유 복습"));
+        + (td && td.items.length ? " · 오늘 추천 " + td.items.length + "세트" : (plan.todayRecords.length ? " · 오늘 " + plan.todayRecords.length + "회 응시함" : " · 자유 복습"));
     }
     banner.textContent = "";
     slot.textContent = "";
@@ -2681,6 +2785,138 @@
       list.appendChild(card);
     });
   }
+  /* ---------- 점수대 세트 보드 ---------- */
+  /* 보드 입력은 규약 sets[]·records[] 하나뿐이라 연동 모드·폴백 모드가 같은 결과를 낸다.
+     연동 모드는 시험장이 이미 계산해 보낸 sets[].band·bands 를 그대로 쓰고, 값이 없거나
+     형식이 어긋나면(구 버전 시험장·폴백) 같은 정의의 순수 함수로 직접 계산한다. */
+  function boardSets() { return linked() ? api.sets : planSets; }
+  function serverBoard() {
+    if (!linked() || !Array.isArray(api.st.bands) || api.st.bands.length !== SCORE_BANDS.length) { return null; }
+    var rows = [], ok = true;
+    arr(api.st.sets).forEach(function(s){
+      if (!ok || !s || typeof s.band !== "string" || !BAND_LABELS[s.band] || !Array.isArray(s.scores)) { ok = false; return; }
+      rows.push({ name: String(s.name || "?"), norm: String(s.norm || ""), band: s.band,
+                  scores: s.scores.filter(function(v){ return typeof v === "number"; }),
+                  best: (typeof s.best === "number") ? s.best : null,
+                  attempts: (typeof s.attempts === "number") ? s.attempts : 0,
+                  last_date: (typeof s.last_date === "string") ? s.last_date : null,
+                  prev_best: (typeof s.prev_best === "number") ? s.prev_best : null,
+                  prev_band: (typeof s.prev_band === "string") ? s.prev_band : "none",
+                  best_delta: (typeof s.best_delta === "number") ? s.best_delta : null,
+                  improved: s.improved === true });
+    });
+    if (!ok) { return null; }
+    var bands = [];
+    for (var i = 0; i < SCORE_BANDS.length; i++) {
+      var b = api.st.bands[i];
+      if (!b || b.id !== SCORE_BANDS[i].id || !Array.isArray(b.sets)) { return null; }
+      bands.push({ id: b.id, name: SCORE_BANDS[i].name, desc: SCORE_BANDS[i].desc,
+                   count: b.sets.length, sets: b.sets.map(String) });
+    }
+    return { sets: rows, bands: bands };
+  }
+  function currentBoard() { return serverBoard() || scoreBoard(boardSets(), gameRecords()); }
+  function boardSetRow(board, norm) {
+    return board.sets.filter(function(r){ return r.norm === norm; })[0] || null;
+  }
+  function renderBoard(board) {
+    var host = document.getElementById("set-board");
+    var summ = document.getElementById("board-summary");
+    if (!host) { return; }
+    host.textContent = "";
+    var todo = board.bands.filter(function(b){ return b.id === "none" || b.id === "fail"; })
+      .reduce(function(a, b){ return a + b.count; }, 0);
+    if (summ) {
+      summ.textContent = "";
+      summ.appendChild(document.createTextNode(bandSummaryText(board.bands) + " · "));
+      var t = document.createElement("span");
+      t.className = "bs-todo";
+      t.textContent = todo ? ("아직 합격선을 못 넘은 세트 " + todo + "개") : "전 세트 합격선 통과";
+      summ.appendChild(t);
+    }
+    if (!board.sets.length) {
+      var none = document.createElement("p");
+      none.className = "today-note";
+      none.textContent = "아직 세트가 없습니다. 시험장에서 모의고사 세트를 인식하면 여기에 점수대별로 나타납니다.";
+      host.appendChild(none);
+      return;
+    }
+    var running = linked() && api.st.exam_running === true;
+    board.bands.forEach(function(b){
+      if (!b.count) { return; }
+      var todoBand = (b.id === "none" || b.id === "fail");
+      var grp = document.createElement("section");
+      grp.className = "band-group" + (todoBand ? " todo" : "");
+      var head = document.createElement("div");
+      head.className = "band-head";
+      var chip = document.createElement("span");
+      chip.className = "band-chip " + (todoBand ? "todo" : "ok");
+      chip.textContent = b.name + " " + b.count;
+      var desc = document.createElement("span");
+      desc.className = "band-desc";
+      desc.textContent = b.desc;
+      head.appendChild(chip); head.appendChild(desc);
+      grp.appendChild(head);
+      var list = document.createElement("div");
+      list.className = "band-sets";
+      b.sets.forEach(function(norm){
+        var r = boardSetRow(board, norm);
+        if (!r) { return; }
+        list.appendChild(boardSetCard(r, b, running));
+      });
+      grp.appendChild(list);
+      host.appendChild(grp);
+    });
+    var note = document.createElement("p");
+    note.className = "board-note";
+    note.textContent = linked()
+      ? "[시험장에서 시작]을 누르면 오늘 추천과 관계없이 그 세트가 바로 시작됩니다 — 응시 횟수 제한은 없습니다."
+      : "시험장 프로그램에서 이 페이지를 열면 세트마다 [시험장에서 시작] 버튼이 생깁니다. 지금은 가져온 채점결과·수동 점수로 계산한 보드입니다.";
+    host.appendChild(note);
+  }
+  function boardSetCard(r, band, running) {
+    var card = document.createElement("article");
+    card.className = "bset";
+    card.setAttribute("data-set", r.norm);
+    card.setAttribute("data-band", r.band);
+    var head = document.createElement("div");
+    head.className = "bset-head";
+    var nm = document.createElement("span");
+    nm.className = "bset-name";
+    nm.textContent = r.name;
+    var best = document.createElement("span");
+    best.className = "bset-best";
+    best.textContent = (r.best === null ? "기록 없음" : "최고 " + r.best + "점") + " · " + band.name;
+    head.appendChild(nm); head.appendChild(best);
+    card.appendChild(head);
+    var meta = document.createElement("p");
+    meta.className = "bset-meta";
+    var bits = [r.scores.length + "회 응시"];
+    if (r.last_date) { bits.push("마지막 " + fmtMD(r.last_date)); }
+    meta.appendChild(document.createTextNode(bits.join(" · ")));
+    if (r.scores.length) {
+      meta.appendChild(document.createTextNode(" · 이력 "));
+      var hist = document.createElement("span");
+      hist.className = "bset-hist";
+      hist.textContent = r.scores.join(" → ");
+      meta.appendChild(hist);
+    }
+    card.appendChild(meta);
+    var up = bestUpdateText(r);
+    if (up) {
+      var upEl = document.createElement("p");
+      upEl.className = "bset-up";
+      upEl.textContent = up + " 갱신 — " + bandLabel(r.prev_band) + " → " + bandLabel(r.band);
+      card.appendChild(upEl);
+    }
+    if (linked()) {
+      var row = document.createElement("div");
+      row.className = "act-row";
+      row.innerHTML = actBtn("start_exam", r.norm, null, running ? "시험 진행 중" : "시험장에서 시작", "primary", running);
+      card.appendChild(row);
+    }
+    return card;
+  }
   function renderAll() {
     if (linked() && typingNow()) { api.deferred = true; return; }
     api.deferred = false;
@@ -2698,6 +2934,9 @@
     renderProgress();
     renderTodaySlot();
     renderResults();
+    var board = currentBoard();
+    renderBandLine(board);
+    renderBoard(board);
     renderFocus();
   }
 
@@ -2792,7 +3031,7 @@
                 level: (p.level && typeof p.level === "object") ? p.level : levelInfo(allRecords()),
                 streak: (p.streak && typeof p.streak === "object") ? p.streak : streakInfo(allRecords(), todayIso),
                 attemptsLeft: (typeof p.attempts_left === "number") ? p.attempts_left : 0,
-                todayLocked: p.today_locked === true,
+                todayLocked: false,      /* v2.7.0: 응시 제한 폐지 — 서버 값과 무관하게 항상 false */
                 passedSets: (typeof p.passed_sets === "number") ? p.passed_sets : 0,
                 totalSets: (typeof p.total_sets === "number") ? p.total_sets : st.sets.length,
                 allClear: p.all_clear === true,
@@ -3726,8 +3965,6 @@
       if (FS_OK && state.folderLinked) { scanFromSaved(false); }
     }
     renderAll();
-    /* 오늘 잠금 카운트다운은 1초마다 (상태 폴링과 무관 — 네트워크 요청 없음) */
-    setInterval(renderLockLine, 1000);
     if (api.on) { startPolling(); }
   }
   if (LINK_HOST) {

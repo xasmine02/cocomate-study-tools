@@ -6,9 +6,9 @@
 시작 화면에서 모의고사 세트를 고르고 [시험 시작]을 누르면
 문제 파일 사본이 Excel로 열리고 타이머가 시작됩니다.
 제출하면 grade.py로 자동 채점해 점수와 리포트를 보여 줍니다.
-오늘의 학습(적응형 일정 v6, 9/3 시작·시험 2회): 하루 1세트 40분 완주 → 채점
-까지가 오늘 클리어(오답노트·오답 재풀이·함수 퀴즈는 선택). 시험 모드는 하루
-1회만 시작할 수 있고, 목표는 70 → 80 → 90 → 100 단계로 올라갑니다.
+오늘의 학습(적응형 일정 v6, 9/3 시작·시험 2회): 하루 한 세트 40분 완주 → 채점
+까지가 오늘 클리어(오답노트·오답 재풀이·함수 퀴즈는 선택). 응시 횟수 제한은
+없고(예습·복습 자유), 목표는 70 → 80 → 90 → 100 단계로 올라갑니다.
 
 v2.2.1: Excel 실행 강화 — Windows에서 EXCEL.EXE를 직접 찾아 실행하고 5초 뒤
 프로세스를 확인해 안 떴으면 재열기 안내, 타이머 [풀이 파일 열기], 시작 로그
@@ -51,11 +51,23 @@ v2.6.0: ① 이의제기 자동 반영 — 채점할 때마다 기록에 채점 
 수 없는 기록은 업데이트로 배포되는 `정정/점수정정.json`(data_files) 으로 점수만
 정정한다. 정정된 점수로 목표 단계·연속 응시·합격 세트 수·일정 배정·웹
 진행률이 다시 계산되고, 규약에 `corrections` 가 추가됐다.
+v2.7.0: ① 응시 제한 폐지 — 하루 1회 잠금(2.5.0)을 완전히 없앴다. 예습·복습을
+위해 하루에 몇 번이든, 어떤 세트든 시험 모드를 시작할 수 있다. 일정의 "오늘
+배정"은 강제가 아니라 **오늘 추천 세트**이고, `attempts_left` 는 "남은 응시
+기회"가 아니라 **남은 학습일**을 뜻한다(`today_locked` 는 하위 호환용으로
+언제나 false). 연속 응시(`streak`)는 그대로 — 같은 날 여러 번 응시해도 1일.
+② 점수대 세트 보드 — 세트마다 최고점·응시 횟수·마지막 응시일·점수 이력·밴드
+배지를 보여 주고 밴드(미응시·미달·합격·숙련·고득점·만점)별로 묶어 "아직 목표에
+못 미친 세트"를 한눈에 보게 했다. 보드에서 세트를 골라 [이 세트 응시]로 바로
+다시 풀 수 있고(오늘 배정과 무관), 최고점이 오르면 "최고 58 → 76 (+18)" 처럼
+갱신과 밴드 이동을 표시한다. 규약 `sets[]` 에 `band`·`last_date`·`scores`·
+`prev_best`·`best_delta`·`improved`·`prev_band` 가, 최상위에 `bands` 요약이
+추가됐다(프로그램·웹 공통 순수 함수 `score_band`).
 
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "2.6.0"
+__version__ = "2.7.0"
 
 import argparse
 import hashlib
@@ -229,7 +241,7 @@ SET_CONFIG_PATH = os.path.join(BASE_DIR, "세트설정.json")
 EXPECTED_DIR_NAME = "기대값"      # 자동 배포되는 세트별 기대값 JSON 폴더
 
 # 루틴 웹 연동 서버 (v2.4.0, 규약: 문서/연동_API.md v2.4.1)
-ROUTINE_API_VERSION = "2.6.0"          # /api/state 의 version (규약 버전)
+ROUTINE_API_VERSION = "2.7.0"          # /api/state 의 version (규약 버전)
 ROUTINE_HTML_NAME = "루틴.html"        # 시험장 폴더의 루틴 페이지 파일
 ROUTINE_DATA_KEY = "시험장/루틴.html"   # version.json set_files 키 (자동 업데이트)
 ROUTINE_PORT_DEFAULT = 8765
@@ -1689,7 +1701,7 @@ ROUTINE_TAG = "2026-09"     # 기록.json 루틴 세대 표시 (구 루틴 기�
 PROGRESS_NS = "r0903"       # 세트설정.json '_진행' 키 접두 (구 루틴 진행과 분리)
 
 GOAL_TIERS = [70, 80, 90, 100]   # 목표 사다리 (70=합격선, 그 위는 승급 목표)
-DAILY_CAP = 1                    # 하루 용량 1세트 = 시험 모드 하루 1회
+DAILY_CAP = 1                    # 하루 추천 1세트 (응시 횟수 제한이 아님)
 
 PLAN_EXAM1, PLAN_EXAM2, PLAN_AFTER = 15, 16, 17     # 시험 1 / 시험 2 / 이후
 PLAN_ORDER = ([0] + list(range(1, 15))
@@ -1840,12 +1852,6 @@ def attempt_dates(records):
     return {_record_date(r) for r in scored_exam_records(records)}
 
 
-def exam_locked_today(records, today=None):
-    """하루 1회 제한: 오늘 이미 (점수 있는) 응시 기록이 있으면 True."""
-    today = today or date.today()
-    return today in attempt_dates(records)
-
-
 def streak_info(records, today=None):
     """연속 응시 → {current, best, today_done}.
 
@@ -1870,28 +1876,52 @@ def streak_info(records, today=None):
     return {"current": cur, "best": best, "today_done": today_done}
 
 
-DAILY_LOCK_TITLE = "오늘 응시 완료 · 다음 응시는 내일"
+# --- 점수대 밴드 (v2.7.0) — 프로그램·웹 공통 정의 ---------------------------
+#
+# 세트의 **최고점**을 여섯 구간으로 나눈다. "아직 목표에 못 미친(미완성) 세트"를
+# 한눈에 보고 바로 다시 풀 수 있게 하는 용도라, 미응시·미달을 위에 두고 만점을
+# 아래에 둔다. 규약(문서/연동_API.md)의 `sets[].band`·`bands` 와 같은 정의이며
+# 판정은 최고점 하나만 보는 순수 함수라 프로그램·웹이 언제나 같은 결과를 낸다.
+
+SCORE_BANDS = [
+    {"id": "none", "name": "미응시", "min": None, "max": None,
+     "desc": "아직 응시 기록이 없는 세트 — 먼저 한 번 풀어 보세요"},
+    {"id": "fail", "name": "미달", "min": 0, "max": 69,
+     "desc": "최고점이 합격선 70점에 못 미친 세트 — 1순위로 다시 풀기"},
+    {"id": "pass", "name": "합격", "min": 70, "max": 79,
+     "desc": "합격선은 넘겼지만 아직 80점 미만"},
+    {"id": "skilled", "name": "숙련", "min": 80, "max": 89,
+     "desc": "80점대 — 90점까지 한 걸음"},
+    {"id": "high", "name": "고득점", "min": 90, "max": 99,
+     "desc": "90점대 — 만점까지 한 걸음"},
+    {"id": "perfect", "name": "만점", "min": 100, "max": 100,
+     "desc": "100점 — 더 올릴 점수가 없는 세트"},
+]
+BAND_IDS = [b["id"] for b in SCORE_BANDS]
+BAND_LABELS = {b["id"]: b["name"] for b in SCORE_BANDS}
 
 
-def lock_remaining_text(now=None):
-    """자정까지 남은 시간 문구: '약 7시간 12분'."""
-    now = now or datetime.now()
-    nxt = datetime.combine(now.date() + timedelta(days=1),
-                           datetime.min.time())
-    secs = max(0, int((nxt - now).total_seconds()))
-    h, m = secs // 3600, (secs % 3600) // 60
-    if h and m:
-        return f"약 {h}시간 {m}분"
-    if h:
-        return f"약 {h}시간"
-    return f"약 {max(1, m)}분"
+def score_band(best):
+    """세트 최고점 → 점수대 id (기록 없음 none · 0~69 fail · 70~79 pass ·
+    80~89 skilled · 90~99 high · 100 perfect).
+
+    숫자가 아니면 none, 100 을 넘는 값은 perfect, 0 미만은 fail 로 본다."""
+    if isinstance(best, bool) or not isinstance(best, (int, float)):
+        return "none"
+    if best >= 100:
+        return "perfect"
+    if best >= 90:
+        return "high"
+    if best >= 80:
+        return "skilled"
+    if best >= PASS_LINE:
+        return "pass"
+    return "fail"
 
 
-def daily_lock_message(now=None):
-    """하루 1회 제한 안내문."""
-    return (f"{DAILY_LOCK_TITLE}\n\n하루 1세트 루틴입니다 — 자정까지 "
-            f"{lock_remaining_text(now)} 남았습니다.\n오답노트 모드·오답 "
-            "재풀이·부분 연습은 지금도 할 수 있습니다.")
+def band_label(band_id):
+    """점수대 id → 이름 ('fail' → '미달')."""
+    return BAND_LABELS.get(str(band_id or ""), "")
 
 
 # --- 게임형 요소 (v2.6.0): 티어 · 도전 과제 — 프로그램·웹 공통 정의 -----------
@@ -2152,14 +2182,81 @@ def progress_delta(before, after):
     }
 
 
-def lock_countdown_text(now=None):
-    """오늘 잠금 카운트다운 '07:12:33' (자정까지)."""
-    now = now or datetime.now()
-    nxt = datetime.combine(now.date() + timedelta(days=1),
-                           datetime.min.time())
-    secs = max(0, int((nxt - now).total_seconds()))
-    h, m, s = secs // 3600, (secs % 3600) // 60, secs % 60
-    return f"{h:02d}:{m:02d}:{s:02d}"
+# --- 점수대 세트 보드 (v2.7.0) — 프로그램·웹 공통 정의 -----------------------
+#
+# 입력은 도전 과제와 같은 **규약 records[]** 하나뿐이라 프로그램·웹(폴백 모드
+# 포함)이 같은 보드를 그린다. 세트 식별은 norm(정규화 키)으로만 한다.
+
+def set_progress(norm, records):
+    """세트 하나의 진행 상황 (규약 records[] 만 보는 순수 함수).
+
+    → {attempts, best, band, scores, last_date, prev_best, prev_band,
+       best_delta, improved}
+    · scores: 응시 순서(날짜 → 시각 → id)대로의 점수 목록 (예: [58, 76])
+    · prev_best: 마지막 응시 **전까지의** 최고점 (첫 응시면 None)
+    · best_delta·improved: 마지막 응시로 최고점이 올랐으면 오른 폭과 True
+    """
+    key = str(norm or "")
+    recs = [r for r in _ach_records(records) if r["norm"] == key] if key else []
+    scores = [r["total"] for r in recs]
+    best = max(scores) if scores else None
+    prev = scores[:-1]
+    prev_best = max(prev) if prev else None
+    improved = bool(scores) and (prev_best is None or scores[-1] > prev_best)
+    return {
+        "attempts": len(scores),
+        "best": best,
+        "band": score_band(best),
+        "scores": scores,
+        "last_date": recs[-1]["date"] if recs else None,
+        "prev_best": prev_best,
+        "prev_band": score_band(prev_best) if prev_best is not None else "none",
+        "best_delta": (best - prev_best) if (improved and prev_best is not None)
+        else None,
+        "improved": improved,
+    }
+
+
+def score_board(sets, records):
+    """점수대 세트 보드 → {"sets": [...], "bands": [...]}.
+
+    sets 는 프로그램 세트 dict 든 규약 sets[] 든 `name`·`norm` 만 본다.
+    · sets[]: 입력 순서 그대로 + set_progress 결과 (+ name·norm)
+    · bands[]: SCORE_BANDS 순서(미응시 → 미달 → … → 만점)의
+      {id, name, desc, count, sets[norm]} — 밴드 안은 최고점 오름차순(동점은
+      이름순), 미응시는 입력 순서를 지킨다.
+    """
+    rows = []
+    for s in sets or []:
+        norm = str((s or {}).get("norm") or "")
+        row = {"name": str((s or {}).get("name") or ""), "norm": norm}
+        row.update(set_progress(norm, records))
+        rows.append(row)
+    bands = []
+    for i, b in enumerate(SCORE_BANDS):
+        mine = [(k, r) for k, r in enumerate(rows) if r["band"] == b["id"]]
+        if b["id"] == "none":
+            order = mine                                   # 미응시는 입력 순서
+        else:
+            order = sorted(mine, key=lambda kr: (kr[1]["best"], kr[1]["name"]))
+        bands.append({"id": b["id"], "name": b["name"], "desc": b["desc"],
+                      "count": len(order),
+                      "sets": [r["norm"] for _k, r in order]})
+    return {"sets": rows, "bands": bands}
+
+
+def band_summary_text(bands):
+    """밴드 개수 요약 한 줄: '미응시 3 · 미달 2 · 합격 1' (빈 밴드는 뺀다)."""
+    parts = [f"{b['name']} {b['count']}" for b in bands or [] if b["count"]]
+    return " · ".join(parts) if parts else "세트 없음"
+
+
+def best_update_text(row):
+    """최고점 갱신 문구: '최고 58 → 76 (+18)'. 갱신이 아니면 ''."""
+    if not row or not row.get("improved") or row.get("prev_best") is None:
+        return ""
+    return (f"최고 {row['prev_best']:g} → {row['best']:g} "
+            f"(+{row['best_delta']:g})")
 
 
 def mandatory_step_indexes(steps):
@@ -2203,7 +2300,8 @@ def build_day_steps(plan, slot_names=None):
              "세트": spec, "슬롯": k, "목표": goal, "분": 40,
              "설명": f"{name} 40분 실전 완주{g_txt}. 제출하면 자동 채점되고 "
                     "이 단계와 다음 '채점·성적 확인' 단계가 자동으로 "
-                    "체크됩니다. 시험 모드는 하루 1회입니다." + auto_txt},
+                    "체크됩니다. 응시 횟수 제한은 없어요 — 예습·복습으로 "
+                    "몇 번이든 다시 풀 수 있습니다." + auto_txt},
             {"이름": f"채점·성적 확인{n_txt}", "형": "채점", "세트": spec,
              "슬롯": k, "분": 5,
              "설명": "채점이 끝나면 자동 체크되고, 결과는 루틴 페이지"
@@ -2282,8 +2380,8 @@ def plan_title(plan, today=None, set_names=None):
         if plan.get("적응형"):
             body = f"{plan['제목']}: {' + '.join(names)}" if names \
                 else plan["제목"]
-            if plan.get("기회") is not None and plan.get("종류") == "모의":
-                body += f" · 남은 응시 기회 {plan['기회']}회"
+            if plan.get("남은학습일") is not None and plan.get("종류") == "모의":
+                body += f" · 남은 학습일 {plan['남은학습일']}일"
         else:
             body = f"{plan['제목']} — {' + '.join(names)}" if names \
                 else plan["제목"]
@@ -2907,9 +3005,10 @@ def retry_payload_for_set(s, minutes=15, json_path=None):
 
 # ---------------------------------------------------------------------------
 # 적응형 일정 엔진 v6 — 기록(기록.json) 기준으로 매번 재계산 (웹 루틴과 동일 규격)
-#   · 하루 용량은 언제나 1세트(= 시험 모드 하루 1회). 주말 2세트·밀림 승격·
-#     용량 확장·전 세트 완주 보장·'선택' 강등은 없다. 못 한 날은 그냥 지나가고
-#     남은 학습일 = 남은 응시 기회로만 표시한다(경고 아님).
+#   · 하루 **추천** 1세트. 주말 2세트·밀림 승격·용량 확장·전 세트 완주 보장·
+#     '선택' 강등은 없다. 못 한 날은 그냥 지나가고 남은 학습일만 표시한다
+#     (경고 아님). v2.7.0: 응시 횟수 제한 없음 — 오늘 이미 응시했어도 배정은
+#     그대로 남고(추천), 하루에 몇 번이든 다른 세트를 시작할 수 있다.
 #   · 목표는 사다리 70 → 80 → 90 → 100. 현재 목표 = 아직 달성하지 못한 가장
 #     낮은 단계(전체 기록 최고점 기준). 100 달성이면 만점(tier "perfect").
 #   · 세트 선택 ① 미응시(우선순위 순) ② 70점 미만(최고점 낮은 순, kind retry)
@@ -2957,7 +3056,9 @@ def segment_for(today):
 
 
 def base_capacity(d, seg_end):
-    """기본 용량: 언제나 1세트 (하루 1회 응시). 마감일도 1(+실수 노트)."""
+    """기본 용량: 언제나 추천 1세트. 마감일도 1(+실수 노트).
+
+    '용량'은 하루 **추천** 분량일 뿐 응시 횟수 제한이 아니다(v2.7.0)."""
     return DAILY_CAP
 
 
@@ -3005,8 +3106,9 @@ def build_adaptive_plan(today, records, sets):
     """적응형 일정 계산 (결정적: 같은 입력이면 같은 출력).
 
     반환 dict: kind, seg, start, end, days{날짜: [슬롯...]}, free{날짜: 빈 슬롯},
-    level, streak, attempts_left, today_locked, passed_sets, total_sets,
-    all_clear, missed_days, reason, remaining.
+    level, streak, attempts_left(= 남은 학습일), today_locked(항상 False —
+    하위 호환), passed_sets, total_sets, all_clear, missed_days, reason,
+    remaining.
     슬롯: {kind: first|retry|goal, set, name, goal, auto, why, spec}
     (boost_days·demoted·warning·retry_target 은 폐지 — 규약 호환용 빈 값)
     """
@@ -3031,9 +3133,9 @@ def build_adaptive_plan(today, records, sets):
     for r in recs_all:
         by_date.setdefault(_record_date(r), []).append(r)
     plan["_recs_by_date"] = by_date
-    plan["today_locked"] = today in by_date        # 오늘 이미 응시 → 잠금
+    plan["today_locked"] = False        # v2.7.0: 응시 제한 없음 (하위 호환 필드)
 
-    # 학습일 · 용량 (하루 1세트, 오늘 이미 응시했으면 0)
+    # 학습일 · 용량 (하루 추천 1세트 — 오늘 이미 응시했어도 그대로 둔다)
     days = []
     d = start
     while d <= end:
@@ -3041,9 +3143,7 @@ def build_adaptive_plan(today, records, sets):
             days.append(d)
         d += timedelta(days=1)
     cap = {dd: DAILY_CAP for dd in days}
-    if today in cap and plan["today_locked"]:
-        cap[today] = 0
-    plan["attempts_left"] = sum(cap.values())      # 남은 응시 기회
+    plan["attempts_left"] = len(days)             # 남은 학습일 (오늘 포함)
 
     # 풀 — ① 미응시(우선순위) ② 70점 미만 ③ 현재 목표 미달
     goal = lv["current_goal"]
@@ -3112,9 +3212,9 @@ def build_adaptive_plan(today, records, sets):
         dd += timedelta(days=1)
     plan["missed_days"] = missed
     left = plan["attempts_left"]
-    plan["reason"] = (f"만점 달성 · 남은 응시 기회 {left}회"
+    plan["reason"] = (f"만점 달성 · 남은 학습일 {left}일"
                       if lv["tier"] == "perfect"
-                      else f"현재 목표 {goal}점 · 남은 응시 기회 {left}회")
+                      else f"현재 목표 {goal}점 · 남은 학습일 {left}일")
     return plan
 
 
@@ -3135,7 +3235,7 @@ def adaptive_day_plan(adaptive, no):
     plan["적응형"] = True
     plan["특별"] = []
     plan["레벨"] = lv
-    plan["기회"] = adaptive.get("attempts_left", 0)
+    plan["남은학습일"] = adaptive.get("attempts_left", 0)
     if d < adaptive["start"]:                          # 지난 날: 기록 요약
         recs = adaptive.get("_recs_by_date", {}).get(d, [])
         plan.update({"종류": "지난", "세트": [], "세트객체": [], "스텝": [],
@@ -3149,8 +3249,9 @@ def adaptive_day_plan(adaptive, no):
         else:
             plan["제목"] = "응시 없음"
             plan["세트표시"] = []
-            plan["할일"] = ("이 날은 응시 기록이 없습니다 — 하루 1세트 "
-                          "루틴이라 지난 기회는 되돌리지 않습니다 (경고 아님).")
+            plan["할일"] = ("이 날은 응시 기록이 없습니다 — 지난 날은 "
+                          "되돌리지 않습니다 (경고 아님). 밀린 세트는 점수대 "
+                          "보드에서 골라 언제든 다시 풀 수 있어요.")
         return plan
     if d not in adaptive["days"]:                      # 다음 구간 등 범위 밖
         plan.update({"종류": "안내", "세트": [], "세트객체": [], "스텝": [],
@@ -3171,22 +3272,20 @@ def adaptive_day_plan(adaptive, no):
     if d == today:
         plan["사유"] = adaptive.get("reason") or ""
         plan["경고"] = None
-        plan["잠금"] = bool(adaptive.get("today_locked"))
         recs = adaptive.get("_recs_by_date", {}).get(d, [])
+        plan["오늘응시"] = len([r for r in recs
+                            if isinstance(r.get("점수"), (int, float))])
         low = [r for r in recs
                if isinstance(r.get("점수"), (int, float))
                and r["점수"] < PASS_LINE]
         if low:                            # 합격선 미달일 때만 안내 (강제 없음)
             plan["안내"] = (f"오늘 점수가 합격선 {PASS_LINE}점에 못 미쳤어요 — "
                           "리포트에서 틀린 부분만 확인해 두면 됩니다 (체크는 "
-                          "필수 아님). 이 세트는 이후 날짜에 다시 배정됩니다.")
+                          "필수 아님). 같은 세트를 지금 바로 다시 풀어 점수를 "
+                          "갱신해도 됩니다.")
     names = [sl["name"] for sl in slots]
     if not slots:
-        if d == today and adaptive.get("today_locked"):
-            plan["제목"] = "오늘 응시 완료"
-            plan["할일"] = ("오늘 몫(1세트)을 마쳤습니다 — 다음 응시는 내일. "
-                          "남는 시간엔 오답노트·실수 노트·함수 퀴즈(선택).")
-        elif adaptive.get("all_clear"):
+        if adaptive.get("all_clear"):
             plan["제목"] = "전 세트 목표 달성"
             plan["할일"] = (f"전 세트가 현재 목표 {lv['current_goal']}점을 "
                           "넘었습니다 — 자유 복습. 필수 과제 없음 — 남는 "
@@ -3194,12 +3293,17 @@ def adaptive_day_plan(adaptive, no):
         else:
             plan["제목"] = "자유 복습"
             plan["할일"] = ("필수 과제 없음 — 남는 시간엔 실수 노트·함수 "
-                          "퀴즈.")
+                          "퀴즈. 점수를 올리고 싶은 세트는 점수대 보드에서 "
+                          "골라 바로 응시하세요.")
         plan["스텝"] = []
         return plan
-    plan["할일"] = ("모의고사 " + " + ".join(names) + " 40분 완주 → 채점 · "
+    plan["할일"] = ("오늘 추천 세트 " + " + ".join(names) + " 40분 완주 → 채점 · "
                   + goal_label(plan["목표"])
                   + " (오답노트·오답 재풀이·함수 퀴즈는 선택)")
+    if plan.get("오늘응시"):
+        plan["할일"] += (f"\n오늘 이미 {plan['오늘응시']}회 응시했지만 "
+                         "횟수 제한은 없습니다 — 예습·복습으로 더 풀어도 "
+                         "됩니다.")
     plan["스텝"] = build_day_steps(plan, names)
     return plan
 
@@ -4909,9 +5013,13 @@ def serialize_records(records, sets, cfg=None):
     return out, review, index
 
 
-def serialize_sets(sets, records, index, review):
+def serialize_sets(sets, records, index, review, board=None):
     """세트 목록 → 규약 sets[] (attempts·best 는 시험·수동 기록, review_done·
-    retry_done 은 최근 시험 기록 기준)."""
+    retry_done 은 최근 시험 기록 기준).
+
+    board 를 주면(= score_board 결과의 sets[]) 점수대 보드 필드(band·scores·
+    last_date·prev_best·best_delta·improved·prev_band)를 함께 담습니다."""
+    by_norm = {r["norm"]: r for r in (board or [])}
     out = []
     for s in sets or []:
         recs = set_exam_records(s["name"], records or [])
@@ -4928,13 +5036,27 @@ def serialize_sets(sets, records, index, review):
                 v["mode"] == "오답재풀이"
                 and (v["date"], v["time"], k) > (lv["date"], lv["time"], lk)
                 for k, v in mine)
-        out.append({
+        row = {
             "name": s["name"], "norm": s.get("norm") or "",
             "pdf": bool(s.get("pdf")) and os.path.isfile(str(s.get("pdf"))),
             "key": bool(s.get("key")),
             "attempts": len(recs), "best": _best(recs),
             "review_done": review_done, "retry_done": retry_done,
-        })
+        }
+        bd = by_norm.get(row["norm"])
+        if bd:                     # 점수대 보드 (규약 records[] 기준 — 웹과 동일)
+            row.update({"band": bd["band"], "scores": list(bd["scores"]),
+                        "last_date": bd["last_date"],
+                        "prev_best": bd["prev_best"],
+                        "prev_band": bd["prev_band"],
+                        "best_delta": bd["best_delta"],
+                        "improved": bd["improved"]})
+        else:
+            row.update({"band": score_band(row["best"]), "scores": [],
+                        "last_date": None, "prev_best": None,
+                        "prev_band": "none", "best_delta": None,
+                        "improved": False})
+        out.append(row)
     return out
 
 
@@ -4985,9 +5107,9 @@ def _day_title(d, today, kind, slots, promoted, deadline, recs_by_date):
         return "완료" if recs else "응시 없음"
     parts = []
     if slots:
-        parts.append(f"{len(slots)}세트")
+        parts.append(f"추천 {len(slots)}세트")
     elif d == today and recs_by_date.get(d):
-        parts.append("오늘 응시 완료")
+        parts.append("오늘 응시함")
     else:
         parts.append("자유 복습")
     if deadline:
@@ -5069,7 +5191,7 @@ def serialize_plan(adaptive, today, records, sets, preview=None):
         "level": lv,
         "streak": stk,
         "attempts_left": int(adaptive.get("attempts_left") or 0),
-        "today_locked": bool(adaptive.get("today_locked")),
+        "today_locked": False,        # v2.7.0: 응시 제한 폐지 (하위 호환 필드)
         "passed_sets": int(adaptive.get("passed_sets") or 0),
         "total_sets": int(adaptive.get("total_sets") or len(sets or [])),
         "all_clear": bool(adaptive.get("all_clear")),
@@ -5138,6 +5260,7 @@ def build_state(sets, records=None, cfg=None, today=None, exam_running=False,
     checks = {str(k): bool(v) for k, v in
               _cfg_section(cfg, WEB_CHECKS_KEY).items()}
     plan_json = serialize_plan(adaptive, today, records, sets, preview)
+    board = score_board(sets, recs)     # 점수대 보드 (규약 records[] 기준)
     return {
         "version": ROUTINE_API_VERSION,
         "app_version": __version__,
@@ -5149,7 +5272,8 @@ def build_state(sets, records=None, cfg=None, today=None, exam_running=False,
         "attempts_left": plan_json["attempts_left"],
         "today_locked": plan_json["today_locked"],
         "plan": plan_json,
-        "sets": serialize_sets(sets, records, index, review),
+        "bands": board["bands"],
+        "sets": serialize_sets(sets, records, index, review, board["sets"]),
         "records": recs,
         "achievements": achievements(recs),
         "corrections": serialize_corrections(records, sets),
@@ -6500,6 +6624,179 @@ if HAS_TK:
                 return False
 
 
+    class ScoreBoardWindow(tk.Toplevel):
+        """점수대 세트 보드 (v2.7.0) — 세트를 점수대(밴드)로 묶어 보여 주고
+        고른 세트를 [이 세트 응시]로 바로 다시 풀 수 있게 한다.
+
+        밴드 순서는 규약 SCORE_BANDS 그대로: 미응시·미달을 위, 만점을 아래.
+        각 세트 줄에 최고점 · 밴드 · 응시 횟수 · 마지막 응시일 · 점수 이력
+        (58 → 76)을 쓰고, 최고점이 오른 세트는 '최고 58 → 76 (+18)'을 덧붙인다.
+        색만으로 구분하지 않도록 밴드 이름 글자를 언제나 함께 쓴다.
+        """
+
+        BAND_COLORS = {
+            "none": (BG, SUB), "fail": ("#FDECEA", RED),
+            "pass": (BRAND_SOFT, BRAND_DARK), "skilled": (BRAND_SOFT, BRAND_DARK),
+            "high": (BRAND_SOFT, BRAND_DARK), "perfect": (BRAND, "white"),
+        }
+
+        def __init__(self, app):
+            super().__init__(app)
+            self.app = app
+            self.rows = []                 # [(norm, 세트 dict)] — 선택 순서
+            self.selected = None           # 선택한 세트 norm
+            self.title(f"{APP_TITLE} - 점수대 보드")
+            self.configure(bg=BG)
+            self.geometry("620x560")
+            self.minsize(420, 380)
+            frm = tk.Frame(self, bg=BG, padx=14, pady=10)
+            frm.pack(fill="both", expand=True)
+            tk.Label(frm, text="점수대 세트 보드", bg=BG, fg=INK,
+                     font=UI_FONT_BOLD, anchor="w").pack(fill="x")
+            self.sum_lbl = tk.Label(
+                frm, text="", bg=BG, fg=SUB, font=("Malgun Gothic", 9),
+                anchor="w", justify="left", wraplength=580)
+            self.sum_lbl.pack(fill="x", pady=(2, 6))
+            # 스크롤 영역 (세트가 많아도 잘리지 않게)
+            wrap = tk.Frame(frm, bg=CARD, highlightbackground=LINE,
+                            highlightthickness=1)
+            wrap.pack(fill="both", expand=True)
+            self.canvas = tk.Canvas(wrap, bg=CARD, bd=0, highlightthickness=0)
+            sb = tk.Scrollbar(wrap, command=self.canvas.yview)
+            self.canvas.configure(yscrollcommand=sb.set)
+            self.canvas.pack(side="left", fill="both", expand=True)
+            sb.pack(side="right", fill="y")
+            self.inner = tk.Frame(self.canvas, bg=CARD)
+            self._win = self.canvas.create_window((0, 0), window=self.inner,
+                                                  anchor="nw")
+            self.inner.bind("<Configure>", lambda e: self.canvas.configure(
+                scrollregion=self.canvas.bbox("all")))
+            self.canvas.bind("<Configure>", lambda e: self.canvas.itemconfigure(
+                self._win, width=e.width))
+            bf = tk.Frame(frm, bg=BG)
+            bf.pack(fill="x", pady=(8, 0))
+            self.start_btn = tk.Button(
+                bf, text="이 세트 응시", font=UI_FONT_BOLD, bg=BRAND,
+                fg="white", activebackground=BRAND_DARK, relief="flat",
+                padx=16, pady=4, state="disabled", command=self.start_selected)
+            self.start_btn.pack(side="left")
+            self.pick_lbl = tk.Label(bf, text="세트를 고르세요", bg=BG, fg=SUB,
+                                     font=("Malgun Gothic", 9))
+            self.pick_lbl.pack(side="left", padx=8)
+            tk.Button(bf, text="닫기", font=UI_FONT, relief="groove",
+                      padx=12, pady=3, command=self.destroy).pack(side="right")
+            self.refresh()
+
+        def destroy(self):
+            if getattr(self.app, "board_win", None) is self:
+                self.app.board_win = None
+            super().destroy()
+
+        def refresh(self):
+            """기록을 다시 읽어 보드를 그린다."""
+            try:
+                board = self.app.current_board()
+            except Exception as e:
+                log_error("점수대 보드", e)
+                return
+            by_norm = {s.get("norm"): s for s in self.app.sets}
+            rows = {r["norm"]: r for r in board["sets"]}
+            todo = sum(b["count"] for b in board["bands"]
+                       if b["id"] in ("none", "fail"))
+            self.sum_lbl.configure(
+                text=band_summary_text(board["bands"])
+                + (f"  —  아직 합격선을 못 넘은 세트 {todo}개. 고른 뒤 "
+                   "[이 세트 응시]로 바로 다시 풀어 점수를 갱신하세요 "
+                   "(응시 횟수 제한 없음)." if todo else
+                   "  —  전 세트가 합격선을 넘었습니다. 더 올리고 싶은 세트를 "
+                   "골라 다시 풀 수 있어요 (응시 횟수 제한 없음)."))
+            for w in self.inner.winfo_children():
+                w.destroy()
+            self.rows = []
+            for b in board["bands"]:
+                if not b["count"]:
+                    continue
+                bg_c, fg_c = self.BAND_COLORS.get(b["id"], (BG, SUB))
+                head = tk.Frame(self.inner, bg=CARD, padx=8, pady=3)
+                head.pack(fill="x", pady=(6, 0))
+                tk.Label(head, text=f" {b['name']} {b['count']} ", bg=bg_c,
+                         fg=fg_c, font=("Malgun Gothic", 9, "bold"),
+                         padx=4).pack(side="left")
+                tk.Label(head, text=b["desc"], bg=CARD, fg=SUB,
+                         font=("Malgun Gothic", 8)).pack(side="left", padx=6)
+                for norm in b["sets"]:
+                    r = rows.get(norm)
+                    s = by_norm.get(norm)
+                    if r is None:
+                        continue
+                    self._add_row(r, s, bg_c, fg_c)
+            self._select(self.selected)
+
+        def _add_row(self, r, s, bg_c, fg_c):
+            row = tk.Frame(self.inner, bg=CARD, padx=10, pady=3,
+                           highlightbackground=LINE, highlightthickness=1)
+            row.pack(fill="x", padx=6, pady=2)
+            best = r["best"]
+            head = f"{r['name']}"
+            meta = [f"최고 {best:g}점" if best is not None else "기록 없음",
+                    f"{len(r['scores'])}회 응시"]
+            if r["last_date"]:
+                meta.append(f"마지막 {r['last_date']}")
+            hist = " → ".join(f"{x:g}" for x in r["scores"])
+            if hist:
+                meta.append(f"이력 {hist}")
+            up = best_update_text(r)
+            if up:
+                meta.append(up)
+            name_lbl = tk.Label(row, text=head, bg=CARD, fg=INK,
+                                font=UI_FONT_BOLD, anchor="w")
+            name_lbl.pack(fill="x")
+            meta_lbl = tk.Label(row, text=" · ".join(meta), bg=CARD, fg=SUB,
+                                font=("Malgun Gothic", 9), anchor="w",
+                                justify="left")
+            meta_lbl.pack(fill="x")
+            if s is None:
+                tk.Label(row, text="(목록에 없는 세트 — [새로 고침])", bg=CARD,
+                         fg=RED, font=("Malgun Gothic", 8),
+                         anchor="w").pack(fill="x")
+                return
+            self.rows.append((r["norm"], s, row, (name_lbl, meta_lbl)))
+            for w in (row, name_lbl, meta_lbl):
+                w.bind("<Button-1>",
+                       lambda e, n=r["norm"]: self._select(n))
+                w.bind("<Double-Button-1>",
+                       lambda e, n=r["norm"]: (self._select(n),
+                                               self.start_selected()))
+
+        def _select(self, norm):
+            self.selected = norm if any(x[0] == norm for x in self.rows) \
+                else None
+            picked = None
+            for n, s, row, lbls in self.rows:
+                on = (n == self.selected)
+                bg_c = BRAND_SOFT if on else CARD
+                row.configure(bg=bg_c,
+                              highlightbackground=BRAND if on else LINE)
+                for lb in lbls:
+                    lb.configure(bg=bg_c)
+                if on:
+                    picked = s
+            if picked is None:
+                self.start_btn.configure(state="disabled")
+                self.pick_lbl.configure(text="세트를 고르세요")
+            else:
+                self.start_btn.configure(state="normal")
+                self.pick_lbl.configure(text=f"선택: {picked['name']}")
+
+        def start_selected(self):
+            s = next((x[1] for x in self.rows if x[0] == self.selected), None)
+            if s is None:
+                messagebox.showinfo(APP_TITLE, "먼저 세트를 고르세요.",
+                                    parent=self)
+                return
+            self.app.start_set_now(s)
+
+
     class SetChooserDialog(tk.Toplevel):
         """[다른 세트로 바꾸기] — 슬롯을 고르고 목록에서 세트 선택."""
 
@@ -7124,8 +7421,8 @@ if HAS_TK:
             self._regrade_summary = None  # 마지막 자동 재채점 결과
             self.status_card = None       # 게임형 상태 카드 (티어·배지)
             self._gauge_goal = GOAL_TIERS[-1]
-            self._lock_after = None       # 오늘 잠금 카운트다운 after id
             self._gauge_frac = 0.0
+            self.board_win = None         # 점수대 보드 창 (열려 있으면)
             self._warned_dirty = set()   # 원본 오염 경고를 이미 띄운 세트
             self.plan_no = routine_day_no()   # 오늘의 학습 일정 번호
             self.adaptive = None              # 적응형 일정 (recompute_plan)
@@ -7390,8 +7687,9 @@ if HAS_TK:
             records = load_records()
             if getattr(self, "plan_title_lbl", None) is not None:
                 self.recompute_plan()      # 새 기록 반영 (일정 재계산)
-            self._apply_daily_lock()       # 하루 1회 제한 반영
+            self._sync_start_btn()         # [시험 시작] 문구 갱신
             self._render_status_card(records)   # 티어·연속·도전 과제
+            self.refresh_board()           # 점수대 보드 (열려 있으면)
             if not records:
                 self.records_lbl.configure(text="아직 응시 기록이 없습니다.")
                 return
@@ -7415,27 +7713,16 @@ if HAS_TK:
                 return None
             return self.sets[sel[0]]
 
-        def daily_locked(self, records=None):
-            """하루 1회 제한: 오늘 이미 (점수 있는) 응시 기록이 있으면 True."""
-            try:
-                recs = records if records is not None else load_records()
-                return exam_locked_today(recs, date.today())
-            except Exception:
-                return False
+        def _sync_start_btn(self):
+            """[시험 시작] 버튼 문구 갱신 (v2.7.0: 응시 횟수 제한 없음).
 
-        def _apply_daily_lock(self):
-            """[시험 시작] 버튼에 하루 1회 제한 반영 (진행 중이면 그대로)."""
+            기록이 있는 세트면 '재응시 (점수 갱신)' 로만 바뀌고, 잠기지
+            않습니다 — 예습·복습을 위해 하루에 몇 번이든 시작할 수 있습니다."""
             btn = getattr(self, "start_btn", None)
             if btn is None or self.exam_running:
                 return
-            if self.daily_locked():
-                btn.configure(state="disabled",
-                              text=f"오늘 응시 완료 {lock_countdown_text()}")
-                self._apply_lock_banner()
-                return
-            self._apply_lock_banner()
             s = self._selected_set()
-            btn.configure(state="normal", text="재응시 (새로 시작)"
+            btn.configure(state="normal", text="재응시 (점수 갱신)"
                           if (s and set_records(s["name"])) else "시험 시작")
 
         def _show_info(self):
@@ -7443,9 +7730,7 @@ if HAS_TK:
             if not s:
                 return
             recs = set_records(s["name"])
-            self.start_btn.configure(
-                text="재응시 (새로 시작)" if recs else "시험 시작")
-            self._apply_daily_lock()
+            self._sync_start_btn()
             self.review_btn.configure(
                 state="normal" if find_latest_result_json(s) else "disabled")
             summ = records_summary(load_records()).get(s["name"], {})
@@ -7461,10 +7746,15 @@ if HAS_TK:
                                 else "미연결 ([문제지 연결]로 지정 가능)"),
                 "",
                 f"응시 기록: {len(recs)}회",
-                f"최고 점수: {best if best is not None else '-'}",
+                f"최고 점수: {best if best is not None else '-'}"
+                + (f"  [{band_label(score_band(best))}]"
+                   if best is not None else "  [미응시]"),
                 f"최근 3회: "
                 + (" → ".join(str(x) for x in recent) if recent else "-"),
             ]
+            up = best_update_text(self._board_row(s))
+            if up:
+                lines.append(up + " 갱신")
             self.info_lbl.configure(text="\n".join(lines), fg=INK)
             # 문제지 회차·형·연도가 세트와 다르면(또는 달라서 무시했으면) 경고
             warn = ""
@@ -7615,8 +7905,7 @@ if HAS_TK:
                 return True, None
             if action in ("start_exam", "start_retry") and self.exam_running:
                 return False, "시험 진행 중"
-            if action == "start_exam" and self.daily_locked():
-                return False, DAILY_LOCK_TITLE
+            # v2.7.0: 하루 1회 제한 없음 — 진행 중일 때만 막는다(예습·복습 자유).
             if action == "start_exam":
                 if s is None:
                     picks = pick_set_for_retry(self.sets, load_records(), 1)
@@ -7886,7 +8175,7 @@ if HAS_TK:
         # ---------------- 게임형 상태 카드 (티어·게이지·연속·배지) ----------------
 
         def _build_status_card(self, parent):
-            """목표 티어 · 게이지 · 연속 응시 · 도전 과제 · 오늘 잠금 카운트다운.
+            """목표 티어 · 게이지 · 연속 응시 · 도전 과제 · 점수대 요약.
 
             색만으로 상태를 구분하지 않도록 '달성'·'○' 같은 글자를 함께 씁니다."""
             card = tk.Frame(parent, bg=CARD, highlightbackground=LINE,
@@ -7941,10 +8230,17 @@ if HAS_TK:
                           sticky="ew")
                 chip.bind("<Button-1>", lambda e: self.show_achievements())
                 self.badge_chips.append((a["id"], chip))
-            self.lock_lbl = tk.Label(
-                card, text="", bg="#FBF0DC", fg="#8A5A00",
-                font=("Malgun Gothic", 9, "bold"), anchor="w", padx=8, pady=3)
-            self._lock_after = None
+            # 점수대 요약 줄 + [점수대 보드] (미완성 세트를 바로 다시 풀기)
+            band_row = tk.Frame(card, bg=CARD)
+            band_row.pack(fill="x", pady=(7, 0))
+            self.band_lbl = tk.Label(
+                band_row, text="", bg=CARD, fg=SUB,
+                font=("Malgun Gothic", 9), anchor="w", justify="left")
+            self.band_lbl.pack(side="left", fill="x", expand=True)
+            self.board_btn = tk.Button(
+                band_row, text="점수대 보드", font=("Malgun Gothic", 9),
+                relief="groove", padx=8, pady=1, command=self.show_score_board)
+            self.board_btn.pack(side="right")
             return card
 
         def _draw_status_gauge(self, frac=None):
@@ -8013,7 +8309,7 @@ if HAS_TK:
                          f"— {max(0, goal - best):g}점 남음")
             self.streak_lbl.configure(
                 text=f"연속 {stk['current']}일 (최고 {stk['best']}일) · "
-                     + ("오늘 응시 완료" if stk["today_done"] else "오늘 미응시"))
+                     + ("오늘 응시함" if stk["today_done"] else "오늘 미응시"))
             self.badge_count_lbl.configure(
                 text=f"도전 과제 {summ['done']}/{summ['total']}")
             done_ids = {a["id"] for a in summ["items"] if a["done"]}
@@ -8026,42 +8322,77 @@ if HAS_TK:
                     fg=BRAND_DARK if on else "#93A79A",
                     highlightbackground=BRAND if on else LINE,
                     text=(("✓ " if on else "· ") + str(a.get("icon") or "")))
-            self._apply_lock_banner()
+            self._apply_band_line(ser)
 
-        def _apply_lock_banner(self):
-            """오늘 잠금 띠 + 1초 카운트다운 ('다음 응시까지 07:12:33')."""
-            if getattr(self, "lock_lbl", None) is None:
-                return
-            locked = self.daily_locked() and not self.exam_running
-            if not locked:
-                if self.lock_lbl.winfo_manager():
-                    self.lock_lbl.pack_forget()
-                if self._lock_after is not None:
-                    try:
-                        self.after_cancel(self._lock_after)
-                    except Exception:
-                        pass
-                    self._lock_after = None
-                return
-            if not self.lock_lbl.winfo_manager():
-                self.lock_lbl.pack(fill="x", pady=(7, 0))
-            self._tick_lock()
+        # ---------------- 점수대 세트 보드 (v2.7.0) ----------------
 
-        def _tick_lock(self):
-            self._lock_after = None
-            lbl = getattr(self, "lock_lbl", None)
-            if lbl is None or not lbl.winfo_exists() \
-                    or not lbl.winfo_manager():
+        def current_board(self, records=None):
+            """지금 기록으로 계산한 점수대 보드 (규약 records[] 기준)."""
+            recs = records if records is not None else load_records()
+            return score_board(self.sets, serialize_records(recs, self.sets)[0])
+
+        def _board_row(self, s):
+            """세트 하나의 보드 행 (없으면 None)."""
+            if not s:
+                return None
+            try:
+                board = self.current_board()
+            except Exception as e:
+                log_error("점수대 보드 계산", e)
+                return None
+            norm = s.get("norm") or ""
+            return next((r for r in board["sets"] if r["norm"] == norm), None)
+
+        def _apply_band_line(self, ser=None):
+            """상태 카드의 점수대 요약 줄: '미응시 3 · 미달 2 · 합격 1'."""
+            lbl = getattr(self, "band_lbl", None)
+            if lbl is None:
                 return
-            left = lock_countdown_text()
-            lbl.configure(text=f"오늘 응시 완료 · 다음 응시까지 {left} "
-                               "(오답노트 모드·오답 재풀이·부분 연습은 지금도 "
-                               "할 수 있습니다)")
-            btn = getattr(self, "start_btn", None)
-            if btn is not None and not self.exam_running \
-                    and str(btn["state"]) == "disabled":
-                btn.configure(text=f"오늘 응시 완료 {left}")
-            self._lock_after = self.after(1000, self._tick_lock)
+            try:
+                recs = ser if ser is not None \
+                    else serialize_records(load_records(), self.sets)[0]
+                bands = score_board(self.sets, recs)["bands"]
+            except Exception as e:
+                log_error("점수대 요약", e)
+                return
+            todo = sum(b["count"] for b in bands
+                       if b["id"] in ("none", "fail"))
+            tail = (f" — 미완성 {todo}세트" if todo
+                    else " — 전 세트 합격선 통과")
+            lbl.configure(text="점수대 " + band_summary_text(bands) + tail)
+
+        def show_score_board(self):
+            """점수대 보드 창 열기 (이미 열려 있으면 앞으로)."""
+            win = getattr(self, "board_win", None)
+            if win is not None and win.winfo_exists():
+                win.refresh()
+                win.lift()
+                win.focus_force()
+                return
+            self.board_win = ScoreBoardWindow(self)
+
+        def refresh_board(self):
+            """열려 있는 점수대 보드 새로 그리기 (기록이 바뀔 때마다)."""
+            win = getattr(self, "board_win", None)
+            if win is not None and win.winfo_exists():
+                try:
+                    win.refresh()
+                except Exception as e:
+                    log_error("점수대 보드 갱신", e)
+
+        def start_set_now(self, s):
+            """보드에서 [이 세트 응시] — 오늘 배정과 무관하게 바로 시작."""
+            if self.exam_running:
+                messagebox.showinfo(APP_TITLE, "이미 시험이 진행 중입니다.",
+                                    parent=self)
+                return
+            if not self._select_set_in_list(s):
+                messagebox.showinfo(APP_TITLE,
+                                    "세트 목록에서 찾지 못했습니다 — [새로 "
+                                    "고침] 뒤 다시 시도해 주세요.", parent=self)
+                return
+            startup_log(f"점수대 보드에서 시작: {s['name']}")
+            self.start_exam()
 
         def show_achievements(self):
             """도전 과제 상세 창 (달성/미달성 · 달성 일시)."""
@@ -8365,11 +8696,7 @@ if HAS_TK:
                 messagebox.showinfo(APP_TITLE, "이미 시험이 진행 중입니다.",
                                     parent=self)
                 return
-            if not practice and self.daily_locked():    # 하루 1세트
-                messagebox.showinfo(APP_TITLE, daily_lock_message(),
-                                    parent=self)
-                self._apply_daily_lock()
-                return
+            # v2.7.0: 하루 1회 제한 없음 — 예습·복습으로 몇 번이든 시작 가능.
             s = self._selected_set()
             if not s:
                 messagebox.showinfo(APP_TITLE, "먼저 세트를 선택하세요.",
@@ -8551,7 +8878,7 @@ if HAS_TK:
                     pass
             self._excel_warn = None
             self.start_btn.configure(state="normal", text="시험 시작")
-            self.refresh_records()         # 하루 1회 제한도 여기서 반영
+            self.refresh_records()         # 점수대 보드·상태 카드도 여기서 갱신
             self._show_info()
             if self.updater.pending:      # 시험 중 미뤄 둔 업데이트 → 지금 적용
                 self.after(500, self._apply_update_now)
@@ -8607,9 +8934,6 @@ if HAS_TK:
                 todo += "\n진행: " + plan["사유"]
             if plan.get("안내"):
                 todo += "\n안내: " + plan["안내"]
-            if plan.get("잠금"):
-                todo += (f"\n{DAILY_LOCK_TITLE} (자정까지 "
-                         f"{lock_remaining_text()})")
             steps = plan.get("스텝")
             if steps:
                 tag = plan_day_tag(plan["no"])
@@ -9452,7 +9776,24 @@ def run_smoke():
     _txt = _ach_win[-1].text_value if _ach_win else ""
     assert _ach_win and "[도전 과제 " in _txt and "○ 미달성" in _txt \
         and all(a["name"] in _txt for a in ACHIEVEMENT_DEFS), _txt[:200]
-    assert re.fullmatch(r"\d\d:\d\d:\d\d", lock_countdown_text())
+    assert "점수대" in app.band_lbl.cget("text"), app.band_lbl.cget("text")
+    # 점수대 보드 창: 밴드 묶음 · 세트 선택 · [이 세트 응시] 활성화
+    app.show_score_board()
+    app.update_idletasks()
+    app.update()
+    _bw = app.board_win
+    assert _bw is not None and _bw.winfo_exists()
+    assert str(_bw.start_btn["state"]) == "disabled"     # 고르기 전엔 비활성
+    if _bw.rows:
+        _bw._select(_bw.rows[0][0])
+        app.update()
+        assert str(_bw.start_btn["state"]) == "normal"
+        assert "선택: " in _bw.pick_lbl.cget("text")
+    assert band_summary_text([{"name": "미달", "count": 2},
+                              {"name": "합격", "count": 0}]) == "미달 2"
+    _bw.destroy()
+    app.update()
+    assert app.board_win is None
     # 동작 브리지: 시험 중이면 오류, show 는 ok
     app.exam_running = True
     assert app.routine_action("start_exam", None, None, None, None) == \
@@ -9469,7 +9810,8 @@ def run_smoke():
           "자동 선택·바꾸기·미발견 직접 선택)/오류 대화상자·로그/진단 창/"
           "시작 로그 창/Excel 확인 안내 창/PDF 회차 경고/안내 띠·자동 업데이트 "
           "토글/루틴 연동 서버(상태·쓰기·페이지·퀴즈 버튼·결과 문구)/"
-          "게임형 상태 카드(티어·게이지·연속·도전 과제 창)/결과 연출"
+          "게임형 상태 카드(티어·게이지·연속·도전 과제 창)/점수대 보드 창"
+          "(밴드 묶음·세트 선택·이 세트 응시)/결과 연출"
           "(승급·새 배지·합격선 게이지)/파괴 정상")
 
 
