@@ -13,6 +13,27 @@
 의존성: Python 3.8+ / openpyxl (표준 라이브러리 외 유일한 의존성)
 
 변경 이력:
+    2.0.4  이의제기 2건 반영 (2024 상시 2회 리포트 — 복원 문제지 기준)
+           - 계산작업 판정: 학생 파일에 계산값이 저장돼 있지 않으면(수식만
+             있음) LibreOffice headless로 통합 문서를 재계산해 '결과값'으로
+             먼저 비교하고, 재계산이 불가능할 때만 수식 문자열 비교로
+             내려간다 (LibreOffice 미설치·변환 실패 시 조용히 기존 경로).
+             리포트에 '재계산해 비교' / '수식 문자열로 비교' / '저장된
+             계산값으로 비교' 중 어느 방식이었는지 명시.
+             단, 재계산 값이 같아도 학생 수식이 참조하는 셀이 정답과 다르면
+             정답으로 올리지 않는다 — 이 자료에서만 우연히 결과가 겹친
+             참조 오류(예: 둘째 조건이 D열이어야 하는데 C열을 참조)를
+             정답 처리하지 않기 위한 안전장치. 리포트에 그 근거를 표기.
+           - 매크로작업: (a) VBA의 다중 영역 범위 Range("B5:F5,B6:B10")를
+             영역별로 분해해 인식 (지금까지 통째로 해석에 실패해 코드 인정이
+             되지 않던 문제). (b) 여러 범위를 요구하는 지시에서 일부만 맞으면
+             '맞은 범위'와 '틀린 범위'를 함께 표기 (틀린 셀만 나열해 '분명히
+             했는데'로 느껴지던 문제). (c) 글꼴 색을 사람이 읽을 수 있는
+             이름으로 정밀 표기하고, 색이 없으면 '자동(검정)'임을 명시.
+             (d) 같은 이름의 매크로가 있는데 적용 범위만 다르면 '코드에
+             문장이 없다'가 아니라 '매크로는 있으나 적용 범위가 다르다'로
+             설명. (e) 도형·단추의 텍스트/연결 매크로/도형 종류를 정답과
+             대조해 채점·표기 (예: 육각형 텍스트 '서식전용' vs '서식적용').
     2.0.3  이의제기 4건 반영 (코코 모의고사 1회 리포트 — 자체 제작 문제지 기준)
            - 수식 비교: 비교 연산자의 좌우 교환 동치(A>=B ↔ B<=A, > ↔ <, =, <>)
              를 정규화에 추가 — 부등호 어순만 반대인 조건부 서식·계산 수식은
@@ -74,7 +95,7 @@
     2.0.0  리포트 이의제기 기능(카드별 [이의제기] + 복사 텍스트) 및 학습 로그
 """
 
-__version__ = "2.0.3"
+__version__ = "2.0.4"
 
 import argparse
 import html as html_mod
@@ -307,6 +328,201 @@ def cmp_order_swapped(a, b):
         return False
 
 
+# ---------------------------------------------------------------------------
+# 수식이 참조하는 셀 집합
+#   결과값이 같아도 '참조하는 셀'이 다르면 그 자료에서만 우연히 겹친 것일 수
+#   있다. 재계산 값으로 정답을 올려 줄 때 이 집합이 같은지 확인한다.
+# ---------------------------------------------------------------------------
+
+_REF_TOKEN = re.compile(
+    r"(?<![A-Z0-9_.])"
+    r"(?:(?P<sheet>[A-Z0-9_가-힣 .\-]+)!)?"
+    r"(?P<a>[A-Z]{1,3}[0-9]{1,7})"
+    r"(?::(?P<b>[A-Z]{1,3}[0-9]{1,7}))?"
+    r"(?![A-Z0-9_(])")
+
+REF_EXPAND_LIMIT = 4000     # 이보다 큰 범위는 전개하지 않고 범위 표기로 비교
+
+
+def formula_ref_counts(f, limit=REF_EXPAND_LIMIT):
+    """수식이 각 셀을 몇 번 참조하는지 {셀 좌표: 횟수}. 범위는 전개해서 센다.
+
+    같은 셀을 두 번 쓰면 2로 세기 때문에, 집합만으로는 구분되지 않는
+    참조 오류(둘째 조건이 D19여야 하는데 C19를 한 번 더 참조)를 잡아낸다.
+        정답 =IF(OR(C19<=SMALL(C18:C26,2),D19<=SMALL(D18:D26,2)),...)
+              -> C19:2, D19:2
+        오답 =IF(OR(SMALL(C18:C26,2)>=C19,SMALL(D18:D26,2)>=C19),...)
+              -> C19:3, D19:1
+    반대로 표기만 다른 같은 참조는 같게 센다.
+        =SUM(B1:B5) 와 =SUM(B1,B2,B3,B4,B5) -> 둘 다 B1~B5 각 1회
+    문자열 리터럴과 함수 이름(LOG10( 등)은 제외하고, 시트 한정 참조는
+    시트명을 접두로 붙인다. 읽을 수 없으면 None (비교하지 않음을 뜻함).
+    """
+    if not f:
+        return None
+    try:
+        norm = norm_formula(f, swap_cmp=False)     # 대문자화·공백/$ 제거
+        norm = re.sub(r'"(?:[^"]|"")*"', '""', norm)
+        from openpyxl.utils import range_boundaries, get_column_letter
+        out = {}
+
+        def bump(k):
+            out[k] = out.get(k, 0) + 1
+
+        for m in _REF_TOKEN.finditer(norm):
+            sheet = (m.group("sheet") or "").strip()
+            a, b = m.group("a"), m.group("b")
+            pre = (sheet + "!") if sheet else ""
+            if b is None:
+                bump(pre + a)
+                continue
+            try:
+                c1, r1, c2, r2 = range_boundaries(f"{a}:{b}")
+                if None in (c1, r1, c2, r2):
+                    raise ValueError
+                if (r2 - r1 + 1) * (c2 - c1 + 1) > limit:
+                    bump(pre + f"{a}:{b}")
+                    continue
+                for rr in range(r1, r2 + 1):
+                    for cc in range(c1, c2 + 1):
+                        bump(pre + f"{get_column_letter(cc)}{rr}")
+            except Exception:
+                bump(pre + f"{a}:{b}")
+        return out
+    except Exception:
+        return None
+
+
+def same_ref_usage(a, b):
+    """두 수식이 같은 셀들을 같은 횟수만큼 참조하는가 (읽지 못하면 False)."""
+    ra, rb = formula_ref_counts(a), formula_ref_counts(b)
+    if ra is None or rb is None:
+        return False
+    return ra == rb
+
+
+def ref_usage_diff(expected_f, student_f, limit=6):
+    """참조 횟수가 다른 셀을 (정답이 더 쓴 셀, 내 답이 더 쓴 셀)로.
+
+    리포트에 '정답은 D19를 쓰는데 내 답은 C19를 한 번 더 썼습니다'처럼
+    셀 단위 근거를 보여 주기 위한 것.
+    """
+    ra, rb = formula_ref_counts(expected_f), formula_ref_counts(student_f)
+    if ra is None or rb is None:
+        return [], []
+    more_a, more_b = [], []
+    for k in sorted(set(ra) | set(rb)):
+        da, db = ra.get(k, 0), rb.get(k, 0)
+        if da > db:
+            more_a.append(k if da - db == 1 else f"{k}({da - db}회 더)")
+        elif db > da:
+            more_b.append(k if db - da == 1 else f"{k}({db - da}회 더)")
+    return more_a[:limit], more_b[:limit]
+
+
+# ---------------------------------------------------------------------------
+# 계산값 재계산 (LibreOffice headless)
+#   풀이 파일이 '수식만 있고 계산값이 없는' 상태로 저장되면(Excel 외 도구로
+#   저장·비정상 종료 등) 값 비교가 불가능해 수식 문자열로만 판정하게 된다.
+#   LibreOffice가 있으면 통합 문서를 다시 계산해 값 비교 경로를 복구한다.
+#   없거나 실패하면 조용히 기존(수식 비교) 경로를 쓴다.
+# ---------------------------------------------------------------------------
+
+RECALC_ENABLED = True
+RECALC_TIMEOUT = 180        # 초
+_RECALC_UNSET = object()
+_recalc_cache = {}
+
+
+def soffice_exe():
+    """LibreOffice 실행 파일 경로 — 찾지 못하면 None."""
+    import shutil
+    for name in ("soffice", "libreoffice", "soffice.exe"):
+        p = shutil.which(name)
+        if p:
+            return p
+    for p in (r"C:\Program Files\LibreOffice\program\soffice.exe",
+              r"C:\Program Files (x86)\LibreOffice\program\soffice.exe",
+              "/usr/bin/soffice", "/usr/bin/libreoffice",
+              "/usr/lib/libreoffice/program/soffice",
+              "/Applications/LibreOffice.app/Contents/MacOS/soffice"):
+        try:
+            if os.path.isfile(p):
+                return p
+        except Exception:
+            pass
+    return None
+
+
+def recalc_workbook(path):
+    """LibreOffice headless로 다시 계산한 {시트명: {(행, 열): 값}}.
+
+    실패하면 None. 같은 파일은 한 번만 변환한다(경로+수정시각+크기 기준).
+    """
+    if not RECALC_ENABLED:
+        return None
+    try:
+        st = os.stat(path)
+        ck = (os.path.abspath(path), int(st.st_mtime), st.st_size)
+    except Exception:
+        return None
+    if ck in _recalc_cache:
+        return _recalc_cache[ck]
+    _recalc_cache[ck] = None        # 재시도 방지 (실패도 기억)
+    exe = soffice_exe()
+    if not exe:
+        return None
+    import shutil
+    import subprocess
+    import tempfile
+    tmp = None
+    try:
+        tmp = tempfile.mkdtemp(prefix="grade_recalc_")
+        # 원본을 건드리지 않도록 사본으로 변환한다
+        work = os.path.join(tmp, "in" + os.path.splitext(path)[1].lower())
+        shutil.copyfile(path, work)
+        outdir = os.path.join(tmp, "out")
+        os.makedirs(outdir, exist_ok=True)
+        env = dict(os.environ)
+        env.pop("PYTHONPATH", None)     # LibreOffice 내장 파이썬 보호
+        cp = subprocess.run(
+            [exe, "--headless", "--norestore", "--invisible", "--nolockcheck",
+             "-env:UserInstallation=file://" + os.path.join(tmp, "profile"),
+             "--convert-to", "xlsx", "--outdir", outdir, work],
+            capture_output=True, timeout=RECALC_TIMEOUT, env=env,
+            cwd=tmp)
+        del cp
+        out = os.path.join(outdir, "in.xlsx")
+        if not os.path.isfile(out):
+            cands = [os.path.join(outdir, n) for n in os.listdir(outdir)
+                     if n.lower().endswith(".xlsx")]
+            if not cands:
+                return None
+            out = cands[0]
+        wb = openpyxl.load_workbook(out, data_only=True)
+        data = {}
+        for ws in wb.worksheets:
+            cells = {}
+            for row in ws.iter_rows(
+                    max_row=min(ws.max_row or 1, MAX_SCAN_ROWS),
+                    max_col=min(ws.max_column or 1, MAX_SCAN_COLS)):
+                for cell in row:
+                    if cell.value is not None:
+                        cells[(cell.row, cell.column)] = cell.value
+            data[ws.title] = cells
+        _recalc_cache[ck] = data
+        return data
+    except Exception:
+        return None
+    finally:
+        if tmp:
+            try:
+                import shutil as _sh
+                _sh.rmtree(tmp, ignore_errors=True)
+            except Exception:
+                pass
+
+
 def _as_number(v):
     if isinstance(v, bool):
         return None
@@ -479,6 +695,84 @@ class Book:
         self.norm_map = {}
         for s in self.raw.sheetnames:
             self.norm_map.setdefault(norm_sheet_name(s), s)
+        self._recalc = _RECALC_UNSET
+
+    # -- 계산값 재계산 (LibreOffice) ------------------------------------
+    def recalc_map(self):
+        """이 파일을 다시 계산한 값 표 — 한 번만 변환하고 재사용."""
+        if self._recalc is _RECALC_UNSET:
+            self._recalc = recalc_workbook(self.path)
+        return self._recalc
+
+    def recalc_available(self):
+        return bool(self.recalc_map())
+
+    def recalc_value(self, sheet_name, r, c):
+        """재계산 값. 재계산을 못 했으면 '__MISSING__'.
+
+        재계산된 시트에서 값이 비어 있으면 그 수식의 결과가 빈 문자열("")인
+        경우이므로 ""로 돌려준다 (이 함수는 수식이 있는 셀에만 쓴다).
+        """
+        m = self.recalc_map()
+        if not m:
+            return "__MISSING__"
+        sh = m.get(sheet_name)
+        if sh is None:
+            key = norm_sheet_name(sheet_name)
+            for t, d in m.items():
+                if norm_sheet_name(t) == key:
+                    sh = d
+                    break
+        if sh is None:
+            return "__MISSING__"
+        return sh.get((r, c), "")
+
+    # -- 도형(양식 컨트롤 단추가 아닌 그림 개체) ------------------------
+    def drawing_shapes(self, sheet_name):
+        """시트의 도형 [{'text','anchor','macro','geom','name'}].
+
+        매크로 문제의 '육각형/단추'는 xl/drawings/drawingN.xml 의 <xdr:sp>로
+        저장된다 (양식 컨트롤 단추는 VML에도 남지만 도형은 여기에만 있다).
+        텍스트·연결 매크로·도형 종류를 정답과 대조하기 위해 읽는다.
+        """
+        out = []
+        for t in self.sheet_rel_targets(sheet_name):
+            if not re.match(r"xl/drawings/drawing\d+\.xml$", t):
+                continue
+            try:
+                x = self.zf.read(t).decode("utf-8", "replace")
+            except KeyError:
+                continue
+            for blob in re.finditer(
+                    r"<xdr:(?:twoCell|oneCell|absolute)Anchor\b.*?"
+                    r"</xdr:(?:twoCell|oneCell|absolute)Anchor>", x, re.S):
+                b = blob.group(0)
+                if "<xdr:sp" not in b:
+                    continue
+                a = re.search(r"<xdr:from>.*?<xdr:col>(\d+)</xdr:col>.*?"
+                              r"<xdr:row>(\d+)</xdr:row>.*?</xdr:from>.*?"
+                              r"<xdr:to>.*?<xdr:col>(\d+)</xdr:col>.*?"
+                              r"<xdr:row>(\d+)</xdr:row>.*?</xdr:to>", b, re.S)
+                rng = "?"
+                if a:
+                    c1, r1, c2, r2 = (int(v) for v in a.groups())
+                    # <xdr:to>는 '다음 칸'을 가리킨다 -> 한 칸 당겨 표기
+                    rng = _anchor_range(c1, r1, max(c1, c2 - 1),
+                                        max(r1, r2 - 1))
+                mac = re.search(r'<xdr:sp[^>]*\bmacro="([^"]*)"', b)
+                nm = re.search(r'<xdr:cNvPr[^>]*\bname="([^"]*)"', b)
+                geo = re.search(r'<a:prstGeom[^>]*\bprst="([^"]*)"', b)
+                hidden = bool(re.search(r'<xdr:cNvPr[^>]*\bhidden="(?:1|true)"',
+                                        b))
+                txt = "".join(html_mod.unescape(t2) for t2 in
+                              re.findall(r"<a:t>([^<]*)</a:t>", b)).strip()
+                macro = (mac.group(1) if mac else "").split("!")[-1].strip()
+                out.append({
+                    "text": txt, "anchor": rng, "macro": macro,
+                    "geom": geo.group(1) if geo else "",
+                    "name": html_mod.unescape(nm.group(1)) if nm else "",
+                    "hidden": hidden})
+        return out
 
     def _map_sheet_parts(self):
         """시트명 -> xl/worksheets/sheetN.xml 매핑."""
@@ -640,6 +934,8 @@ class Book:
                         macro = html_mod.unescape(mm.group(1)).split("!")[-1]
                 except KeyError:
                     pass
+            if rng == "?" and not macro:
+                continue    # 앵커도 연결 매크로도 못 읽은 잔여 항목 — 비교 불가
             out.append({"text": text, "anchor": rng, "macro": macro})
         return out
 
@@ -907,7 +1203,11 @@ def vba_macro_units(source):
         if cur is None:
             continue
         for m in re.finditer(r'Range\(\s*"([^"]+)"', s, re.I):
-            cur["ranges"].append(m.group(1).replace("$", "").upper())
+            # Range("B5:F5,B6:B10") 처럼 여러 영역을 한 번에 지정할 수 있다
+            for part in m.group(1).split(","):
+                part = part.replace("$", "").strip().upper()
+                if part:
+                    cur["ranges"].append(part)
         for m in re.finditer(r"\[\s*([A-Za-z]{1,3}\d+(?::[A-Za-z]{1,3}\d+)?)"
                              r"\s*\]", s):
             cur["ranges"].append(m.group(1).replace("$", "").upper())
@@ -1081,6 +1381,8 @@ def color_name_ko(rgb_hex):
                  + abs(b - int(hx[4:6], 16)))
             if best is None or d < best[0]:
                 best = (d, nm)
+        if best and best[0] == 0:
+            return f"{best[1]}(#{rgb_hex})"
         if best and best[0] <= 90:
             return f"{best[1]}(#{rgb_hex} 계열)"
         return f"#{rgb_hex}"
@@ -2384,6 +2686,14 @@ class CellJudge:
         self.shs_val = book_s.cached[ssheet] if ssheet else None
         self.key_cells = key_cells or {}
         self.formula_only_used = False  # 캐시값 없어 수식 판정한 적 있음
+        # 재계산(LibreOffice) 경로
+        self.book_a, self.book_s = book_a, book_s
+        self.asheet, self.ssheet = asheet, ssheet
+        self.recalc_cells = []      # 재계산 값으로 비교한 셀 좌표
+        self.recalc_failed = False  # 재계산이 필요했는데 못 한 적이 있음
+        self.recalc_vals_s = {}     # (행, 열) -> 학생 재계산 값
+        self.recalc_vals_a = {}     # (행, 열) -> 정답 재계산 값
+        self.ref_mismatch = []      # 결과는 같으나 참조가 다른 셀 [(좌표, ef, sf)]
         # 자료 입력(기본작업-1): 정답 셀 표시 형식으로 같은 숫자면 정답
         self.display_tolerant = display_tolerant
         self.display_matched = []       # 표시 형식 기준으로 정답 처리한 셀
@@ -2419,18 +2729,59 @@ class CellJudge:
             return "__MISSING__", f
         return raw, None
 
+    def _recalc(self, r, c, ef, sf):
+        """계산값이 없어 값 비교가 막혔을 때 LibreOffice 재계산으로 값을 채운다.
+
+        학생 파일에 '수식은 있는데 계산값이 없는' 셀이 있을 때만 시도한다
+        (그 외에는 변환 비용을 쓰지 않는다). 정답 파일도 같은 이유로 값이
+        없으면 함께 재계산한다. 실패하면 아무 것도 바꾸지 않는다.
+        """
+        got_v = exp_v = "__MISSING__"
+        if self.ssheet and sf:
+            got_v = self.book_s.recalc_value(self.ssheet, r, c)
+        if got_v == "__MISSING__":
+            self.recalc_failed = True
+            return "__MISSING__", "__MISSING__"
+        self.recalc_vals_s[(r, c)] = got_v
+        if ef:
+            exp_v = self.book_a.recalc_value(self.asheet, r, c)
+            if exp_v != "__MISSING__":
+                self.recalc_vals_a[(r, c)] = exp_v
+        return exp_v, got_v
+
     def judge(self, r, c):
         """(정답 여부, 기대값, 학생값, 기대수식) 반환."""
         exp, ef = self.expected(r, c)
         got, sf = self.student(r, c)
         if self.shs_raw is None:
             return False, exp, None, ef
+        # 0) 학생 계산값이 없어 값 비교가 막히면 재계산으로 값 비교를 복구
+        used_recalc = False
+        if got == "__MISSING__" and sf:
+            exp_v, got_v = self._recalc(r, c, ef, sf)
+            if got_v != "__MISSING__":
+                got = got_v
+                used_recalc = True
+                if exp == "__MISSING__" and exp_v != "__MISSING__":
+                    exp = exp_v
+                coord = self.sha_raw.cell(r, c).coordinate
+                if coord not in self.recalc_cells:
+                    self.recalc_cells.append(coord)
         # 1) 값 판정
         if exp != "__MISSING__" and got != "__MISSING__":
             ok = value_eq(exp, got)
             if not ok and ef and sf and norm_formula(ef) == norm_formula(sf):
                 # 수식이 정확히 같은데 캐시값만 다른 경우(재계산 안 됨) 관대 처리
                 ok = True
+            if ok and used_recalc and ef and sf \
+                    and norm_formula(ef) != norm_formula(sf) \
+                    and not same_ref_usage(ef, sf):
+                # 재계산 결과가 같아도 '참조하는 셀'이 정답과 다르면 이 자료에서만
+                # 우연히 겹친 것일 수 있다 -> 수식 기준(오답)을 유지하고 근거를 남긴다
+                ok = False
+                coord = self.sha_raw.cell(r, c).coordinate
+                if not any(m[0] == coord for m in self.ref_mismatch):
+                    self.ref_mismatch.append((coord, ef, sf))
             if not ok and self.display_tolerant:
                 try:
                     nf = self.sha_raw.cell(r, c).number_format
@@ -2925,12 +3276,57 @@ def _fmt_expected(exp, ef):
 
 STATE_BLANK = "(빈 셀 — 값·수식 없음)"
 STATE_NOCACHE = "(수식만 있음 · 계산값 없음)"
+STATE_RECALC = "(수식만 있음 · 재계산값 {v})"
 NOCACHE_GUIDE = ("수식은 있으나 계산된 값이 파일에 저장되지 않아 수식 문자열로만 "
                  "비교했습니다 — Excel에서 열어 저장(Ctrl+S)한 뒤 다시 채점하면 "
                  "값 기준으로 채점됩니다.")
 BLANK_GUIDE = ("채점한 파일에서 이 셀들은 값도 수식도 없는 빈 셀입니다 — 풀이를 "
                "저장(Ctrl+S)한 파일이 맞는지, 다른 사본을 채점한 것은 아닌지 "
                "확인하세요.")
+RECALC_GUIDE = ("수식은 있으나 계산된 값이 파일에 저장돼 있지 않아, 이 채점기가 "
+                "LibreOffice로 통합 문서를 다시 계산해 결과값으로 비교했습니다.")
+
+
+def compare_mode_note(judge):
+    """이 시트를 어떤 방식으로 비교했는지 한 줄로. 해당 없으면 None."""
+    if getattr(judge, "recalc_cells", None):
+        cc = compress_coords(judge.recalc_cells)
+        txt = ("계산값이 없어 재계산해 비교했습니다 — LibreOffice로 다시 계산한 "
+               "결과값으로 비교한 셀: " + ", ".join(cc[:6])
+               + (" 외" if len(cc) > 6 else "") + ".")
+        if judge.recalc_failed:
+            txt += " (일부 셀은 재계산하지 못해 수식 문자열로 비교했습니다.)"
+        return txt
+    if getattr(judge, "recalc_failed", False):
+        return ("계산값이 없고 재계산도 하지 못해 수식 문자열로 비교했습니다 — "
+                "LibreOffice가 설치돼 있지 않거나 변환에 실패했습니다. Excel에서 "
+                "파일을 열어 저장(Ctrl+S)한 뒤 다시 채점하면 값 기준으로 "
+                "채점됩니다.")
+    if getattr(judge, "formula_only_used", False):
+        return "계산값이 없어 수식 문자열로 비교했습니다."
+    return "저장된 계산값으로 비교했습니다."
+
+
+def ref_mismatch_note(judge, limit=4):
+    """결과는 같지만 참조가 다른 셀의 근거 문장. 없으면 None."""
+    items = getattr(judge, "ref_mismatch", None)
+    if not items:
+        return None
+    lines = []
+    for coord, ef, sf in items[:limit]:
+        more_a, more_b = ref_usage_diff(ef, sf)
+        if more_a or more_b:
+            lines.append(
+                f"{coord}: 정답은 {', '.join(more_a) or '(없음)'}을(를) "
+                f"참조하는데 내 답은 {', '.join(more_b) or '(없음)'}을(를) "
+                "참조합니다")
+        else:
+            lines.append(f"{coord}: 참조가 다릅니다")
+    tail = f" 외 {len(items) - limit}개" if len(items) > limit else ""
+    return ("다시 계산한 결과값은 정답과 같지만, 수식이 참조하는 셀이 정답과 "
+            "달라 오답으로 두었습니다 — 이 자료에서 우연히 결과가 겹친 것일 뿐 "
+            "참조가 바뀌면 결과가 달라집니다 (" + "; ".join(lines) + tail + "). "
+            "실제 시험도 수식의 참조를 보고 채점합니다.")
 
 
 def student_cell_state(judge, r, c):
@@ -2946,6 +3342,9 @@ def student_cell_state(judge, r, c):
     except Exception:
         return "value", "?", None
     if got == "__MISSING__":
+        rv = judge.recalc_vals_s.get((r, c), "__MISSING__")
+        if rv != "__MISSING__":
+            return "recalc", STATE_RECALC.format(v=fmt_value(rv)), sf
         return "nocache", STATE_NOCACHE, sf
     if got is None and not sf:
         return "blank", STATE_BLANK, None
@@ -2971,6 +3370,8 @@ def cell_state_guide(judge, wrong):
         return BLANK_GUIDE
     if any(s == "nocache" for s in states):
         return NOCACHE_GUIDE
+    if any(s == "recalc" for s in states):
+        return RECALC_GUIDE
     return None
 
 
@@ -4095,6 +4496,17 @@ def grade_calc(res, ctx):
             guide = cell_state_guide(judge, wrong)
             if guide:
                 note += ". " + guide
+            gr_ref = [m for m in judge.ref_mismatch
+                      if any(m[0] == co for (_r, _c, co) in cells)]
+            if gr_ref:
+                coord, ef2, sf2 = gr_ref[0]
+                more_a, more_b = ref_usage_diff(ef2, sf2)
+                note += (f" 다시 계산한 결과값은 정답과 같지만 참조하는 셀이 "
+                         f"다릅니다 — {coord}에서 정답은 "
+                         f"{', '.join(more_a) or '(없음)'}, 내 답은 "
+                         f"{', '.join(more_b) or '(없음)'}을(를) 참조합니다. "
+                         "이 자료에서 우연히 결과가 같았을 뿐이라 정답으로 "
+                         "인정하지 않습니다.")
             add_card(res, f"계산 문제 {gi}", per, "cell", cells=entries,
                      formula=rep_formula, note=note,
                      more=max(0, len(wrong) - 3),
@@ -4102,6 +4514,12 @@ def grade_calc(res, ctx):
                           "수식을 완성한 뒤 채우기 핸들로 복사하고, 결과가 "
                           "이상한 셀이 없는지 훑어보세요.")
     res.earned = int(round(per * passed))
+    cmn = compare_mode_note(judge)
+    if cmn:
+        res.notes.append(cmn)
+    rmn = ref_mismatch_note(judge)
+    if rmn:
+        res.notes.append(rmn)
     res.notes.append(f"수식 문제를 {n}개 그룹으로 인식 (그룹당 {per:.0f}점)"
                      + ("" if n == CALC_GROUP_TARGET else
                         f" — 표준은 {CALC_GROUP_TARGET}문제입니다. 배점 배분이 "
@@ -4201,6 +4619,114 @@ def _macro_fmt_desc(kind, sig, raw=None):
     return str(sig)
 
 
+def _font_color_txt(color):
+    """글꼴 색 시그니처 -> 사람이 읽는 표기. 지정이 없으면 '자동(검정)'."""
+    if color is None:
+        return "자동(검정)"
+    if isinstance(color, tuple) and color[0] == "rgb":
+        return color_name_ko(color[1])
+    if isinstance(color, tuple) and color[0] == "theme":
+        return f"테마 색 {color[1]}"
+    return "지정 색"
+
+
+def font_pair_desc(sig_a, sig_s):
+    """정답/내 답 글꼴 표기 — 색이 한쪽에만 있으면 없는 쪽을 '자동(검정)'으로.
+
+    색 항목이 통째로 빠져 '맑은 고딕 11pt' vs '맑은 고딕 11pt 굵게, 글꼴 색
+    파랑'처럼 무엇이 다른지 눈에 잘 안 들어오던 표기를 고친다.
+    """
+    a, s = describe_font(sig_a), describe_font(sig_s)
+    try:
+        ca, cs = sig_a[6], sig_s[6]
+    except Exception:
+        return a, s
+    if ca == cs:
+        return a, s
+    if ca is None and a != "확인 불가":
+        a += f", 글꼴 색 {_font_color_txt(ca)}"
+    if cs is None and s != "확인 불가":
+        s += f", 글꼴 색 {_font_color_txt(cs)}"
+    return a, s
+
+
+def macro_objects(book, sheet):
+    """시트의 매크로 실행 개체(양식 컨트롤 단추 + 도형)를 한 목록으로."""
+    out = []
+    if not sheet:
+        return out
+    try:
+        for b in book.form_controls(sheet):
+            out.append({"kind": "단추", "text": b.get("text", ""),
+                        "anchor": b.get("anchor", "?"),
+                        "macro": b.get("macro", ""), "geom": ""})
+    except Exception:
+        pass
+    try:
+        for s in book.drawing_shapes(sheet):
+            if s.get("hidden"):
+                continue        # 양식 컨트롤의 그림자 개체 — 단추로 이미 셈
+            out.append({"kind": "도형", "text": s.get("text", ""),
+                        "anchor": s.get("anchor", "?"),
+                        "macro": s.get("macro", ""),
+                        "geom": s.get("geom", "")})
+    except Exception:
+        pass
+    return out
+
+
+SHAPE_GEOM_KO = {"hexagon": "육각형", "rect": "직사각형",
+                 "roundRect": "모서리가 둥근 직사각형", "ellipse": "타원",
+                 "flowChartProcess": "순서도: 처리", "pentagon": "오각형",
+                 "diamond": "다이아몬드", "octagon": "팔각형"}
+
+
+def _obj_label(o):
+    g = SHAPE_GEOM_KO.get(o.get("geom"), o.get("geom") or "")
+    head = f"{o['kind']}({g})" if g else o["kind"]
+    return (f"[{o['anchor']}] {head} 텍스트 '{o['text'] or '(없음)'}'"
+            + (f" → {o['macro']} 매크로" if o.get("macro") else ""))
+
+
+def compare_macro_objects(objs_a, objs_s):
+    """정답/내 답의 단추·도형을 짝지어 [(정답 개체, 내 개체 or None, 차이들)].
+
+    짝은 앵커 -> 연결 매크로 -> 같은 종류의 순서 로 찾는다.
+    """
+    left = list(objs_s)
+    pairs = []
+    for a in objs_a:
+        mate = None
+        for pick in (lambda s: s["anchor"] != "?" and s["anchor"] == a["anchor"],
+                     lambda s: a.get("macro") and s.get("macro") == a["macro"],
+                     lambda s: s["kind"] == a["kind"]):
+            for s in left:
+                if pick(s):
+                    mate = s
+                    break
+            if mate:
+                break
+        if mate:
+            left.remove(mate)
+        diffs = []
+        if mate is None:
+            diffs.append("찾지 못함")
+        else:
+            if (a.get("text") or "") != (mate.get("text") or ""):
+                diffs.append(f"텍스트 '{mate.get('text') or '(없음)'}'"
+                             f" → '{a.get('text') or '(없음)'}'이어야 합니다")
+            if a.get("geom") and mate.get("geom") and \
+                    a["geom"] != mate["geom"]:
+                diffs.append(
+                    f"도형 종류 {SHAPE_GEOM_KO.get(mate['geom'], mate['geom'])}"
+                    f" → {SHAPE_GEOM_KO.get(a['geom'], a['geom'])}")
+            if a.get("macro") and mate.get("macro") and \
+                    a["macro"] != mate["macro"]:
+                diffs.append(f"연결 매크로 {mate['macro']} → {a['macro']}")
+        pairs.append((a, mate, diffs))
+    return pairs
+
+
 def _macro_evidence_notes(res, book_a, book_s, asheet, ssheet):
     """리포트에 남길 매크로 근거: 매크로 이름·단추 앵커/텍스트/연결 매크로."""
     names_s = [u["name"] for u in book_s.vba_units()] if book_s else []
@@ -4219,6 +4745,14 @@ def _macro_evidence_notes(res, book_a, book_s, asheet, ssheet):
     elif ssheet and book_s.sheet_has_drawing(ssheet):
         res.notes.append("내 파일에 단추/도형은 있지만 앵커·연결 매크로를 "
                          "읽지 못했습니다.")
+    shp = [s for s in (book_s.drawing_shapes(ssheet) if (book_s and ssheet)
+                       else []) if not s.get("hidden")]
+    if shp:
+        res.notes.append("내 파일 도형: " + " / ".join(
+            f"[{s['anchor']}] {SHAPE_GEOM_KO.get(s['geom'], s['geom'] or '도형')}"
+            f" 텍스트 '{s['text'] or '(없음)'}'"
+            + (f" → {s['macro']} 매크로" if s["macro"] else "")
+            for s in shp[:4]))
     return names_s
 
 
@@ -4262,6 +4796,7 @@ def grade_macro(res, ctx):
         _mr, _mc = scan_bounds(sha, shs)
         s_edges = sheet_edge_map(shs, _mr, _mc)
     fmt_bad = []
+    fmt_ok = {}      # 종류 -> 정확히 적용된 셀 좌표 (부분 정답 표기용)
     for kind, payload in ctx["fdiffs"].items():
         if kind in ("rowheight", "colwidth", "merge", "merge_del", "names",
                     "border_edges"):
@@ -4276,6 +4811,7 @@ def grade_macro(res, ctx):
                 mac = None if ok else vba_covers(vba_units, coord, "border")
                 if ok or mac:
                     units_ok += 1
+                    fmt_ok.setdefault("border", []).append(coord)
                     if mac:
                         vba_credit.append((coord, "border", mac))
                     continue
@@ -4306,6 +4842,7 @@ def grade_macro(res, ctx):
             mac = None if ok else vba_covers(vba_units, coord, kind)
             if ok or mac:
                 units_ok += 1
+                fmt_ok.setdefault(kind, []).append(coord)
                 if mac:
                     vba_credit.append((coord, kind, mac))
                 continue
@@ -4318,6 +4855,8 @@ def grade_macro(res, ctx):
                     pass
             exp_d = _macro_fmt_desc(kind, sig_a, raw_a)
             got_d = _macro_fmt_desc(kind, sig_s, raw_s)
+            if kind == "font" and exp_d and got_d:
+                exp_d, got_d = font_pair_desc(sig_a, sig_s)
             why = None
             if shs is None:
                 why = f"학생 파일에 '{asheet}' 시트가 없습니다"
@@ -4376,10 +4915,35 @@ def grade_macro(res, ctx):
                 or f"판정 불가: {first['why'] or '알 수 없음'}",
                 "got": first["got"]
                 or f"판정 불가: {first['why'] or '알 수 없음'}"})
+        # 같은 지시 안에서 이미 정확히 적용된 범위를 함께 보여 준다
+        okay_note = ""
+        ok_chips = []
+        for k in by_kind:
+            good = [co for co in fmt_ok.get(k, [])
+                    if co not in by_kind[k]]
+            if good:
+                ok_chips.append(f"{FMT_KIND_LABEL.get(k, k)}: "
+                                + ", ".join(compress_coords(good)[:3]))
+        if ok_chips:
+            okay_note = (" 같은 지시에서 " + " / ".join(ok_chips)
+                         + " 영역은 정확히 적용됐고, 위에 적은 범위에만 "
+                         "적용되지 않았습니다.")
         code_note = ""
         if vba_units:
-            code_note = (" 내 VBA 코드에는 이 셀·서식을 지정하는 문장이 "
-                         "없었습니다.")
+            # 같은 서식 종류를 다루는 매크로가 있는데 범위만 다른 경우를 구분
+            bad_kinds = set(by_kind)
+            rel = [u for u in vba_units if u["kinds"] & bad_kinds]
+            if rel:
+                parts = []
+                for u in rel[:2]:
+                    rngs = ", ".join(dict.fromkeys(u["ranges"]))[:80] or "없음"
+                    parts.append(f"'{u['name']}' 매크로의 적용 범위 [{rngs}]")
+                code_note = (" 내 VBA 코드에 " + " / ".join(parts)
+                             + "에는 이 셀이 들어 있지 않습니다 — 매크로는 "
+                               "있지만 적용 범위가 지시와 다릅니다.")
+            else:
+                code_note = (" 내 VBA 코드에는 이 셀·서식을 지정하는 문장이 "
+                             "없었습니다.")
         elif book_s.has_vba():
             code_note = " 내 파일의 VBA 코드를 읽지 못해 코드 인정은 못 했습니다."
         else:
@@ -4387,7 +4951,7 @@ def grade_macro(res, ctx):
                          "xlsm(매크로 사용 통합 문서)으로 저장해야 남습니다.")
         add_card(res, "매크로 서식 결과", 0, "macro", cells=cells, props=props,
                  note="정답 파일의 매크로 실행 결과 서식과 내 파일을 셀 단위로 "
-                      "비교했습니다." + code_note,
+                      "비교했습니다." + okay_note + code_note,
                  hint="서식 매크로가 지시한 서식(채우기·글꼴 등)을 정확히 "
                       "기록하고, 기록 후 단추를 눌러 실제로 실행했는지 "
                       "확인하세요.")
@@ -4398,12 +4962,35 @@ def grade_macro(res, ctx):
             "실행 결과 서식/값은 정답과 다르지만 매크로 코드에 해당 동작이 "
             f"있어 인정했습니다: {txt}. 실제 시험은 '생성하여 실행'까지 "
             "요구하므로 단추를 눌러 결과까지 남기세요.")
-    # 단추/도형 존재 +2
+    # 단추/도형 존재 +2 (텍스트·연결 매크로·도형 종류가 다르면 -1)
     btn_a = book_a.sheet_has_drawing(asheet)
     btn_s = ssheet and book_s.sheet_has_drawing(ssheet)
     if btn_a:
         if btn_s:
-            earned += 2
+            obj_pts = 2
+            objs_a = macro_objects(book_a, asheet)
+            objs_s = macro_objects(book_s, ssheet)
+            bad_objs = [(a, m, d) for (a, m, d)
+                        in compare_macro_objects(objs_a, objs_s) if d]
+            if objs_a and bad_objs:
+                obj_pts = 1
+                lines = [f"{_obj_label(a)} — " + ", ".join(d)
+                         for (a, m, d) in bad_objs[:3]]
+                res.details.append("[단추/도형] 지시와 다름: "
+                                   + " / ".join(lines))
+                add_card(res, "매크로 단추·도형", 1, "macro",
+                         props=[{"name": f"{a['kind']} {a['anchor']}",
+                                 "expected": _obj_label(a),
+                                 "got": _obj_label(m) if m
+                                 else "찾지 못했습니다"}
+                                for (a, m, d) in bad_objs[:3]],
+                         note="문제지는 단추·도형의 텍스트와 연결 매크로까지 "
+                              "지정합니다 — 정답 파일의 개체와 대조했습니다: "
+                              + " / ".join(lines),
+                         hint="도형(단추)을 우클릭 → 텍스트 편집으로 지시된 "
+                              "글자를 정확히 입력하고, 우클릭 → 매크로 지정으로 "
+                              "지시된 매크로를 연결했는지 확인하세요.")
+            earned += obj_pts
         else:
             res.details.append("[단추/도형] 매크로 실행용 단추(도형)를 찾지 못함 (-2점)")
             add_card(res, "매크로 단추(도형)", 2, "macro",
@@ -4710,6 +5297,7 @@ def run_grading(problem_path, answer_path, student_path, key, sheets=None):
                             "배점을 자동 배분했습니다.")
 
     formula_only = False
+    recalc_any = False
     for (n, psheet, asheet, ssheet) in matched:
         alloc = points.get(n, 0)
         res = SheetResult(psheet, alloc)
@@ -4744,8 +5332,14 @@ def run_grading(problem_path, answer_path, student_path, key, sheets=None):
             res.notes.append(note)
         if ctx["judge"].formula_only_used:
             formula_only = True
+        if getattr(ctx["judge"], "recalc_cells", None):
+            recalc_any = True
         results.append(res)
 
+    if recalc_any:
+        global_notes.append("일부 셀은 계산된 값이 파일에 없어 LibreOffice로 다시 "
+                            "계산해 결과값으로 채점했습니다. Excel에서 파일을 열어 "
+                            "저장(Ctrl+S)하면 저장된 계산값으로 채점됩니다.")
     if formula_only:
         global_notes.append("일부 셀은 계산된 값이 없어 수식 기준으로 채점했습니다. "
                             "Excel에서 파일을 열어 저장하면 값 기준 채점이 가능합니다.")
@@ -6462,7 +7056,13 @@ def main(argv=None):
                     help="부분 채점: 지정 시트만 채점 (쉼표 구분, 예: "
                          "--sheets 계산작업 또는 --sheets 기본작업-1,"
                          "기본작업-2). 총점은 해당 시트 배점 합 기준 (선택)")
+    ap.add_argument("--no-recalc", dest="no_recalc", action="store_true",
+                    help="계산값이 없는 수식을 LibreOffice로 다시 계산하지 "
+                         "않습니다 (기본은 재계산해 결과값으로 비교)")
     args = ap.parse_args(argv)
+    if getattr(args, "no_recalc", False):
+        global RECALC_ENABLED
+        RECALC_ENABLED = False
 
     key = {}
     if args.key:
