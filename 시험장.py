@@ -63,11 +63,18 @@ v2.7.0: ① 응시 제한 폐지 — 하루 1회 잠금(2.5.0)을 완전히 없�
 갱신과 밴드 이동을 표시한다. 규약 `sets[]` 에 `band`·`last_date`·`scores`·
 `prev_best`·`best_delta`·`improved`·`prev_band` 가, 최상위에 `bands` 요약이
 추가됐다(프로그램·웹 공통 순수 함수 `score_band`).
+v2.7.2: ① 정정 데이터 가산점 — `정정/점수정정.json` 항목에 `delta` 가 생겼다.
+`new_total` 은 총점을 그 값으로 못박지만, 문제지 쪽 결함처럼 **채점기가 알 수
+없는 사유**를 못박아 두면 다음 재채점이 덮어써 인정한 점수가 날아간다. `delta`
+는 채점 결과 **위에** 얹는 가산점이라 채점기가 올라가도 유지된다. 지금 점수에
+얹힌 가산점은 기록의 `정정가산키` 에 남아 중복 가산을 막는다. ② 리포트에 적힌
+시각의 초가 기록과 어긋나도 같은 '분' 의 기록이 하나뿐이면 찾아서 반영한다.
+③ 채점기 2.0.6 동봉(테두리 표기 기준·제작 메모 제외·VBA 읽기 수정).
 
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "2.7.1"
+__version__ = "2.7.2"
 
 import argparse
 import hashlib
@@ -4220,6 +4227,7 @@ CORRECTIONS_FILE_NAME = "점수정정.json"
 CORRECTIONS_DATA_KEY = "정정/점수정정.json"   # version.json data_files 키
 CORRECTION_HISTORY_FIELD = "정정이력"     # 기록에 보관하는 원점수 이력
 CORRECTION_KEY_FIELD = "키"              # 정정 항목 식별자 (중복 정정 방지)
+CORRECTION_BONUS_FIELD = "정정가산키"     # 현재 점수에 이미 얹힌 가산점 키들
 REGRADE_EVIDENCE_FIELDS = ("채점기버전", "문제해시", "정답해시", "기대값해시",
                            "풀이경로")
 REGRADE_SUFFIX = "_재채점"               # 새 리포트 파일 이름 꼬리표
@@ -4497,7 +4505,14 @@ def apply_correction(rec, new_total, reason, when=None, source="재채점",
 def load_corrections(path=None):
     """정정 데이터(`정정/점수정정.json`) → 항목 목록.
 
-    형식: {"corrections": [{"report_id", "set", "new_total", "reason"}]}.
+    형식: {"corrections": [{"report_id", "set", "reason",
+                            "new_total" 또는 "delta"}]}.
+
+    `new_total` 은 총점을 그 값으로 못박습니다 — 채점기가 손댈 수 없는
+    기록(풀이 파일이 사라진 경우 등)에 씁니다.
+    `delta` 는 채점 결과 **위에** 더하는 가산점입니다 — 문제지 쪽 결함처럼
+    채점기가 알 수 없는 사유에 씁니다. 다시 채점해도 가산점이 유지되도록
+    재채점 결과에 더해집니다.
     파일이 없거나 깨졌거나 형식이 이상하면 조용히 [] (죽지 않습니다)."""
     p = path or corrections_path()
     try:
@@ -4514,12 +4529,59 @@ def load_corrections(path=None):
             continue
         rid = it.get("report_id")
         total = _coerce_score(it.get("new_total"))
-        if not isinstance(rid, str) or not rid.strip() or total is None:
+        delta = _coerce_score(it.get("delta"))
+        if not isinstance(rid, str) or not rid.strip():
+            continue
+        if total is None and not delta:
             continue
         out.append({"report_id": rid.strip(), "set": str(it.get("set") or ""),
-                    "new_total": total,
+                    "new_total": total, "delta": delta or 0,
                     "reason": str(it.get("reason") or "이의제기 인정")})
     return out
+
+
+def correction_matches(it, rec):
+    """정정 항목의 `set` 조건이 이 기록과 맞는지."""
+    if not it.get("set"):
+        return True
+    name = record_set_name(rec)
+    return it["set"] in (name, norm_set_key(name))
+
+
+def correction_deltas(items, rid, rec):
+    """이 기록에 걸린 가산점 항목 [(점수, 사유)] — 재채점 결과에 더합니다."""
+    return [(it["delta"], it["reason"]) for it in items
+            if it["report_id"] == rid and it.get("delta")
+            and correction_matches(it, rec)]
+
+
+def resolve_correction_target(by_id, wanted):
+    """정정 항목의 report_id 로 기록 찾기 → (실제 id, 기록) 또는 (wanted, None).
+
+    기록 id 는 일시 14자리(초까지)인데, 리포트에 적히는 시각은 분까지만
+    보이는 경우가 있어 초가 어긋날 수 있습니다. 정확히 같은 id 가 없으면
+    같은 '분'(앞 12자리) 의 기록이 딱 하나일 때만 그 기록으로 봅니다 —
+    한 세트를 같은 분에 두 번 제출하는 일은 없기 때문입니다."""
+    rec = by_id.get(wanted)
+    if rec is not None:
+        return wanted, rec
+    if not (isinstance(wanted, str) and len(wanted) == 14
+            and wanted.isdigit()):
+        return wanted, None
+    same = [(rid, r) for rid, r in by_id.items()
+            if len(rid) == 14 and rid[:12] == wanted[:12]]
+    return same[0] if len(same) == 1 else (wanted, None)
+
+
+def correction_delta_key(rid, delta):
+    """가산점 항목 식별자 — 부호를 포함해 `data:<기록id>:+5` 모양."""
+    return f"data:{rid}:{delta:+g}"
+
+
+def correction_bonus_applied(rec, key):
+    """이 가산점이 지금 점수에 이미 얹혀 있는지."""
+    keys = rec.get(CORRECTION_BONUS_FIELD)
+    return isinstance(keys, list) and key in keys
 
 
 def correction_change_text(ch):
@@ -4661,6 +4723,11 @@ class RegradeCoordinator:
             log_error("자동 재채점 대상 선별", e)
             targets = []
         summary["targets"] = len(targets)
+        try:
+            data_items = load_corrections(self.corrections_file)
+        except Exception as e:
+            log_error("점수 정정 데이터 읽기", e)
+            data_items = []
         patches = {}
         todo = [t for t in targets if t[4]][:self.limit]
         for i, (rid, rec, s, why, student) in enumerate(todo, 1):
@@ -4679,9 +4746,22 @@ class RegradeCoordinator:
             patch = dict(rec)
             ev = record_evidence_changes(patch, s, grade_py=self.grade_py,
                                          student=student)
+            # 문제지 쪽 결함 등 채점기가 알 수 없는 가산점은 재채점 결과 위에
+            # 다시 얹는다 — 안 그러면 다음 재채점 때마다 인정한 점수가 날아간다.
+            total = result.get("total")
+            bonus = correction_deltas(data_items, rid, rec)
+            reason = why
+            if bonus and isinstance(total, (int, float)):
+                total = total + sum(d for d, _ in bonus)
+                reason = why + " + " + ", ".join(
+                    f"{d:+g}점({r})" for d, r in bonus)
+            # 지금 점수에 얹힌 가산점을 기록해 둔다 — 정정 데이터 단계가
+            # 같은 가산점을 한 번 더 더하지 않도록.
+            patch[CORRECTION_BONUS_FIELD] = [
+                correction_delta_key(rid, d) for d, _ in bonus]
             entry = apply_correction(
-                patch, result.get("total"), why, when=self.when,
-                source="재채점", key=f"regrade:{rid}:{why}",
+                patch, total, reason, when=self.when,
+                source="재채점", key=f"regrade:{rid}:{reason}",
                 report=html_p if os.path.isfile(html_p) else None,
                 result=result, evidence=ev)
             patches[rid] = {k: v for k, v in patch.items()
@@ -4714,19 +4794,30 @@ class RegradeCoordinator:
         by_id = {rid: rec for rid, rec in records_with_ids(records)}
         n = 0
         for it in items:
-            rid = it["report_id"]
-            rec = by_id.get(rid)
+            rid, rec = resolve_correction_target(by_id, it["report_id"])
+            # 이번에 다시 채점한 기록은 가산점까지 거기서 얹었다 — 건너뛴다.
             if rec is None or rid in patches:
                 continue
-            if it["set"]:
-                name = record_set_name(rec)
-                if it["set"] not in (name, norm_set_key(name)):
+            if not correction_matches(it, rec):
+                continue
+            bonus_key = None
+            if it.get("delta"):
+                base = _coerce_score(rec.get("점수"))
+                bonus_key = correction_delta_key(rid, it["delta"])
+                if base is None or correction_bonus_applied(rec, bonus_key):
                     continue
+                target, key = base + it["delta"], bonus_key
+            else:
+                target = it["new_total"]
+                key = f"data:{rid}:{target:g}"
             patch = dict(rec)
             entry = apply_correction(
-                patch, it["new_total"], it["reason"], when=self.when,
-                source="정정데이터",
-                key=f"data:{rid}:{it['new_total']:g}")
+                patch, target, it["reason"], when=self.when,
+                source="정정데이터", key=key)
+            if entry is not None and bonus_key:
+                prev = rec.get(CORRECTION_BONUS_FIELD)
+                patch[CORRECTION_BONUS_FIELD] = (
+                    list(prev) if isinstance(prev, list) else []) + [bonus_key]
             if entry is None:
                 continue
             patches[rid] = {k: v for k, v in patch.items()
