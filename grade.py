@@ -13,6 +13,29 @@
 의존성: Python 3.8+ / openpyxl (표준 라이브러리 외 유일한 의존성)
 
 변경 이력:
+    2.0.5  이의제기 3건 반영 (코코 모의고사 2회 리포트 — 자체 제작 문제지 기준)
+           - 기본작업-2 열 너비: Excel은 [열 너비] 대화상자에 입력한 문자 수를
+             그대로 저장하지 않고 글자 폭(MDW)에 5픽셀 여백을 더해 저장한다
+             (저장값 = trunc((문자수*MDW + 5)/MDW*256)/256). 맑은 고딕 11pt는
+             MDW=8px이라 '12'를 입력하면 12.625가, Calibri 11pt는 MDW=7px이라
+             12.7109375가 저장된다. 반면 openpyxl로 만든 정답 파일은 12를
+             그대로 저장한다 — 그래서 정확히 12를 입력한 풀이가 오답 처리됐다.
+             이제 저장값을 '대화상자 문자 수'로 되돌려 비교하고(MDW 7·8 모두
+             시도), 리포트에 'A열 너비: 12자(저장값 12.625)'처럼 표기한다.
+             행 높이는 포인트를 그대로 저장하므로 패딩 보정이 없고, 1픽셀
+             (0.75pt) 단위 반올림만 허용한다.
+           - 계산작업 진단: 실제 차이를 짚도록 개선. (a) 정답이 MID(...)*1 /
+             VALUE(...)로 문자를 숫자로 바꾸는데 내 수식에 그 변환이 없으면
+             '문자↔숫자 불일치'로 설명. (b) VLOOKUP·HLOOKUP의 인수를 역할
+             이름(찾을 값/찾을 범위/가져올 행·열 번호/일치 옵션)으로 지적.
+             (c) 함수 이름 오타(AVRAGE → AVERAGE)를 찾아 '#NAME? 오류'와 함께
+             표기. (d) 조건을 '">"&800000'처럼 이어 붙인 것은 '">800000"'과
+             같은 뜻임을 인정하고 알려 준다. (e) 결과 뒤 &"명" 누락을 top-level
+             문자열 연결 기준으로 감지. (f) 카드의 '포인트' 문구를 실제 차이에
+             맞춰 고른다 (모든 수식에 '$ 절대참조는 …'이 붙던 문제 해결).
+           - 오류 값 표기: 학생 셀 값이 #NAME?·#N/A 같은 Excel 오류면 상태를
+             '오류 값'으로 구분하고 원인 한 줄(#NAME? = 함수 이름을 못 찾음)을
+             카드에 붙인다. 오류 값은 숫자 0으로 뭉개지 않고 그대로 표기.
     2.0.4  이의제기 2건 반영 (2024 상시 2회 리포트 — 복원 문제지 기준)
            - 계산작업 판정: 학생 파일에 계산값이 저장돼 있지 않으면(수식만
              있음) LibreOffice headless로 통합 문서를 재계산해 '결과값'으로
@@ -95,7 +118,7 @@
     2.0.0  리포트 이의제기 기능(카드별 [이의제기] + 복사 텍스트) 및 학습 로그
 """
 
-__version__ = "2.0.4"
+__version__ = "2.0.5"
 
 import argparse
 import html as html_mod
@@ -2589,7 +2612,8 @@ def format_diff_items(book_p, book_a, psheet, asheet):
     for cl in sorted(cols):
         wp = shp.column_dimensions[cl].width if cl in shp.column_dimensions else None
         wa = sha.column_dimensions[cl].width if cl in sha.column_dimensions else None
-        if _size_differs(wp, wa):
+        # 문자 수로 환산해 비교 (저장값 12 와 Excel 저장값 12.625 는 같은 12자)
+        if not col_width_same(wp, wa):
             cw.append((cl, wa))
     if cw:
         items["colwidth"] = cw
@@ -2616,6 +2640,94 @@ def _size_matches(a, b):
     if a is None or b is None:
         return False
     return abs(a - b) <= 0.5
+
+
+# ---------------------------------------------------------------------------
+# 열 너비 정규화 — 저장값 <-> [열 너비] 대화상자 문자 수
+#
+# Excel은 대화상자에 입력한 문자 수를 그대로 저장하지 않는다. 글자 폭(MDW,
+# 숫자 0 한 글자의 픽셀 너비)에 좌우 여백 5픽셀을 더해 저장한다:
+#     저장값 = trunc((문자수 * MDW + 5) / MDW * 256) / 256
+# 맑은 고딕 11pt(한글 Excel 기본)는 MDW = 8px -> '12' 입력 시 12.625 저장,
+# Calibri 11pt(영문 기본)는 MDW = 7px -> '12' 입력 시 12.7109375 저장.
+# 반면 openpyxl 등으로 만든 파일은 문자 수를 그대로(12) 저장한다.
+# 그래서 두 값을 견주기 전에 '문자 수'로 되돌려 맞춘다.
+# ---------------------------------------------------------------------------
+
+COL_WIDTH_MDW = (8, 7)      # 시도할 글자 폭(픽셀) 후보
+COL_WIDTH_PAD = 5           # 셀 좌우 여백(픽셀)
+COL_WIDTH_TOL = 0.5         # 문자 수 기준 허용 오차 (기존 ±0.5와 같은 관대함)
+ROW_HEIGHT_TOL = 0.75       # 행 높이는 포인트 그대로 저장 — 1픽셀(0.75pt)만 허용
+
+
+def col_width_stored(chars, mdw=8):
+    """문자 수 -> Excel이 실제로 저장하는 열 너비 값."""
+    return math.trunc((float(chars) * mdw + COL_WIDTH_PAD) / mdw * 256) / 256
+
+
+def col_width_candidates(w):
+    """저장값 -> 대화상자 문자 수 후보 [그대로, MDW별 여백 제거]."""
+    if w is None:
+        return []
+    w = float(w)
+    return [round(w, 2)] + [round(w - float(COL_WIDTH_PAD) / m, 2)
+                            for m in COL_WIDTH_MDW]
+
+
+def _col_width_rank(c):
+    """대화상자에 입력할 법한 값일수록 작은 순위 (0=정수 … 4=그 밖)."""
+    for i, q in enumerate((1.0, 0.5, 0.25, 0.1)):
+        if abs(c / q - round(c / q)) < 1e-6:
+            return i
+    return 4
+
+
+def col_width_chars(w, want=None):
+    """저장된 열 너비 -> 대화상자에 입력했을 문자 수(가장 그럴듯한 해석)."""
+    cands = col_width_candidates(w)
+    if not cands:
+        return None
+    if want is None:
+        return min(cands, key=_col_width_rank)
+    return min(cands, key=lambda c: (_col_width_rank(c),
+                                     abs(c - float(want))))
+
+
+def col_width_is(stored, want_chars, tol=COL_WIDTH_TOL):
+    """저장된 열 너비가 '대화상자에 want_chars를 입력한 상태'인가."""
+    if stored is None or want_chars is None:
+        return stored is None and want_chars is None
+    return any(abs(c - float(want_chars)) <= tol
+               for c in col_width_candidates(stored))
+
+
+def col_width_same(a, b, tol=COL_WIDTH_TOL):
+    """저장된 열 너비 두 개가 같은 문자 수를 뜻하는가."""
+    if a is None and b is None:
+        return True
+    if a is None or b is None:
+        return False
+    ca, cb = col_width_candidates(a), col_width_candidates(b)
+    return any(abs(x - y) <= tol for x in ca for y in cb)
+
+
+def col_width_text(w, want=None):
+    """리포트 표기: 12 -> '12자', 12.625 -> '12자(저장값 12.625)'."""
+    if w is None:
+        return "지정 안 함(기본 너비)"
+    ch = col_width_chars(w, want)
+    if ch is None:
+        return f"{float(w):g}"
+    if abs(ch - float(w)) < 5e-3:
+        return f"{ch:g}자"
+    return f"{ch:g}자(저장값 {float(w):g})"
+
+
+def row_height_text(h):
+    """행 높이 표기 — 포인트 단위라 저장값이 곧 입력값이다."""
+    if h is None:
+        return "지정 안 함(기본 높이)"
+    return f"{float(h):g}"
 
 
 def _book_defined_name(book, name):
@@ -3277,6 +3389,41 @@ def _fmt_expected(exp, ef):
 STATE_BLANK = "(빈 셀 — 값·수식 없음)"
 STATE_NOCACHE = "(수식만 있음 · 계산값 없음)"
 STATE_RECALC = "(수식만 있음 · 재계산값 {v})"
+
+# Excel 오류 값 — 리포트에 0이나 빈칸으로 뭉개지 말고 그대로 보여 준다
+EXCEL_ERRORS = {"#NULL!", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!",
+                "#N/A", "#SPILL!", "#CALC!", "#GETTING_DATA"}
+EXCEL_ERROR_WHY = {
+    "#NAME?": "Excel이 모르는 이름이 있을 때 납니다(함수 이름 철자, 따옴표 "
+              "빠진 문자, 정의되지 않은 이름을 확인하세요).",
+    "#N/A": "찾는 값을 찾지 못했을 때 납니다(찾을 값의 형태가 문자인지 "
+            "숫자인지, 찾을 범위와 일치 옵션을 확인하세요).",
+    "#VALUE!": "인수의 형태가 맞지 않을 때 납니다(숫자 자리에 문자가 "
+               "들어갔는지 확인하세요).",
+    "#REF!": "참조하는 셀이 사라졌을 때 납니다(행·열을 지우지 않았는지 "
+             "확인하세요).",
+    "#DIV/0!": "0으로 나눌 때 납니다(나누는 값이 0이거나 빈 셀입니다).",
+    "#NUM!": "계산할 수 없는 숫자일 때 납니다(인수의 범위를 확인하세요).",
+    "#NULL!": "범위 연산자를 잘못 썼을 때 납니다(쉼표와 공백을 "
+              "확인하세요).",
+}
+
+
+def excel_error(v):
+    """셀 값이 Excel 오류 값이면 그 문자열, 아니면 None."""
+    if isinstance(v, str):
+        s = v.strip().upper()
+        if s in EXCEL_ERRORS:
+            return s
+    return None
+
+
+def excel_error_note(err):
+    """오류 값 한 줄 설명."""
+    if not err:
+        return None
+    why = EXCEL_ERROR_WHY.get(err, "수식이 계산되지 못했습니다.")
+    return f"내 답은 값이 아니라 오류 {err} 입니다 — {why}"
 NOCACHE_GUIDE = ("수식은 있으나 계산된 값이 파일에 저장되지 않아 수식 문자열로만 "
                  "비교했습니다 — Excel에서 열어 저장(Ctrl+S)한 뒤 다시 채점하면 "
                  "값 기준으로 채점됩니다.")
@@ -3344,10 +3491,16 @@ def student_cell_state(judge, r, c):
     if got == "__MISSING__":
         rv = judge.recalc_vals_s.get((r, c), "__MISSING__")
         if rv != "__MISSING__":
-            return "recalc", STATE_RECALC.format(v=fmt_value(rv)), sf
+            erv = excel_error(rv)
+            return ("recalc",
+                    STATE_RECALC.format(
+                        v=(f"{erv} — 오류" if erv else fmt_value(rv))), sf)
         return "nocache", STATE_NOCACHE, sf
     if got is None and not sf:
         return "blank", STATE_BLANK, None
+    err = excel_error(got)
+    if err:
+        return "error", f"{err} (오류 값)", sf
     return "value", fmt_value(got), sf
 
 
@@ -3361,6 +3514,22 @@ def make_cell_entries(judge, wrong, limit=3):
                     "got": got_txt, "formula": ef,
                     "got_formula": sf, "got_state": state})
     return out
+
+
+def wrong_error_note(judge, wrong):
+    """오답 셀 중 Excel 오류 값이 있으면 그 원인 한 줄. 없으면 None."""
+    for (r, c, _co) in wrong:
+        try:
+            got, _sf = judge.student(r, c)
+        except Exception:
+            continue
+        err = excel_error(got)
+        if err is None:
+            rv = judge.recalc_vals_s.get((r, c), None)
+            err = excel_error(rv)
+        if err:
+            return excel_error_note(err)
+    return None
 
 
 def cell_state_guide(judge, wrong):
@@ -3625,7 +3794,8 @@ def grade_basic2(res, ctx):
         for (cl, wa) in fd["colwidth"]:
             ws_ = shs.column_dimensions[cl].width \
                 if cl in shs.column_dimensions else None
-            if wa is not None and (ws_ is None or abs(ws_ - wa) > 1.0):
+            # 문자 수로 환산해 비교 (Excel 저장값의 5픽셀 여백 보정)
+            if wa is not None and not col_width_same(ws_, wa, tol=1.0):
                 noted.append(str(cl))
         if noted:
             res.notes.append(
@@ -3819,46 +3989,62 @@ def grade_basic2(res, ctx):
                 if notes_nm:
                     res.wrong[-1]["diff_notes"] = notes_nm
         elif kind == "key_rowheight":
+            # 행 높이는 포인트를 그대로 저장한다(열 너비와 달리 여백 패딩이
+            # 없다). 화면 1픽셀 = 0.75pt 반올림만 허용한다.
             bad = []
             for r, want in sorted(payload.items()):
                 hs = shs.row_dimensions[r].height \
                     if shs is not None and r in shs.row_dimensions else None
-                if not _size_matches(hs, want):
+                if hs is None or abs(hs - want) > ROW_HEIGHT_TOL:
                     bad.append((r, want, hs))
             if not bad:
                 passed += 1
             else:
-                rows_txt = ", ".join(str(r) for r, _w, _h in bad) + "행"
+                rows_txt = ", ".join(
+                    f"{r}행: 정답 {w:g} / 내 답 {row_height_text(h)}"
+                    for r, w, h in bad)
                 res.details.append(f"[행 높이] 불일치 ({rows_txt})")
                 add_card(res, "서식 - 행 높이", per, "format",
                          cells=[{"coord": f"{r}행"} for r, _w, _h in bad],
                          props=[{"name": f"{r}행 높이",
                                  "expected": f"{w:g}",
-                                 "got": f"{h:g}" if h is not None else "기본"}
+                                 "got": row_height_text(h)}
                                 for r, w, h in bad[:3]],
-                         hint="행 머리글 우클릭 → 행 높이에서 숫자를 "
-                              "입력합니다.")
+                         hint="행 머리글 우클릭 → [행 높이]에 숫자를 그대로 "
+                              "입력합니다. 행 높이는 포인트(pt) 단위라 입력한 "
+                              "숫자가 그대로 저장됩니다 — 경계선을 끌어서 "
+                              "맞추면 값이 어긋나니 반드시 숫자를 입력하세요.")
         elif kind == "key_colwidth":
+            # Excel은 [열 너비] 대화상자 값에 5픽셀 여백을 더해 저장하므로
+            # (12 입력 -> 12.625 저장) 저장값을 문자 수로 되돌려 비교한다.
             bad = []
             for cl, want in sorted(payload.items()):
                 cw_s = shs.column_dimensions[cl].width \
                     if shs is not None and cl in shs.column_dimensions \
                     else None
-                if not _size_matches(cw_s, want):
+                if not col_width_is(cw_s, want):
                     bad.append((cl, want, cw_s))
             if not bad:
                 passed += 1
             else:
-                cols_txt = ", ".join(cl for cl, _w, _s in bad) + "열"
+                cols_txt = ", ".join(
+                    f"{cl}열: 정답 {w:g}자 / 내 답 {col_width_text(s, w)}"
+                    for cl, w, s in bad)
                 res.details.append(f"[열 너비] 불일치 ({cols_txt})")
                 add_card(res, "서식 - 열 너비", per, "format",
                          cells=[{"coord": f"{cl}열"} for cl, _w, _s in bad],
                          props=[{"name": f"{cl}열 너비",
-                                 "expected": f"{w:g}",
-                                 "got": f"{s:g}" if s is not None else "기본"}
+                                 "expected": f"{w:g}자",
+                                 "got": col_width_text(s, w)}
                                 for cl, w, s in bad[:3]],
-                         hint="열 머리글 우클릭 → 열 너비에서 숫자를 "
-                              "입력합니다.")
+                         note="열 너비는 Excel이 대화상자에 입력한 문자 수에 "
+                              "좌우 여백 5픽셀을 더해 저장합니다 (맑은 고딕 "
+                              "11pt 기준 12 입력 → 12.625 저장). 이 채점기는 "
+                              "저장값을 다시 문자 수로 되돌려 비교하므로, "
+                              "대화상자에 적힌 숫자만 정답과 같으면 됩니다.",
+                         hint="열 머리글 우클릭 → [열 너비]에 숫자를 그대로 "
+                              "입력합니다. 경계선을 끌어서 맞추면 소수점 값이 "
+                              "들어가 어긋나니 반드시 숫자를 입력하세요.")
 
     res.earned = int(round(per * passed))
     if passed < n:
@@ -4496,6 +4682,9 @@ def grade_calc(res, ctx):
             guide = cell_state_guide(judge, wrong)
             if guide:
                 note += ". " + guide
+            errn = wrong_error_note(judge, wrong)
+            if errn:
+                note += " " + errn
             gr_ref = [m for m in judge.ref_mismatch
                       if any(m[0] == co for (_r, _c, co) in cells)]
             if gr_ref:
@@ -5695,14 +5884,69 @@ def explain_formula(formula):
                          "붙여 하나의 문자열로 만듭니다.")
         elif not funcs and tree[0] == "expr":
             steps.append(f"{_render(tree, marks)} 을(를) 계산합니다.")
-        point = None
-        if "$" in f:
-            point = ("$ 절대참조는 채우기 핸들로 수식을 복사할 때 참조 범위가 "
-                     "밀리지 않도록 고정하는 표시입니다. 표/기준 범위에만 $를 "
-                     "붙이고, 행마다 바뀌어야 하는 셀에는 붙이지 않습니다.")
+        point = ABS_POINT if "$" in f else None
         return steps, point
     except Exception:
         return ["정답 수식을 한 단계씩 그대로 입력하며 구조를 익혀 보세요."], None
+
+
+ABS_POINT = ("$ 절대참조는 채우기 핸들로 수식을 복사할 때 참조 범위가 "
+             "밀리지 않도록 고정하는 표시입니다. 표/기준 범위에만 $를 "
+             "붙이고, 행마다 바뀌어야 하는 셀에는 붙이지 않습니다.")
+TEXT2NUM_POINT = (
+    "MID·LEFT·RIGHT가 꺼낸 값은 '1'처럼 보여도 숫자가 아니라 문자입니다. "
+    "Excel은 문자 \"1\" 과 숫자 1을 서로 다른 값으로 보기 때문에, 숫자로 된 "
+    "표에서 찾거나 계산에 쓰려면 뒤에 *1을 붙이거나 VALUE(...)로 감싸 숫자로 "
+    "바꿔야 합니다. (반대로 숫자를 문자처럼 붙일 때는 &\"\" 를 씁니다.)")
+LOOKUP_POINT = (
+    "VLOOKUP/HLOOKUP의 번호는 시트의 열·행 번호가 아니라 '찾을 범위 안에서' "
+    "세는 번호입니다. 범위의 첫 열(HLOOKUP은 첫 행)이 1번이자 찾는 기준 줄이라, "
+    "가져올 값이 있는 줄은 2번부터인 경우가 많습니다. 마지막 인수는 구간을 "
+    "찾으면 TRUE, 딱 맞는 값을 찾으면 FALSE입니다.")
+CRITERIA_POINT = (
+    "COUNTIF(S)·SUMIF(S)의 조건은 통째로 하나의 '문자열'이어야 합니다. "
+    "800000처럼 값이 고정돼 있으면 \">800000\" 처럼 따옴표 안에 그대로 적을 수 "
+    "있지만, AVERAGE(...) 같은 계산 결과는 따옴표 안에 넣으면 글자 그대로 "
+    "취급돼 계산되지 않습니다. 그래서 부등호만 따옴표로 적고 \">=\"&AVERAGE(...) "
+    "처럼 & 로 이어 붙여 하나의 문자열을 만듭니다.")
+CONCAT_POINT = (
+    "계산 결과 뒤에 글자를 붙이라는 지시(예: 3 → 3명)는 & 연결로 처리합니다. "
+    "표시 형식으로 꾸미면 값 자체는 숫자라 채점에서 다르게 볼 수 있으니, "
+    "지시에 '붙여 표시'가 있으면 수식 끝에 &\"명\" 을 붙이세요.")
+
+
+def formula_point(expected_f, student_f=None):
+    """정답 수식과 내 수식의 차이에 맞는 '포인트' 한 문단. 없으면 None."""
+    try:
+        ef = str(expected_f or "")
+        sf = str(student_f or "")
+        if not ef.startswith("="):
+            return None
+        eu, su = _flat(ef), _flat(sf)
+        e_names = set(re.findall(r"([A-Z][A-Z.]{1,15})\(",
+                                 re.sub(r'"[^"]*"', "", eu)))
+        # 1) 문자 -> 숫자 변환 (*1 / VALUE)
+        cut_used = any(fn + "(" in eu for fn in TEXT_CUT_FUNCS)
+        e_conv = bool(re.search(r"\)\*1(?![\d.])", eu)) or "VALUE(" in eu
+        s_conv = bool(re.search(r"\)\*1(?![\d.])", su)) or "VALUE(" in su
+        if cut_used and e_conv and (not sf or not s_conv):
+            return TEXT2NUM_POINT
+        # 2) 찾기 함수의 행/열 번호·일치 옵션
+        if e_names & {"VLOOKUP", "HLOOKUP"}:
+            return LOOKUP_POINT
+        # 3) 조건 문자열(따옴표 vs & 연결)
+        if any(n.startswith(("COUNTIF", "SUMIF", "AVERAGEIF"))
+               for n in e_names) and '"&' in eu.replace(" ", ""):
+            return CRITERIA_POINT
+        # 4) 결과 뒤 문자 붙이기
+        tail = _tail_concat_strings(_parse_formula(ef))
+        if tail and (not sf or not _tail_concat_strings(_parse_formula(sf))):
+            return CONCAT_POINT
+        if "$" in ef:
+            return ABS_POINT
+        return None
+    except Exception:
+        return None
 
 
 def explain_number_format(nf):
@@ -5806,6 +6050,93 @@ def _josa_wa(word):
     return f"{word}와(과)"
 
 
+# --- 계산작업 진단 보조 ---------------------------------------------------
+
+# VLOOKUP/HLOOKUP 인수의 역할 이름 (1부터 센 위치)
+LOOKUP_ARG_KO = {
+    "VLOOKUP": {1: "찾을 값", 2: "찾을 범위", 3: "가져올 열 번호",
+                4: "일치 옵션"},
+    "HLOOKUP": {1: "찾을 값", 2: "찾을 범위", 3: "가져올 행 번호",
+                4: "일치 옵션"},
+}
+LOOKUP_FIRST_KO = {"VLOOKUP": "열", "HLOOKUP": "행"}
+TEXT_CUT_FUNCS = ("MID", "LEFT", "RIGHT")
+
+
+def _flat(s):
+    return re.sub(r"\s+", "", str(s or "")).upper()
+
+
+def _num_conv_kind(sa, ea):
+    """정답이 학생 식에 *1 / VALUE()만 더한 것이면 '*1' / 'VALUE'."""
+    base, got = _flat(_render(sa, {})), _flat(_render(ea, {}))
+    if not base or base == got:
+        return None
+    if got in (base + "*1", "1*" + base, base + "*1.0"):
+        return "*1"
+    if got == f"VALUE({base})":
+        return "VALUE"
+    return None
+
+
+def _cond_arg_text(node):
+    """조건 인수를 하나의 문자열로 정규화 ('">"&800000' -> '>800000')."""
+    if node[0] == "str":
+        return node[1].strip('"')
+    if node[0] == "expr":
+        out = []
+        for p in node[1]:
+            if p[0] == "op" and p[1] == "&":
+                continue
+            if p[0] == "str":
+                out.append(p[1].strip('"'))
+            elif p[0] == "num":
+                out.append(p[1])
+            else:
+                return None
+        if out:
+            return "".join(out)
+    return None
+
+
+def _tail_concat_strings(tree):
+    """최상위 & 연결로 이어 붙인 문자열 리터럴 목록."""
+    if not tree or tree[0] != "expr":
+        return []
+    out = []
+    parts = tree[1]
+    for i, p in enumerate(parts):
+        if p[0] == "op" and p[1] == "&" and i + 1 < len(parts) \
+                and parts[i + 1][0] == "str":
+            out.append(parts[i + 1][1])
+    return out
+
+
+def _edit_distance(a, b, cap=2):
+    """짧은 문자열 편집 거리 (cap 초과면 cap+1)."""
+    if abs(len(a) - len(b)) > cap:
+        return cap + 1
+    prev = list(range(len(b) + 1))
+    for i, ca in enumerate(a, 1):
+        cur = [i]
+        for j, cb in enumerate(b, 1):
+            cur.append(min(prev[j] + 1, cur[j - 1] + 1,
+                           prev[j - 1] + (ca != cb)))
+        prev = cur
+    return prev[-1]
+
+
+def _typo_pairs(extra, missing):
+    """오타로 보이는 (내가 쓴 이름, 정답 이름) 쌍 목록."""
+    out = []
+    for x in extra:
+        for m in missing:
+            if x != m and _edit_distance(x, m) <= 2 and abs(len(x) - len(m)) <= 2:
+                out.append((x, m))
+                break
+    return out
+
+
 def diagnose_formula_diff(student_f, expected_f):
     """학생 수식과 정답 수식을 비교해 무엇이 다른지 한국어 진단 목록 생성.
 
@@ -5855,6 +6186,15 @@ def diagnose_formula_diff(student_f, expected_f):
         else:
             missing = sorted(eset - sset)
             extra = sorted(sset - eset)
+            typos = _typo_pairs(extra, missing)
+            for got_n, want_n in typos:
+                notes.append(
+                    f"함수 이름 오타입니다: {got_n} → {want_n}. Excel은 모르는 "
+                    f"이름을 만나면 계산하지 못하고 #NAME? 오류를 냅니다.")
+            typo_got = {g for g, _w in typos}
+            typo_want = {w for _g, w in typos}
+            missing = [m for m in missing if m not in typo_want]
+            extra = [x for x in extra if x not in typo_got]
             if missing:
                 notes.append("정답에 있는 " + ", ".join(missing)
                              + " 함수가 내 수식에 없습니다.")
@@ -5869,9 +6209,7 @@ def diagnose_formula_diff(student_f, expected_f):
                 notes.append(f"'{a}' 를 썼지만 '{b}' 여야 합니다 "
                              "(비교 방향이 반대).")
                 break
-        # 3) 절대참조 ($ 고정)
-        notes.extend(_abs_ref_notes())
-        # 4) 같은 함수의 인수 비교 (첫 등장 페어)
+        # 3) 같은 함수의 인수 비교 (첫 등장 페어)
         seen = set()
         for name in enames:
             if name in seen or name not in sset:
@@ -5884,12 +6222,61 @@ def diagnose_formula_diff(student_f, expected_f):
                 notes.append(f"{name}의 인수 개수가 다릅니다 "
                              f"(내 수식 {len(sargs)}개 / 정답 {len(eargs)}개).")
                 continue
+            role = LOOKUP_ARG_KO.get(name) or {}
             for i, (sa, ea) in enumerate(zip(sargs, eargs), 1):
                 rs, re_ = _render(sa, {}), _render(ea, {})
                 if norm_formula("=" + rs) == norm_formula("=" + re_):
                     continue
+                label = f"{name}의 {i}번째 인수"
+                if role.get(i):
+                    label = f"{name}의 {i}번째 인수({role[i]})"
+                # (a) 조건 문자열을 & 로 이어 붙인 것은 같은 뜻 — 인정
+                cs, ce = _cond_arg_text(sa), _cond_arg_text(ea)
+                if cs is not None and ce is not None and cs == ce:
+                    if rs != re_:
+                        notes.append(
+                            f"조건을 {rs} 처럼 이어 붙인 것은 {re_} 와 같은 "
+                            "뜻입니다 — 이 부분은 맞습니다.")
+                    continue
+                # (b) 문자 -> 숫자 변환(*1 / VALUE) 누락
+                conv = _num_conv_kind(sa, ea)
+                if conv:
+                    cut = next((fn for fn in TEXT_CUT_FUNCS
+                                if fn in _flat(rs)), None)
+                    rng = _render(eargs[1], {}) if len(eargs) > 1 else "찾을 범위"
+                    head = (f"{cut} 함수가 꺼낸 값은 '1'처럼 보여도 숫자가 "
+                            "아니라 문자입니다" if cut else
+                            "이 값은 문자로 취급됩니다")
+                    tail = ("*1 을 붙여" if conv == "*1" else "VALUE(...)로 감싸")
+                    notes.append(
+                        f"{head} — {rng}의 숫자와는 서로 다른 값으로 보기 "
+                        f"때문에 찾지 못합니다(#N/A 또는 엉뚱한 값). 정답처럼 "
+                        f"{tail} 숫자로 바꿔야 합니다: {re_}")
+                    continue
+                if _num_conv_kind(ea, sa):
+                    notes.append(f"{label}에는 숫자 변환(*1 · VALUE)이 "
+                                 f"필요 없습니다 — 정답은 {re_} 입니다.")
+                    continue
+                # (c) 찾기 함수의 행/열 번호·일치 옵션
+                if name in LOOKUP_ARG_KO and i == 3 and \
+                        sa[0] == "num" and ea[0] == "num":
+                    unit = LOOKUP_FIRST_KO[name]
+                    notes.append(
+                        f"{label}는 찾을 범위 안에서 몇 번째 {unit}을 가져올지 "
+                        f"세는 값입니다 — {re_}이어야 하는데 {rs}을(를) "
+                        f"썼습니다(1은 찾는 기준 {unit}이라 찾던 값이 그대로 "
+                        "나옵니다).")
+                    continue
+                if name in LOOKUP_ARG_KO and i == 4:
+                    want_t = _flat(re_) in ("TRUE", "1")
+                    notes.append(
+                        f"{label}이 다릅니다 — 정답은 {re_}"
+                        + ("(근사 일치: 구간에서 찾기)" if want_t
+                           else "(정확히 일치)")
+                        + f"인데 {rs}을(를) 썼습니다.")
+                    continue
                 if sa[0] == "num" and ea[0] == "num":
-                    notes.append(f"{name}의 {i}번째 인수가 {re_}이어야 "
+                    notes.append(f"{label}가 {re_}이어야 "
                                  f"하는데 {rs}을(를) 썼습니다.")
                 elif ea[0] == "str" and sa[0] in ("name", "ref") and \
                         ea[1].strip('"') == rs:
@@ -5898,12 +6285,23 @@ def diagnose_formula_diff(student_f, expected_f):
                     if rs.replace("$", "") != re_.replace("$", ""):
                         notes.append(f"{name}의 {i}번째 참조가 {re_}이어야 "
                                      f"하는데 {rs}을(를) 썼습니다.")
-        # 5) & 연결 유무
-        if "&" in _strip_strings(ef) and "&" not in _strip_strings(sf):
+        # 5) & 연결 유무 — 결과 뒤에 붙이는 문자(&"명")를 따로 본다
+        e_tail = _tail_concat_strings(et)
+        s_tail = _tail_concat_strings(st)
+        for lit in e_tail:
+            if lit not in s_tail:
+                notes.append(
+                    f"결과 뒤에 &{lit} 이어 붙이기가 빠졌습니다 — 내 수식은 "
+                    f"숫자만 내놓아 표시 예처럼 '{lit.strip(chr(34))}'이(가) "
+                    "붙지 않습니다.")
+        if not e_tail and "&" in _strip_strings(ef) \
+                and "&" not in _strip_strings(sf):
             notes.append("& 연결이 빠졌습니다 — 계산 결과 뒤에 &\"문자\" "
                          "형태로 이어 붙여야 합니다.")
         elif "&" in _strip_strings(sf) and "&" not in _strip_strings(ef):
             notes.append("정답에는 & 연결이 없습니다.")
+        # 6) 절대참조 ($ 고정) — 구체적인 차이를 먼저 보여 준 뒤 덧붙인다
+        notes.extend(_abs_ref_notes())
         # 중복 제거 + 상한
         uniq = []
         for n in notes:
@@ -6095,6 +6493,14 @@ def enrich_wrong_cards(results):
                 if card["student_formula"] and not pre_notes:
                     card["diff_notes"] = diagnose_formula_diff(
                         card["student_formula"], card["formula"])
+                # 계산작업 카드의 '포인트'는 실제 차이에 맞춰 고른다
+                # (모든 수식에 '$ 절대참조는 …'이 붙던 문제). 다른 시트는
+                # 채점 단계에서 지정한 포인트를 그대로 둔다.
+                if nname == "계산작업":
+                    pt = formula_point(card["formula"],
+                                       card["student_formula"])
+                    if pt:
+                        card["point"] = pt
 
 
 def build_diagnosis(results):

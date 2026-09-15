@@ -67,7 +67,7 @@ v2.7.0: ① 응시 제한 폐지 — 하루 1회 잠금(2.5.0)을 완전히 없�
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "2.7.0"
+__version__ = "2.7.1"
 
 import argparse
 import hashlib
