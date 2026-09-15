@@ -13,6 +13,30 @@
 의존성: Python 3.8+ / openpyxl (표준 라이브러리 외 유일한 의존성)
 
 변경 이력:
+    2.0.6  이의제기 3건 반영 (컴활 2급 상시 = 사용자 '상시기출2회' 리포트)
+           - 테두리 표기 기준: 격자 선(edge)은 위아래 두 셀이 공유한다. 지금까지
+             늘 아래/오른쪽 셀을 집어 [A1:G1]의 '아래쪽 테두리' 지시가
+             'A2 위쪽 선 없음'으로 표기됐다 — 문제지 지시 범위 밖 주소라
+             '문제에 없는 걸 감점했다'는 오해를 샀다. 이제 그 선을 실제로
+             선언한 셀(정답 파일 기준, 없으면 문제 파일)을 골라 표기해
+             'A1 아래쪽 선 없음'처럼 지시 범위 안 주소로 인용한다.
+           - 제작 메모 제외(일반 규칙): 정답 파일에만 있고 문제 파일은 비어
+             있으며, 표에 붙어 있지 않은(8방향 이웃이 모두 빈) 홑셀의 짧은
+             문자열이 다른 셀 주소·범위(예: '區分+E4:E13')를 담고 있으면
+             제작자가 남긴 작업 메모로 보아 값·서식 채점에서 빼고 참고 노트만
+             남긴다. 학생이 입력할 근거가 문제지에 없는 셀을 오답 처리하던
+             문제 해결 (세트 전용 하드코딩 없이 모든 세트에 적용).
+           - 리포트 식별자(이의제기 글에 적히는 ID)를 채점 시각이 아니라
+             **응시 시각**(풀이 파일 이름의 `_YYYYMMDD_HHMM`)으로 매긴다.
+             채점은 응시가 끝난 뒤라 두 시각이 달라, 이의제기 글의 ID로는
+             어느 기록인지 가리키지 못해 점수 정정을 걸 수 없었다. 이제
+             기록 id 와 같은 값이라 정정 데이터가 바로 붙는다.
+           - 매크로(VBA) 읽기: CFB 섹터 시작 위치를 512바이트로 못박아 두어
+             4096바이트 섹터(CFB v4) 파일에서 스트림을 하나도 읽지 못했다.
+             섹터 오프셋을 (섹터번호+1)*섹터크기로 고쳐 512·4096 모두 읽는다.
+             또 vbaProject.bin이 있는데 코드를 못 읽으면 'VBA를 읽지
+             못했습니다' + 어디서 끊겼는지(구조 해석 / 압축 해제)를 리포트에
+             명시해 조용히 넘어가지 않게 했다.
     2.0.5  이의제기 3건 반영 (코코 모의고사 2회 리포트 — 자체 제작 문제지 기준)
            - 기본작업-2 열 너비: Excel은 [열 너비] 대화상자에 입력한 문자 수를
              그대로 저장하지 않고 글자 폭(MDW)에 5픽셀 여백을 더해 저장한다
@@ -118,7 +142,7 @@
     2.0.0  리포트 이의제기 기능(카드별 [이의제기] + 복사 텍스트) 및 학습 로그
 """
 
-__version__ = "2.0.5"
+__version__ = "2.0.6"
 
 import argparse
 import html as html_mod
@@ -893,6 +917,16 @@ class Book:
             self._vba_mods = mods
         return self._vba_mods
 
+    def vba_diag(self):
+        """vbaProject.bin을 못 읽은 이유 한 줄. 정상·매크로 없음이면 None."""
+        for n in self.zf.namelist():
+            if n.endswith("vbaProject.bin"):
+                try:
+                    return vba_read_diag(self.zf.read(n))
+                except Exception as e:
+                    return f"vbaProject.bin을 여는 중 오류: {e}"
+        return None
+
     def vba_units(self):
         """모든 모듈의 매크로 단위 [{'name','ranges','kinds'}]."""
         if getattr(self, "_vba_units", None) is None:
@@ -1031,7 +1065,10 @@ def cfb_streams(data):
             return {}
 
         def sector(i):
-            off = 512 + i * ssz
+            # 섹터 0은 헤더 '한 섹터' 뒤에서 시작한다 — 512바이트 섹터면
+            # 512, 4096바이트 섹터(CFB v4)면 4096. 512를 상수로 두면
+            # v4 파일에서 모든 체인이 어긋나 스트림을 하나도 못 읽는다.
+            off = (i + 1) * ssz
             return data[off:off + ssz]
 
         difat = list(struct.unpack_from("<109I", data, 76))
@@ -1160,6 +1197,49 @@ def ovba_decompress(data, start):
         return bytes(out)
     except Exception:
         return None
+
+
+_ATTEMPT_STAMP_RE = re.compile(r"_(\d{8})_(\d{4})(?:\D|$)")
+
+
+def attempt_report_id(student_path):
+    """풀이 파일 이름의 응시 시각 → 리포트 식별자 `YYYYMMDDHHMM00`. 없으면 None.
+
+    시험장은 `풀이_<세트>_20260915_1226.xlsm` 처럼 **응시 시작 시각**으로
+    사본을 만들고, 기록(`기록.json`)의 `일시` 와 기록 id 도 같은 시각을
+    씁니다. 리포트 식별자를 채점한 시각으로 매기면 이의제기 글에 적히는 ID가
+    어느 기록인지 가리키지 못해(채점은 응시가 끝난 뒤라 시각이 다릅니다)
+    점수 정정을 걸 수 없습니다 — 응시 시각을 그대로 씁니다. 부수 효과로
+    같은 응시를 다시 채점해도 작성해 둔 이의제기 초안이 남습니다.
+    """
+    m = _ATTEMPT_STAMP_RE.search(os.path.basename(str(student_path or "")))
+    return f"{m.group(1)}{m.group(2)}00" if m else None
+
+
+def vba_read_diag(bin_bytes):
+    """vbaProject.bin을 왜 못 읽었는지 한 줄. 정상이면 None.
+
+    예전에는 코드를 못 읽어도 조용히 넘어가 '매크로를 인식 못 한다'는
+    오해만 남았다 — 어디서 끊겼는지(파일 형식 / 구조 해석 / 압축 해제)를
+    리포트에 그대로 적기 위한 진단.
+    """
+    if not bin_bytes:
+        return "vbaProject.bin이 비어 있습니다"
+    if len(bin_bytes) < 512 or bin_bytes[:8] != _CFB_MAGIC:
+        return "vbaProject.bin이 OLE(CFB) 형식이 아닙니다"
+    streams = cfb_streams(bin_bytes)
+    if not streams:
+        return "vbaProject.bin의 OLE(CFB) 구조를 해석하지 못했습니다"
+    cand = [n for n in streams
+            if n not in ("dir", "PROJECT", "PROJECTwm", "_VBA_PROJECT")
+            and not n.startswith("__SRP_")]
+    if not cand:
+        return ("vbaProject.bin 안에서 모듈 스트림을 찾지 못했습니다 "
+                f"(읽은 스트림: {', '.join(sorted(streams))[:80]})")
+    if not vba_module_sources(bin_bytes):
+        return (f"모듈 스트림({', '.join(cand[:3])})의 MS-OVBA 압축을 "
+                "풀지 못했습니다")
+    return None
 
 
 def vba_module_sources(bin_bytes):
@@ -1798,6 +1878,39 @@ def sheet_edge_map(ws, max_r, max_c):
             for c in range(min_c + 1, mx_c + 1):
                 edges.pop(("v", r, c), None)
     return edges
+
+
+def _edge_owner(ws, key):
+    """이 격자 선을 실제로 선언한 셀 (행, 열). 못 찾으면 None.
+
+    ("h", r, c) 선은 (r-1, c)의 '아래쪽'이자 (r, c)의 '위쪽'이다. 리포트가
+    늘 아래쪽 셀을 집으면 [A1:G1] '아래쪽 테두리' 지시가 'A2 위쪽 선 없음'이
+    돼 문제지 지시 범위 밖 주소를 인용하게 된다 — 선을 선언한 셀을 골라
+    지시 범위 안 주소로 표기하기 위한 헬퍼.
+    """
+    if ws is None:
+        return None
+    try:
+        ek, r, c = key
+        if ek == "h":
+            if r > 1:
+                s = ws.cell(r - 1, c).border.bottom
+                if s is not None and s.style:
+                    return (r - 1, c)
+            s = ws.cell(r, c).border.top
+            if s is not None and s.style:
+                return (r, c)
+        else:
+            if c > 1:
+                s = ws.cell(r, c - 1).border.right
+                if s is not None and s.style:
+                    return (r, c - 1)
+            s = ws.cell(r, c).border.left
+            if s is not None and s.style:
+                return (r, c)
+    except Exception:
+        return None
+    return None
 
 
 def merge_maps(ws):
@@ -2584,7 +2697,11 @@ def format_diff_items(book_p, book_a, psheet, asheet):
         av, pv = a_edges.get(key), p_edges.get(key)
         if av != pv:
             ek, r, c = key
-            rr, cc = min(r, mr), min(c, mc)
+            owner = _edge_owner(sha, key) or _edge_owner(shp, key)
+            if owner:
+                rr, cc = owner
+            else:
+                rr, cc = min(r, mr), min(c, mc)
             coord = f"{get_column_letter(cc)}{rr}"
             border_edges.setdefault(coord, []).append((key, av))
     if border_edges:
@@ -3003,7 +3120,7 @@ EXCLUDE_KIND_KO = {"number_format": "표시 형식", "font": "글꼴", "fill": "
                    "rowheight": "행 높이", "colwidth": "열 너비", "value": "값"}
 
 
-def apply_key_exclusions(vdiffs, fdiffs, items):
+def apply_key_exclusions(vdiffs, fdiffs, items, label="세트 기대값에 따라 채점 제외"):
     """--key exclude 항목을 diff에서 제거. 반환: (vdiffs, fdiffs, 안내문 목록).
 
     문제지에 지시가 없는데 정답 파일에만 남은 서식(제작자의 잔여 서식)을
@@ -3069,9 +3186,78 @@ def apply_key_exclusions(vdiffs, fdiffs, items):
             kinds_ko = ", ".join(dict.fromkeys(
                 EXCLUDE_KIND_KO.get(k, k) for k in removed))
             why = f" — {it['why']}" if it.get("why") else ""
-            notes.append(f"세트 기대값에 따라 채점 제외: {it['range']} "
-                         f"{kinds_ko}{why}")
+            notes.append(f"{label}: {it['range']} {kinds_ko}{why}")
     return vdiffs, fdiffs, notes
+
+
+AUTHOR_MEMO_MAX_LEN = 40
+# 'E4:E13' 처럼 콜론이 들어간 범위 참조 — 수식 조각의 문법이지 표에 적는
+# 자료의 모양이 아니다. 'A1' 하나만으로는 흔한 글자와 구분이 안 되므로
+# (예: 과목코드 'KJ230'은 아니지만 'B4' 같은 값은 자료일 수 있다) 범위만 본다.
+_MEMO_RANGE_RE = re.compile(r"\$?([A-Z]{1,3})\$?([0-9]{1,7})"
+                            r":\$?([A-Z]{1,3})\$?([0-9]{1,7})")
+
+
+def _memo_range_on_sheet(sha, text):
+    """text 안의 범위 참조가 이 시트의 사용 범위 안을 가리키면 그 문자열."""
+    from openpyxl.utils import column_index_from_string
+    try:
+        mr, mc = sha.max_row, sha.max_column
+    except Exception:
+        return None
+    for m in _MEMO_RANGE_RE.finditer(text.upper()):
+        try:
+            c1 = column_index_from_string(m.group(1))
+            r1 = int(m.group(2))
+            c2 = column_index_from_string(m.group(3))
+            r2 = int(m.group(4))
+        except Exception:
+            continue
+        if 1 <= r1 <= mr and 1 <= r2 <= mr and 1 <= c1 <= mc and 1 <= c2 <= mc:
+            return m.group(0)
+    return None
+
+
+def detect_author_memo_cells(shp, sha, vdiffs):
+    """정답 파일에만 남은 '제작 메모' 셀 목록 -> exclude 항목 리스트.
+
+    문제 제작자가 정답 파일에 적어 둔 작업 메모(예: [E2]의 '區分+E4:E13')는
+    문제지 어디에도 없어 학생이 입력할 근거가 없는데, 문제↔정답 diff에는
+    '셀 값 지시'로 잡혀 오답이 된다. 세트 전용 하드코딩 대신 다음을 모두
+    만족하는 셀만 제작 메모로 보고 채점에서 뺀다:
+
+      (1) 문제 파일은 비어 있고 정답 파일에만 값이 있다
+      (2) 값이 수식이 아닌 짧은 문자열(AUTHOR_MEMO_MAX_LEN 이하)이다
+      (3) 값 안에 이 시트 안을 가리키는 범위 참조(E4:E13)가 들어 있다
+
+    (3)이 핵심이다 — 콜론이 들어간 범위 참조는 수식 조각의 문법이라
+    '수업요일'·'04.05 ~ 06.16' 같은 실제 자료와는 섞이지 않는다.
+    """
+    out = []
+    for (r, c, coord) in list(vdiffs):
+        try:
+            pv = shp.cell(r, c).value
+            av = sha.cell(r, c).value
+        except Exception:
+            continue
+        if pv is not None and str(pv).strip() != "":
+            continue
+        if not isinstance(av, str):
+            continue
+        text = av.strip()
+        if not text or len(text) > AUTHOR_MEMO_MAX_LEN or text.startswith("="):
+            continue
+        rng = _memo_range_on_sheet(sha, text)
+        if not rng:
+            continue
+        out.append({"range": coord,
+                    "kinds": ["value", "number_format", "font", "fill",
+                              "alignment", "border", "merge"],
+                    "why": f"정답 파일에만 있는 짧은 메모 '{text}' — 수식에서나 "
+                           f"쓰는 범위 참조({rng})를 담고 있어 제작자가 남긴 "
+                           "작업 메모로 봅니다 (문제지에 입력 지시가 "
+                           "없습니다)"})
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -4923,8 +5109,11 @@ def _macro_evidence_notes(res, book_a, book_s, asheet, ssheet):
         res.notes.append("내 파일 VBA 코드에서 찾은 매크로: "
                          + ", ".join(dict.fromkeys(names_s)))
     elif book_s and book_s.has_vba():
-        res.notes.append("내 파일에 매크로(vbaProject)는 있지만 코드를 읽지 "
-                         "못했습니다 — 매크로 이름·코드는 판정에 쓰지 않았습니다.")
+        why = book_s.vba_diag() or "원인을 특정하지 못했습니다"
+        res.notes.append("VBA를 읽지 못했습니다 — 내 파일에 매크로"
+                         f"(vbaProject)는 있는데 {why}. 매크로 이름·코드는 "
+                         "판정에 쓰지 않았고, 채점은 실행 결과(값·서식)만 "
+                         "보고 했습니다.")
     btns = book_s.form_controls(ssheet) if (book_s and ssheet) else []
     if btns:
         res.notes.append("내 파일 단추: " + " / ".join(
@@ -5134,7 +5323,9 @@ def grade_macro(res, ctx):
                 code_note = (" 내 VBA 코드에는 이 셀·서식을 지정하는 문장이 "
                              "없었습니다.")
         elif book_s.has_vba():
-            code_note = " 내 파일의 VBA 코드를 읽지 못해 코드 인정은 못 했습니다."
+            why = book_s.vba_diag() or "원인을 특정하지 못했습니다"
+            code_note = (f" VBA를 읽지 못했습니다({why}) — 코드 인정은 "
+                         "못 하고 실행 결과만 보고 판정했습니다.")
         else:
             code_note = (" 내 파일에 매크로(vbaProject)가 없습니다 — 매크로는 "
                          "xlsm(매크로 사용 통합 문서)으로 저장해야 남습니다.")
@@ -5458,11 +5649,18 @@ def run_grading(problem_path, answer_path, student_path, key, sheets=None):
             if n in NEEDS_FMT_DIFF else {}
         key_cells = {k.upper(): v for k, v in
                      ((key.get("cells") or {}).get(n) or {}).items()}
-        # 세트 기대값 exclude: 문제지에 없는 정답 파일 잔여 서식 등 채점 제외
+        # 제작 메모 제외(일반 규칙): 정답 파일에만 남은 작업 메모 셀
         excl_notes = []
+        memos = detect_author_memo_cells(shp, sha, vdiffs)
+        if memos:
+            vdiffs, fdiffs, memo_notes = apply_key_exclusions(
+                vdiffs, fdiffs, memos, label="제작 메모로 보아 채점 제외")
+            excl_notes.extend(memo_notes)
+        # 세트 기대값 exclude: 문제지에 없는 정답 파일 잔여 서식 등 채점 제외
         excl = (key.get("exclude") or {}).get(n)
         if excl:
-            vdiffs, fdiffs, excl_notes = apply_key_exclusions(vdiffs, fdiffs, excl)
+            vdiffs, fdiffs, more_notes = apply_key_exclusions(vdiffs, fdiffs, excl)
+            excl_notes.extend(more_notes)
         judge = CellJudge(book_a, book_s, asheet, ssheet, key_cells,
                           display_tolerant=(n == "기본작업-1"))
         ctxs[n] = {
@@ -7070,7 +7268,7 @@ def write_html(path, results, score100, global_notes, paths,
     set_name = set_name or derive_set_name(paths[0])
     _now = datetime.now()
     now_txt = _now.strftime("%Y-%m-%d %H:%M")
-    rid = _now.strftime("%Y%m%d%H%M%S")  # 리포트 식별자 (이의제기 저장 키)
+    rid = attempt_report_id(paths[2]) or _now.strftime("%Y%m%d%H%M%S")
 
     # 엉뚱한 사본 채점 감지: 채점 대상 diff 셀 일치율 10% 미만이면 경고
     diff_total = sum(getattr(r, "diff_total", 0) or 0 for r in results)
