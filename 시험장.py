@@ -74,7 +74,7 @@ v2.7.2: ① 정정 데이터 가산점 — `정정/점수정정.json` 항목에 
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "2.7.2"
+__version__ = "2.7.3"
 
 import argparse
 import hashlib

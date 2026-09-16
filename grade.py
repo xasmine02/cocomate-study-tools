@@ -13,6 +13,13 @@
 의존성: Python 3.8+ / openpyxl (표준 라이브러리 외 유일한 의존성)
 
 변경 이력:
+    2.0.7  이의제기 1건 반영 (24년 개정판 2급 실기 모의고사 리포트)
+           - 양식 컨트롤 단추의 캡션을 못 읽던 버그. Excel 은 캡션을
+             `<v:textbox><div><font>평균<br/></font></div>` 처럼 적으면서
+             글자 뒤에 <br/> 를 붙이는데, 태그를 넘지 못하는 정규식
+             (`<font[^>]*>([^<]*)</font>`)으로 뽑고 있어 **텍스트가 있는 단추가
+             전부 '(없음)'** 으로 읽혔다. textbox 안의 태그를 걷어낸 뒤 공백을
+             정리해 읽는다(`_vml_textbox_text`).
     2.0.6  이의제기 3건 반영 (컴활 2급 상시 = 사용자 '상시기출2회' 리포트)
            - 테두리 표기 기준: 격자 선(edge)은 위아래 두 셀이 공유한다. 지금까지
              늘 아래/오른쪽 셀을 집어 [A1:G1]의 '아래쪽 테두리' 지시가
@@ -142,7 +149,7 @@
     2.0.0  리포트 이의제기 기능(카드별 [이의제기] + 복사 텍스트) 및 학습 로그
 """
 
-__version__ = "2.0.6"
+__version__ = "2.0.7"
 
 import argparse
 import html as html_mod
@@ -955,16 +962,17 @@ class Book:
                     continue
                 mac = re.search(r"<x:FmlaMacro>\s*([^<]*)</x:FmlaMacro>", sh)
                 anc = re.search(r"<x:Anchor>\s*([^<]*)</x:Anchor>", sh)
-                txt = re.findall(r"<font[^>]*>([^<]*)</font>", sh) or \
-                    re.findall(r"<div[^>]*>([^<]*)</div>", sh)
+                # 캡션은 <v:textbox> 안에 있는데 Excel 이 글자 뒤에 <br/> 를
+                # 붙인다 — <font[^<]*</font> 처럼 태그를 못 넘는 정규식으로
+                # 뽑으면 텍스트가 있는 단추가 전부 '(없음)' 이 된다.
+                txt = _vml_textbox_text(sh)
                 rng = "?"
                 if anc:
                     nums = [n.strip() for n in anc.group(1).split(",")]
                     if len(nums) >= 8:
                         rng = _anchor_range(nums[0], nums[2], nums[4], nums[6])
                 name = (mac.group(1).strip() if mac else "")
-                out.append({"text": html_mod.unescape(txt[0]).strip()
-                            if txt else "", "anchor": rng,
+                out.append({"text": txt, "anchor": rng,
                             "macro": name.split("!")[-1] if name else ""})
         rels = self.sheet_rels(sheet_name)
         x = self.sheet_xml(sheet_name) or ""
@@ -1197,6 +1205,20 @@ def ovba_decompress(data, start):
         return bytes(out)
     except Exception:
         return None
+
+
+def _vml_textbox_text(shape_xml):
+    """VML 도형(<v:shape>)의 캡션 문자열. 없으면 "".
+
+    Excel 은 단추 캡션을 <v:textbox><div><font>평균<br/></font></div> 처럼
+    적고, 글자 뒤에 <br/> 를 붙인다. 태그를 넘지 못하는 정규식으로 뽑으면
+    캡션이 있는 단추가 전부 빈 문자열이 되므로, textbox 안의 태그를 걷어낸
+    뒤 공백을 정리해 읽는다.
+    """
+    box = re.search(r"<v:textbox\b.*?</v:textbox>", shape_xml, re.S)
+    inner = box.group(0) if box else shape_xml
+    text = re.sub(r"<[^>]*>", " ", inner)
+    return re.sub(r"\s+", " ", html_mod.unescape(text)).strip()
 
 
 _ATTEMPT_STAMP_RE = re.compile(r"_(\d{8})_(\d{4})(?:\D|$)")
