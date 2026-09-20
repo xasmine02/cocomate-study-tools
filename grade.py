@@ -13,6 +13,17 @@
 의존성: Python 3.8+ / openpyxl (표준 라이브러리 외 유일한 의존성)
 
 변경 이력:
+    2.1.0  리포트에서 **이의제기 기능을 들어냈다**(오픈 소스 전환).
+           카드별 [이의제기] 버튼·입력란, 상단 고정 바(건수 + [이의제기
+           복사하기]), 복사 폴백 모달, "이의제기 안내" 카드, 관련 JS
+           (buildAppealText·APPEAL_META·APPEAL_DATA·localStorage
+           `kocoAppeal:*`)와 CSS 를 전부 지웠다. 이의를 제기해 **전달하는
+           경로**만 없앤 것이고 오답노트·취약점 진단·해설은 그대로다.
+           채점이 틀린 것 같으면 이 저장소를 포크해 직접 고치거나(세트별
+           기대값 JSON 의 points·groups·exclude 로 코드를 안 고치고도 조정
+           가능) 이슈·PR 로 알려 주면 된다 — MIT 라 자기 사본만 고쳐 써도
+           된다. `채점/이의제기_로그.md` 는 지금까지 반영한 42건의 근거
+           문서로 그대로 남는다.
     2.0.8  오탐(맞은 답을 틀렸다고 감점)을 구조적으로 차단 — "모르면 감점 금지"
            이 채점기의 기본값은 '정답 파일과 다르면 오답'이라, 파일에서
            무언가를 읽어 내는 데 실패하면 그 실패가 그대로 감점으로 흘렀다.
@@ -181,7 +192,7 @@
     2.0.0  리포트 이의제기 기능(카드별 [이의제기] + 복사 텍스트) 및 학습 로그
 """
 
-__version__ = "2.0.8"
+__version__ = "2.1.0"
 
 import argparse
 import html as html_mod
@@ -1455,10 +1466,9 @@ def attempt_report_id(student_path):
 
     시험장은 `풀이_<세트>_20260915_1226.xlsm` 처럼 **응시 시작 시각**으로
     사본을 만들고, 기록(`기록.json`)의 `일시` 와 기록 id 도 같은 시각을
-    씁니다. 리포트 식별자를 채점한 시각으로 매기면 이의제기 글에 적히는 ID가
-    어느 기록인지 가리키지 못해(채점은 응시가 끝난 뒤라 시각이 다릅니다)
-    점수 정정을 걸 수 없습니다 — 응시 시각을 그대로 씁니다. 부수 효과로
-    같은 응시를 다시 채점해도 작성해 둔 이의제기 초안이 남습니다.
+    씁니다. 리포트 식별자를 채점한 시각으로 매기면 그 ID가 어느 기록인지
+    가리키지 못해(채점은 응시가 끝난 뒤라 시각이 다릅니다) 점수 정정을 걸 수
+    없습니다 — 응시 시각을 그대로 씁니다.
     """
     m = _ATTEMPT_STAMP_RE.search(os.path.basename(str(student_path or "")))
     return f"{m.group(1)}{m.group(2)}00" if m else None
@@ -7561,7 +7571,11 @@ def _history_points(history, set_name, current_score):
 
 
 def _wrong_card_html(card, idx=None):
-    """오답노트 카드 1장. idx가 주어지면 [이의제기] 버튼/입력란 포함."""
+    """오답노트 카드 1장.
+
+    v2.1.0: 이의제기 경로를 없앴습니다(오픈 소스로 전환 — 채점이 틀린 것
+    같으면 저장소에서 직접 고치거나 이슈/PR 로 알려 주세요). idx 인자는
+    호출부 호환을 위해 남겨 두고 쓰지 않습니다."""
     cat = card.get("category")
     cat_chip = (f'<span class="chip">{esc(CAT_INFO.get(cat, {}).get("이름", cat))}'
                 f'</span>') if cat else ""
@@ -7630,230 +7644,9 @@ def _wrong_card_html(card, idx=None):
                     "</div>" + "".join(solve) + "</div>")
     if card.get("hint"):
         body.append(f'<p class="hint">방법: {esc(card["hint"])}</p>')
-    appeal = ""
-    if idx is not None:
-        appeal = (
-            f'<div class="appeal"><button type="button" class="appeal-btn" '
-            f'data-idx="{idx}">이의제기</button>'
-            '<div class="appeal-box" hidden>'
-            '<textarea class="appeal-text" rows="3" placeholder="무엇이 '
-            '잘못됐는지 적어주세요 — 예: 문제지에 없는 지시 / 해설이 틀림 / '
-            '화면 결과는 같음"></textarea>'
-            '<button type="button" class="appeal-save">저장</button>'
-            '</div></div>')
-    return f'<div class="wc">{head}{"".join(body)}{appeal}</div>'
+    return f'<div class="wc">{head}{"".join(body)}</div>'
 
 
-def _appeal_payload(all_cards):
-    """이의제기 복사 텍스트용 카드 요약 데이터 목록 (JS에 JSON으로 내장)."""
-    items = []
-    for card in all_cards:
-        cells = card.get("cells") or []
-        props = card.get("props") or []
-        shown = [c for c in cells[:5]
-                 if c.get("expected") is not None or c.get("got") is not None]
-        multi = len(shown) > 1
-
-        def _pair(c, key):
-            v = c.get(key)
-            if v is None:
-                return None
-            txt = str(v)
-            if key == "got":
-                gf = c.get("got_formula")
-                if gf and str(gf) != txt:
-                    txt += f" [{gf}]"   # 학생 수식 전문
-            return f"{c['coord']}: {txt}" if multi and c.get("coord") else txt
-
-        exp_parts = [p for p in (_pair(c, "expected") for c in shown) if p]
-        got_parts = [p for p in (_pair(c, "got") for c in shown) if p]
-        exp = "; ".join(exp_parts) if exp_parts else None
-        got = "; ".join(got_parts) if got_parts else None
-        if exp is None and props:
-            exp = "; ".join(f"{p.get('name', '?')}: {p.get('expected')}"
-                            for p in props[:4])
-        if got is None and props:
-            got = "; ".join(f"{p.get('name', '?')}: {p.get('got')}"
-                            for p in props[:4])
-        summary = ""
-        for cand in (card.get("point"), card.get("note"),
-                     (card.get("explain") or [None])[0], card.get("hint")):
-            if cand:
-                summary = str(cand).strip().splitlines()[0]
-                break
-        if len(summary) > 90:
-            summary = summary[:88] + "…"
-
-        def _field(v):
-            """항목 라인의 ' / ' 필드 구분자와 충돌하지 않게 정리."""
-            if v is None:
-                return "-"
-            return str(v).replace("\n", " ").replace(" / ", " · ") or "-"
-
-        loc = ", ".join(str(c.get("coord")) for c in cells[:5]
-                        if c.get("coord"))
-        if card.get("more"):
-            loc += f" 외 {card['more']}개"
-        items.append({
-            "sheet": card.get("sheet") or "?",
-            "label": card.get("label") or "?",
-            "loc": loc,
-            "lost": card.get("lost") or 0,
-            "expected": _field(exp),
-            "got": _field(got),
-            "summary": _field(summary),
-        })
-    return items
-
-
-# 이의제기 복사 텍스트 조립 스크립트 (DOM 무관 순수 함수 — node로 단위
-# 테스트 가능). __META__/__DATA__는 write_html이 JSON으로 치환.
-_APPEAL_ASSEMBLE_JS = """
-var APPEAL_META = __META__;
-var APPEAL_DATA = __DATA__;
-function appealMark(i) {
-  return (i >= 0 && i < 20) ? String.fromCharCode(0x2460 + i)
-                            : "(" + (i + 1) + ")";
-}
-function buildAppealText(entries) {
-  var L = ["[\\ucf54\\ucf54 \\uc774\\uc758\\uc81c\\uae30] "
-           + APPEAL_META.set + " \\u00b7 " + APPEAL_META.when
-           + " \\u00b7 " + APPEAL_META.student, ""];
-  for (var n = 0; n < entries.length; n++) {
-    var e = entries[n];
-    var d = APPEAL_DATA[e.idx] || {};
-    var head = [d.sheet, d.label, d.loc]
-      .filter(function (x) { return x; }).join(" \\u00b7 ");
-    L.push(appealMark(n) + " " + head
-      + " / \\uac10\\uc810: "
-      + (d.lost ? "-" + d.lost + "\\uc810" : "\\uac10\\uc810 \\uc694\\uc778")
-      + " / \\uc815\\ub2f5 \\ud45c\\uae30: " + (d.expected || "-")
-      + " / \\ub0b4 \\ub2f5 \\ud45c\\uae30: " + (d.got || "-")
-      + " / \\ub9ac\\ud3ec\\ud2b8 \\ud574\\uc124: " + (d.summary || "-")
-      + " / \\u2605\\ub0b4 \\ucf54\\uba58\\ud2b8: "
-      + String(e.comment || "").replace(/\\s+/g, " ").trim());
-  }
-  L.push("");
-  L.push("(\\ucd1d " + entries.length + "\\uac74 \\u00b7 \\ub9ac\\ud3ec\\ud2b8 ID "
-         + APPEAL_META.rid + ")");
-  return L.join("\\n");
-}
-"""
-
-# 이의제기 UI 배선 스크립트 (버튼/저장/고정 바/복사 폴백/모달)
-_APPEAL_UI_JS = """
-(function () {
-  var KEY = "kocoAppeal:" + APPEAL_META.rid;
-  var mem = {};
-  try {
-    var raw = localStorage.getItem(KEY);
-    if (raw) {
-      var o = JSON.parse(raw);
-      if (o && typeof o === "object") mem = o;
-    }
-  } catch (err) {}
-  function persist() {
-    try { localStorage.setItem(KEY, JSON.stringify(mem)); } catch (err) {}
-  }
-  function entries() {
-    var out = [];
-    for (var k in mem) {
-      if (String(mem[k] || "").trim()) {
-        out.push({ idx: Number(k), comment: mem[k] });
-      }
-    }
-    out.sort(function (a, b) { return a.idx - b.idx; });
-    return out;
-  }
-  var btns = document.querySelectorAll(".appeal-btn");
-  function refresh() {
-    var n = entries().length;
-    var cnt = document.getElementById("appealCount");
-    if (cnt) cnt.textContent = "\\uc774\\uc758\\uc81c\\uae30 " + n + "\\uac74";
-    for (var i = 0; i < btns.length; i++) {
-      var b = btns[i];
-      var has = String(mem[Number(b.getAttribute("data-idx"))] || "").trim();
-      b.textContent = has ? "\\uc774\\uc758\\uc81c\\uae30 \\uc791\\uc131\\ub428"
-                          : "\\uc774\\uc758\\uc81c\\uae30";
-      b.className = has ? "appeal-btn done" : "appeal-btn";
-    }
-  }
-  function msg(t) {
-    var el = document.getElementById("appealMsg");
-    if (!el) return;
-    el.textContent = t;
-    clearTimeout(msg._t);
-    msg._t = setTimeout(function () { el.textContent = ""; }, 6000);
-  }
-  for (var i = 0; i < btns.length; i++) {
-    (function (b) {
-      var idx = Number(b.getAttribute("data-idx"));
-      var box = b.parentNode.querySelector(".appeal-box");
-      var ta = box.querySelector(".appeal-text");
-      b.onclick = function () {
-        box.hidden = !box.hidden;
-        if (!box.hidden) { ta.value = mem[idx] || ""; ta.focus(); }
-      };
-      box.querySelector(".appeal-save").onclick = function () {
-        mem[idx] = ta.value;
-        persist();
-        box.hidden = true;
-        refresh();
-        msg(String(ta.value).trim()
-          ? "\\uc774\\uc758\\uc81c\\uae30\\uac00 \\uc800\\uc7a5\\ub418\\uc5c8\\uc2b5\\ub2c8\\ub2e4 \\u2014 \\uc0c1\\ub2e8 [\\uc774\\uc758\\uc81c\\uae30 \\ubcf5\\uc0ac\\ud558\\uae30]\\ub85c \\ubaa8\\uc544 \\ubcf5\\uc0ac\\ud558\\uc138\\uc694"
-          : "\\ucf54\\uba58\\ud2b8\\uac00 \\ube44\\uc5b4 \\uc788\\uc5b4 \\uc774\\uc758\\uc81c\\uae30\\uac00 \\ud574\\uc81c\\ub418\\uc5c8\\uc2b5\\ub2c8\\ub2e4");
-      };
-    })(btns[i]);
-  }
-  function fallbackCopy(text) {
-    var ta = document.createElement("textarea");
-    ta.value = text;
-    ta.setAttribute("readonly", "");
-    ta.style.position = "fixed";
-    ta.style.left = "-9999px";
-    document.body.appendChild(ta);
-    ta.select();
-    try { ta.setSelectionRange(0, text.length); } catch (err) {}
-    var ok = false;
-    try { ok = document.execCommand("copy"); } catch (err) { ok = false; }
-    document.body.removeChild(ta);
-    return ok;
-  }
-  function showModal(text) {
-    var m = document.getElementById("appealModal");
-    var t = document.getElementById("appealModalText");
-    if (!m || !t) return;
-    t.value = text;
-    m.hidden = false;
-    t.focus();
-    t.select();
-  }
-  var closeBtn = document.getElementById("appealModalClose");
-  if (closeBtn) {
-    closeBtn.onclick = function () {
-      document.getElementById("appealModal").hidden = true;
-    };
-  }
-  function copied() {
-    msg("\\ubcf5\\uc0ac \\uc644\\ub8cc \\u2014 Claude \\ucc44\\ud305\\uc5d0 \\ubd99\\uc5ec\\ub123\\uc73c\\uba74 \\uac80\\ud1a0 \\ud6c4 \\uc218\\uc815\\ud574\\ub4dc\\ub9bd\\ub2c8\\ub2e4");
-  }
-  var copyBtn = document.getElementById("appealCopy");
-  if (copyBtn) copyBtn.onclick = function () {
-    var es = entries();
-    if (!es.length) {
-      msg("\\uc791\\uc131\\ub41c \\uc774\\uc758\\uc81c\\uae30\\uac00 \\uc5c6\\uc2b5\\ub2c8\\ub2e4 \\u2014 \\uc624\\ub2f5 \\uce74\\ub4dc\\uc758 [\\uc774\\uc758\\uc81c\\uae30] \\ubc84\\ud2bc\\uc744 \\uba3c\\uc800 \\ub20c\\ub7ec \\uc8fc\\uc138\\uc694");
-      return;
-    }
-    var text = buildAppealText(es);
-    if (navigator.clipboard && navigator.clipboard.writeText) {
-      navigator.clipboard.writeText(text).then(copied, function () {
-        if (fallbackCopy(text)) { copied(); } else { showModal(text); }
-      });
-    } else if (fallbackCopy(text)) { copied(); } else { showModal(text); }
-  };
-  refresh();
-})();
-"""
 
 
 def write_html(path, results, score100, global_notes, paths,
@@ -7903,12 +7696,11 @@ def write_html(path, results, score100, global_notes, paths,
                           '<div class="scroll">' + _svg_trend(pts)
                           + "</div></div>")
 
-    # 오답노트 (+ 카드별 이의제기 버튼)
+    # 오답노트
     if all_cards:
         wrong_html = ('<div class="card"><h2>오답노트</h2>'
                       '<p class="lead">틀린 항목마다 내 답과 정답을 비교하고, '
-                      '정답 수식의 풀이를 단계별로 설명합니다. 채점이 '
-                      '잘못됐다고 생각되면 카드의 [이의제기]를 눌러 주세요.</p>'
+                      '정답 수식의 풀이를 단계별로 설명합니다.</p>'
                       + "".join(_wrong_card_html(c, i)
                                 for i, c in enumerate(all_cards))
                       + "</div>")
@@ -7922,43 +7714,12 @@ def write_html(path, results, score100, global_notes, paths,
                       '<p class="perfect">틀린 항목이 없습니다. 모든 채점 '
                       '항목을 통과했습니다.</p></div>')
 
-    # 이의제기 UI (오답 카드가 있을 때만): 상단 고정 바 + 모달 + 안내 + JS
-    appeal_bar = appeal_modal = appeal_guide = appeal_js = ""
+    # v2.1.0: 이의제기 UI(카드 버튼 · 상단 고정 바 · 복사 · 모달 · 안내 카드)는
+    # 통째로 없앴습니다. 이 도구는 오픈 소스라, 채점이 틀린 것 같으면 리포트에서
+    # 무엇을 어떻게 봤는지 확인하고 저장소에서 직접 고치거나(기대값 JSON 의
+    # points·groups·exclude 로 코드를 안 고치고도 조정 가능) 이슈·PR 로 알려
+    # 주면 됩니다. 오답노트·취약점 진단·해설은 그대로입니다.
     body_cls = ""
-    if all_cards:
-        body_cls = ' class="has-appeal"'
-        appeal_bar = (
-            '<div class="appeal-bar"><span class="appeal-bar-title">코코 '
-            '이의제기</span><span id="appealCount">이의제기 0건</span>'
-            '<button type="button" id="appealCopy">이의제기 복사하기</button>'
-            '<span id="appealMsg"></span></div>')
-        appeal_modal = (
-            '<div class="appeal-modal" id="appealModal" hidden>'
-            '<div class="appeal-modal-inner">'
-            '<div class="appeal-modal-title">클립보드 복사가 차단되었습니다 — '
-            '아래 내용을 직접 드래그해 복사하세요</div>'
-            '<textarea id="appealModalText" rows="14" readonly></textarea>'
-            '<button type="button" id="appealModalClose">닫기</button>'
-            '</div></div>')
-        appeal_guide = (
-            '<div class="card"><h2>이의제기 안내</h2><ol class="appeal-guide">'
-            '<li>채점이 잘못됐다고 생각되면 해당 오답 카드의 [이의제기] '
-            '버튼을 눌러 이유를 적고 저장하세요.</li>'
-            '<li>상단 고정 바의 [이의제기 복사하기]를 누르면 작성한 코멘트 '
-            '전체가 클립보드에 복사됩니다.</li>'
-            '<li>복사한 내용을 Claude 채팅에 붙여넣으면 검토 후 채점기를 '
-            '수정해드립니다.</li></ol></div>')
-        meta_json = json.dumps(
-            {"set": set_name, "when": now_txt,
-             "student": os.path.basename(paths[2]), "rid": rid},
-            ensure_ascii=False).replace("</", "<\\/")
-        data_json = json.dumps(_appeal_payload(all_cards),
-                               ensure_ascii=False).replace("</", "<\\/")
-        appeal_js = (
-            '<script id="appeal-assemble">'
-            + _APPEAL_ASSEMBLE_JS.replace("__META__", meta_json)
-                                 .replace("__DATA__", data_json)
-            + "</script>\n<script>" + _APPEAL_UI_JS + "</script>\n")
 
     # 취약점 진단
     if cat_losses:
@@ -8136,46 +7897,6 @@ svg { font-family:'Malgun Gothic','맑은 고딕',sans-serif; display:block; }
 footer { color:#57705F; font-size:0.78rem; text-align:center;
   margin-top:6px; }
 [hidden] { display:none !important; }
-body.has-appeal { padding-top:60px; }
-.appeal { margin-top:10px; border-top:1px dashed #E8EFEA; padding-top:8px; }
-.appeal-btn { background:#FFFFFF; border:1px solid #D7E3DA; color:#57705F;
-  border-radius:999px; padding:3px 12px; font-size:0.78rem; cursor:pointer;
-  font-family:inherit; }
-.appeal-btn:hover { border-color:#107C41; color:#107C41; }
-.appeal-btn.done { background:#E3F2E8; border-color:#BFDCCB; color:#0B5D31;
-  font-weight:700; }
-.appeal-box { margin-top:6px; }
-.appeal-box textarea { width:100%; box-sizing:border-box;
-  border:1px solid #D7E3DA; border-radius:8px; padding:8px 10px;
-  font-size:0.84rem; font-family:inherit; resize:vertical; }
-.appeal-save { margin-top:4px; background:#107C41; color:#fff; border:none;
-  border-radius:8px; padding:5px 16px; font-size:0.8rem; cursor:pointer;
-  font-family:inherit; }
-.appeal-bar { position:fixed; top:0; left:0; right:0; z-index:50;
-  background:#1B3A26; color:#fff; display:flex; gap:12px;
-  align-items:center; flex-wrap:wrap; padding:9px 16px; font-size:0.84rem;
-  box-shadow:0 1px 6px rgba(0,0,0,0.25); }
-.appeal-bar-title { font-weight:700; }
-#appealCount { color:#D9E8DE; font-variant-numeric:tabular-nums; }
-#appealCopy { background:#FFC000; color:#1B3A26; font-weight:700;
-  border:none; border-radius:8px; padding:5px 14px; font-size:0.82rem;
-  cursor:pointer; font-family:inherit; }
-#appealMsg { font-size:0.78rem; color:#FFE9A8; }
-.appeal-modal { position:fixed; inset:0; z-index:60;
-  background:rgba(0,0,0,0.45); display:flex; align-items:center;
-  justify-content:center; padding:20px; }
-.appeal-modal-inner { background:#fff; border-radius:12px; padding:18px;
-  max-width:640px; width:100%; }
-.appeal-modal-title { font-weight:700; font-size:0.9rem; color:#B3372E;
-  margin-bottom:10px; }
-.appeal-modal-inner textarea { width:100%; box-sizing:border-box;
-  font-family:Consolas,'Courier New',monospace; font-size:0.78rem;
-  border:1px solid #D7E3DA; border-radius:8px; padding:8px 10px; }
-#appealModalClose { margin-top:8px; background:#57705F; color:#fff;
-  border:none; border-radius:8px; padding:5px 16px; font-size:0.8rem;
-  cursor:pointer; font-family:inherit; }
-.appeal-guide { padding-left:20px; font-size:0.88rem; }
-.appeal-guide li { margin-bottom:6px; }
 .review-card { border-color:#E0B96A; background:#FFFBF2; }
 .review-card h2 { color:#9A6B10; border-bottom-color:#F0DFBC; }
 .review-item { border-left:3px solid #E0B96A; padding:8px 0 8px 12px;
@@ -8198,7 +7919,7 @@ body.has-appeal { padding-top:60px; }
         + (f" ({score100}점 · 확인 필요 {len(holds)}건)" if holds else "")
         + "</title>\n"
         f"<style>{css}</style></head><body{body_cls}>"
-        + appeal_bar + '<div class="wrap">\n'
+        + '<div class="wrap">\n'
         '<div class="card"><div class="head-flex">'
         f'<div>{_svg_donut(score100, max_total=max_total, show_pass=not partial)}</div>'
         '<div class="head-info">'
@@ -8219,9 +7940,8 @@ body.has-appeal { padding-top:60px; }
         + _svg_sheet_bars(results) + "</div></div>\n"
         + trend_html + review_html + wrong_html + diag_html + check_html
         + notes_html
-        + appeal_guide
         + f"<footer>코코 채점 학습 리포트 · diff 기반 자동 채점 · {now_txt}"
-          "</footer>\n</div>" + appeal_modal + appeal_js
+          "</footer>\n</div>"
         + "</body></html>")
     with open(path, "w", encoding="utf-8") as f:
         f.write(doc)

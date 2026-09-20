@@ -229,6 +229,14 @@
   .es-row label{font-size:12.5px; color:var(--muted)}
   .es-row input[type="date"]{padding:5px 8px; border:1px solid var(--line); background:var(--bg); color:inherit; font:inherit; font-size:13.5px; font-family:"IBM Plex Mono", ui-monospace, monospace}
   .es-save{padding:6px 16px; font-size:13.5px}
+  .es-list{margin:9px 0 0; padding:0; list-style:none; display:flex; flex-wrap:wrap; gap:6px}
+  .es-list li{display:inline-flex; align-items:center; gap:7px; padding:4px 6px 4px 10px; border:1px solid var(--line); background:var(--bg); font-size:13px}
+  .es-list li.es-next{border-color:var(--accent); background:var(--accent-soft); color:var(--accent-deep); font-weight:600}
+  .es-list li.es-past{color:var(--muted); opacity:.85}
+  .es-list .es-tag{font-size:11.5px; font-family:"IBM Plex Mono", ui-monospace, monospace; opacity:.9}
+  .es-list .es-del{padding:1px 7px; border:1px solid var(--line); background:var(--card); color:inherit; font:inherit; font-size:12px; cursor:pointer}
+  .es-list .es-del:hover{border-color:var(--warn); color:var(--warn)}
+  .es-list .es-none{border-style:dashed; color:var(--muted)}
   .es-msg{margin:7px 0 0; font-size:12.5px; color:var(--accent-deep); min-height:1em}
   .es-msg.bad{color:var(--warn)}
 
@@ -741,8 +749,10 @@
           <label for="exam-date-2">2차 시험일 (선택)</label>
           <input type="date" id="exam-date-2" pattern="\d{4}-\d{2}-\d{2}" placeholder="YYYY-MM-DD">
           <button type="button" id="exam-date-save" class="start-btn es-save">저장</button>
-          <button type="button" id="exam-date-clear" class="quiz-nav-btn">지우기</button>
+          <button type="button" id="exam-date-add" class="quiz-nav-btn">목록에 추가</button>
+          <button type="button" id="exam-date-clear" class="quiz-nav-btn">전체 비우기</button>
         </div>
+        <ul class="es-list" id="exam-date-list" aria-label="넣은 시험일 목록"></ul>
         <p class="es-msg" id="exam-date-msg" aria-live="polite"></p>
       </div>
       <div class="hero">
@@ -1400,7 +1410,7 @@
   /* 세트는 사용자가 가진 것으로만 만들어진다 — 고정 세트 목록·고정 일정표는 없다(v3.0.0).
      연동 모드에서는 시험장이 스캔한 세트를, 폴백 모드에서는 가져온 채점결과에 나온 세트를 쓴다. */
   var ROUTINE_DAYS = 7;                      /* 커리큘럼 길이: D-7 ~ D-1 */
-  var EXAM_DATES = [];                       /* 시험일 (1~2개, 오름차순) — 사용자가 입력 */
+  var EXAM_DATES = [];                       /* 시험일 목록 (0개 이상, 오름차순) — 사용자가 입력 */
   var GOAL_TIERS = [70, 80, 90, 100];        /* 목표 사다리 (70 = 합격선, 그 위는 승급 목표) */
   var PASS_LINE = 70, DAILY_CAP = 1;         /* 하루 추천 1세트 (v2.7.0: 응시 횟수 제한은 없음) */
   var AUTO_NAME = "자동 선택";
@@ -1409,7 +1419,8 @@
 
   function isIsoDate(s) { return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s); }
   function parseIso(s) { return isIsoDate(String(s || "").slice(0, 10)) ? String(s).slice(0, 10) : null; }
-  /* 시험일 설정 (1차 필수 · 2차 선택). 잘못된 값은 버리고 오름차순 유일 목록으로 둔다. */
+  /* 시험일 설정 — 여러 개를 넣을 수 있고 0개도 허용(v3.1.0). 잘못된 값은 버리고
+     오름차순 유일 목록으로 둔다. 시험장 save_exam_date_list 와 같은 규칙. */
   function setExamDates(list) {
     var out = [];
     (list || []).forEach(function(x){
@@ -1417,20 +1428,29 @@
       if (d && out.indexOf(d) < 0) { out.push(d); }
     });
     out.sort();
-    EXAM_DATES = out.slice(0, 2);
+    EXAM_DATES = out;
     return EXAM_DATES.slice();
   }
+  /* 일정 기준이 되는 시험일 = **가장 가까운 미래 시험일**부터 (시험장 effective_exams).
+     지난 시험일은 목록에 남지만 기준에서 빠지고, 전부 지났으면 전체 목록 그대로. */
+  function activeExams(today) {
+    if (!EXAM_DATES.length) { return []; }
+    var up = EXAM_DATES.filter(function(d){ return !today || d >= today; });
+    return up.length ? up : EXAM_DATES.slice();
+  }
+  function nextExam(today) { var a = activeExams(today); return a.length ? a[0] : null; }
   function examDateSet() { return EXAM_DATES.length > 0; }
-  function routineStart() { return examDateSet() ? addDays(EXAM_DATES[0], -ROUTINE_DAYS) : null; }
-  function ddayNum(today) { return examDateSet() ? dayDiff(EXAM_DATES[0], today) : null; }
+  function routineStart(today) { var a = activeExams(today); return a.length ? addDays(a[0], -ROUTINE_DAYS) : null; }
+  function ddayNum(today) { var a = activeExams(today); return a.length ? dayDiff(a[0], today) : null; }
   function ddayLabel(n) {
     if (n === null || n === undefined) { return ""; }
     return n === 0 ? "D-day" : (n > 0 ? "D-" + n : "D+" + (-n));
   }
   function ddayText(today) {
-    if (!examDateSet()) { return "시험일 미설정"; }
-    var parts = ["시험 " + ddayLabel(dayDiff(EXAM_DATES[0], today))];
-    if (EXAM_DATES.length > 1) { parts.push("2차 " + ddayLabel(dayDiff(EXAM_DATES[1], today))); }
+    var a = activeExams(today);
+    if (!a.length) { return "시험일 미설정"; }
+    var parts = ["시험 " + ddayLabel(dayDiff(a[0], today))];
+    if (a.length > 1) { parts.push("2차 " + ddayLabel(dayDiff(a[1], today))); }
     return parts.join(" · ");
   }
 
@@ -1493,20 +1513,21 @@
         return (a.total || 0) - (b.total || 0);
       });
   }
-  /* 학습 구간 = 시험일 기준 D-7 ~ D-1 한 구간 (시험장 study_segments 와 동일).
-     시험일이 설정되지 않았으면 빈 목록. */
-  function studySegments() {
-    if (!examDateSet()) { return []; }
-    return [{ no: 1, start: addDays(EXAM_DATES[0], -ROUTINE_DAYS), deadline: addDays(EXAM_DATES[0], -1), exam: EXAM_DATES[0] }];
+  /* 학습 구간 = **가장 가까운 미래 시험일** 기준 D-7 ~ D-1 한 구간
+     (시험장 study_segments 와 동일). 시험일이 하나도 없으면 빈 목록. */
+  function studySegments(today) {
+    var a = activeExams(today);
+    if (!a.length) { return []; }
+    return [{ no: 1, start: addDays(a[0], -ROUTINE_DAYS), deadline: addDays(a[0], -1), exam: a[0] }];
   }
   /* 구간 kind: unset(미설정) · free(D-7 이전 자유 연습) · week(D-7~D-1) ·
-     exam(시험 당일) · between(1차와 2차 사이) · after(시험 이후) */
+     exam(시험 당일) · after(마지막 시험일 이후).
+     v3.1.0: 지난 시험일은 기준에서 빠지므로 옛 between 구간은 나오지 않는다. */
   function segmentFor(today) {
     if (!examDateSet()) { return { kind: "unset" }; }
     if (EXAM_DATES.indexOf(today) >= 0) { return { kind: "exam", examNo: EXAM_DATES.indexOf(today) + 1 }; }
     if (today > EXAM_DATES[EXAM_DATES.length - 1]) { return { kind: "after" }; }
-    if (today > EXAM_DATES[0]) { return { kind: "between", examNo: 2 }; }
-    var sg = studySegments()[0];
+    var sg = studySegments(today)[0];
     if (today < sg.start) { return { kind: "free", segStart: sg.start, start: sg.start, end: sg.deadline }; }
     return { kind: "week", seg: sg.no, segStart: sg.start, start: today > sg.start ? today : sg.start, end: sg.deadline };
   }
@@ -1795,7 +1816,7 @@
     if (seg.kind !== "week" && seg.kind !== "free") {
       if (seg.kind === "unset") { plan.reason = "시험일 미설정 — 시험 날짜를 입력하면 일정이 만들어집니다"; }
       else if (seg.kind === "after") { plan.reason = "시험이 끝났습니다 — 새 시험을 준비한다면 시험일을 다시 설정하세요"; }
-      else if (seg.kind === "between") { plan.reason = "2차 시험 대비 — 오답 복습과 실수 노트만 가볍게"; }
+      else if (seg.kind === "between") { plan.reason = "2차 시험 대비 — 오답 복습과 실수 노트만 가볍게"; }   /* 3.0.x 호환 — 3.1.0에서는 나오지 않음 */
       return plan;
     }
     var start = seg.start, end = seg.end, segStart = seg.segStart;
@@ -2213,9 +2234,10 @@
       return;
     }
     if (wrap) { wrap.hidden = false; }
-    var segs = studySegments()[0];
+    var segs = studySegments(iso)[0];
     var from = segs.start < iso ? segs.start : segs.start;    /* 지난 날도 보여 준다 */
-    var last = EXAM_DATES[EXAM_DATES.length - 1];
+    var act = activeExams(iso);
+    var last = act[act.length - 1];
     for (var d = from; d <= last; d = addDays(d, 1)) {
       var cell = document.createElement("div");
       var isExam = EXAM_DATES.indexOf(d) >= 0;
@@ -2229,12 +2251,14 @@
       strip.appendChild(cell);
     }
   }
-  /* 시험일 탭의 D-DAY 카드 (1차는 항상, 2차는 설정됐을 때만) */
+  /* 시험일 탭의 D-DAY 카드 (기준 시험일은 항상, 그 다음은 있을 때만).
+     지난 시험일은 카드에 올리지 않는다(v3.1.0) — 목록에는 그대로 남는다. */
   function renderExamCards() {
+    var actCards = activeExams(iso);
     [1, 2].forEach(function(no){
       var card = document.querySelector('.exam-card[data-exam="' + no + '"]');
       var head = document.getElementById("exam" + no + "-head");
-      var d = EXAM_DATES[no - 1] || "";
+      var d = actCards[no - 1] || "";
       var on = !!d;
       if (card) {
         card.setAttribute("data-date", d);
@@ -2262,16 +2286,52 @@
   function renderExamSetup() {
     var i1 = document.getElementById("exam-date-1"), i2 = document.getElementById("exam-date-2");
     var note = document.getElementById("es-note"), title = document.getElementById("es-title");
+    var nx = nextExam(iso);
     if (i1 && document.activeElement !== i1) { i1.value = EXAM_DATES[0] || ""; }
     if (i2 && document.activeElement !== i2) { i2.value = EXAM_DATES[1] || ""; }
-    if (title) { title.textContent = examDateSet() ? ("시험일 " + fmtDateKo(EXAM_DATES[0]) + (EXAM_DATES.length > 1 ? " · 2차 " + fmtDateKo(EXAM_DATES[1]) : "")) : "시험일을 먼저 설정하세요"; }
+    if (title) { title.textContent = examDateSet() ? ("시험일 " + EXAM_DATES.length + "개 · 기준 " + fmtDateKo(nx)) : "시험일을 먼저 설정하세요"; }
     if (note) {
       note.textContent = examDateSet()
-        ? ("D-" + ROUTINE_DAYS + " ~ D-1 일주일 일정이 이 날짜 기준으로 계산됩니다" + (linked() ? " (시험장과 함께 저장)" : " (이 브라우저에 저장)") + ".")
-        : ("시험 날짜를 넣으면 그 날 기준 D-" + ROUTINE_DAYS + " ~ D-1 일주일 일정이 만들어집니다. 7일이 안 남았으면 남은 날짜에 맞춰 뒤에서부터 배정합니다.");
+        ? ("일정은 가장 가까운 미래 시험일(" + fmtDateKo(nx) + ") 기준 D-" + ROUTINE_DAYS + " ~ D-1 입니다. 지난 시험일은 목록에 남고 기준에서만 빠집니다" + (linked() ? " (시험장과 함께 저장)" : " (이 브라우저에 저장)") + ".")
+        : ("시험 날짜를 넣으면 그 날 기준 D-" + ROUTINE_DAYS + " ~ D-1 일주일 일정이 만들어집니다. 여러 개를 넣고 하나씩 지울 수 있고, 하나도 없으면 자유 연습 모드로 돕니다.");
     }
+    renderExamList();
     var setup = document.getElementById("exam-setup");
     if (setup) { setup.classList.toggle("es-empty", !examDateSet()); }
+  }
+  /* 넣은 시험일 목록 — 항목마다 [삭제]. 기준 시험일과 지난 시험일을 구분해 보여 준다. */
+  function renderExamList() {
+    var ul = document.getElementById("exam-date-list");
+    if (!ul) { return; }
+    ul.textContent = "";
+    var nx = nextExam(iso);
+    if (!EXAM_DATES.length) {
+      var none = document.createElement("li");
+      none.className = "es-none";
+      none.textContent = "시험일 없음 — 자유 연습 모드";
+      ul.appendChild(none);
+      return;
+    }
+    EXAM_DATES.forEach(function(d){
+      var li = document.createElement("li");
+      var past = d < iso;
+      li.className = past ? "es-past" : (d === nx ? "es-next" : "");
+      li.setAttribute("data-date", d);
+      var name = document.createElement("span");
+      name.textContent = d + " (" + wdNames[weekdayIdx(d)] + ")";
+      var tag = document.createElement("span");
+      tag.className = "es-tag";
+      tag.textContent = past ? "지남 · 기준 제외" : (d === nx ? "기준 " + ddayLabel(dayDiff(d, iso)) : ddayLabel(dayDiff(d, iso)));
+      var del = document.createElement("button");
+      del.type = "button";
+      del.className = "es-del";
+      del.setAttribute("data-del", d);
+      del.setAttribute("aria-label", d + " 시험일 삭제");
+      del.textContent = "삭제";
+      del.addEventListener("click", function(){ removeExamDate(d); });
+      li.appendChild(name); li.appendChild(tag); li.appendChild(del);
+      ul.appendChild(li);
+    });
   }
   function examMsg(text, bad) {
     var el = document.getElementById("exam-date-msg");
@@ -2284,24 +2344,47 @@
     if (list[0] && !d1) { examMsg("시험일 형식이 올바르지 않습니다 (YYYY-MM-DD).", true); return; }
     if (list[1] && !d2) { examMsg("2차 시험일 형식이 올바르지 않습니다 (YYYY-MM-DD).", true); return; }
     if (d1 && d2 && d2 <= d1) { examMsg("2차 시험일은 시험일보다 뒤여야 합니다.", true); return; }
-    var next = d1 ? (d2 ? [d1, d2] : [d1]) : [];
+    saveExamList(d1 ? (d2 ? [d1, d2] : [d1]) : [], done);
+  }
+  /* 시험일 **목록 전체**를 저장 (v3.1.0). 연동 모드면 시험장에
+     POST /api/exam_date {dates:[...]}, 폴백이면 localStorage. 프로그램과 웹이
+     같은 기능을 갖도록 양쪽 모두에서 넣고 지울 수 있다. */
+  function saveExamList(list, done, okMsg) {
+    var next = [];
+    (list || []).forEach(function(x){ var d = parseIso(x); if (d && next.indexOf(d) < 0) { next.push(d); } });
+    next.sort();
+    var msg = okMsg || (next.length ? "시험일을 저장했습니다 — 일정을 다시 계산했습니다." : "시험일을 지웠습니다 — 자유 연습 모드로 돕니다.");
     if (linked()) {
-      apiPost("/api/exam_date", { date: d1, date2: d2 }, function(ok, j){
+      apiPost("/api/exam_date", { dates: next }, function(ok, j){
         if (!ok) { examMsg("시험장에 저장하지 못했습니다 — " + errText(j), true); return; }
         applyState(j, { force: true });
-        examMsg(next.length ? "시험일을 저장했습니다 — 일정을 다시 계산했습니다." : "시험일을 지웠습니다.", false);
+        examMsg(msg, false);
         if (done) { done(); }
       });
       return;
     }
     setExamDates(next);
     saveExamDatesLocal(EXAM_DATES.slice());
-    examMsg(next.length ? "시험일을 저장했습니다 — 일정을 다시 계산했습니다." : "시험일을 지웠습니다.", false);
+    examMsg(msg, false);
     renderAll();
     if (done) { done(); }
   }
+  function addExamDate(value, done) {
+    var d = parseIso(value);
+    if (!d) { examMsg("날짜 형식이 올바르지 않습니다 (YYYY-MM-DD).", true); return false; }
+    if (EXAM_DATES.indexOf(d) >= 0) { examMsg("이미 들어 있는 시험일입니다: " + d, true); return false; }
+    saveExamList(EXAM_DATES.concat([d]), done, "시험일 " + d + " 을(를) 추가했습니다.");
+    return true;
+  }
+  function removeExamDate(value, done) {
+    var d = parseIso(value);
+    if (!d || EXAM_DATES.indexOf(d) < 0) { return false; }
+    saveExamList(EXAM_DATES.filter(function(x){ return x !== d; }), done, "시험일 " + d + " 을(를) 지웠습니다.");
+    return true;
+  }
   function wireExamSetup() {
     var save = document.getElementById("exam-date-save");
+    var add = document.getElementById("exam-date-add");
     var clear = document.getElementById("exam-date-clear");
     if (save) {
       save.addEventListener("click", function(){
@@ -2311,7 +2394,23 @@
         applyExamDates([v1, i2 ? i2.value.trim() : ""]);
       });
     }
-    if (clear) { clear.addEventListener("click", function(){ applyExamDates(["", ""]); }); }
+    if (add) {
+      add.addEventListener("click", function(){
+        var i1 = document.getElementById("exam-date-1"), i2 = document.getElementById("exam-date-2");
+        var v1 = i1 ? i1.value.trim() : "", v2 = i2 ? i2.value.trim() : "";
+        if (!v1 && !v2) { examMsg("추가할 날짜를 입력하세요 (YYYY-MM-DD).", true); return; }
+        var next = EXAM_DATES.slice();
+        var added = [];
+        [v1, v2].forEach(function(v){
+          var d = v ? parseIso(v) : null;
+          if (d && next.indexOf(d) < 0) { next.push(d); added.push(d); }
+        });
+        if ((v1 && !parseIso(v1)) || (v2 && !parseIso(v2))) { examMsg("날짜 형식이 올바르지 않습니다 (YYYY-MM-DD).", true); return; }
+        if (!added.length) { examMsg("이미 들어 있는 시험일입니다.", true); return; }
+        saveExamList(next, null, "시험일 " + added.join(" · ") + " 을(를) 추가했습니다.");
+      });
+    }
+    if (clear) { clear.addEventListener("click", function(){ saveExamList([]); }); }
   }
   wireExamSetup();
   function renderCalendar(){
@@ -2321,28 +2420,29 @@
     }
     function txt(n) { return n > 0 ? "D-" + n : (n === 0 ? "D-DAY" : "종료"); }
     var has = examDateSet();
-    var d1 = has ? dayDiff(EXAM_DATES[0], iso) : null;
-    var d2 = (has && EXAM_DATES.length > 1) ? dayDiff(EXAM_DATES[1], iso) : null;
+    var ACT = activeExams(iso);            /* 기준(다음) 시험일부터 — 지난 것은 뺀다 */
+    var d1 = has ? dayDiff(ACT[0], iso) : null;
+    var d2 = (has && ACT.length > 1) ? dayDiff(ACT[1], iso) : null;
     var dnum = document.getElementById("d-num");
     if (dnum) { dnum.textContent = has ? txt(d1) : "D-?"; }
     var fxo = document.getElementById("fx-out");
     if (fxo) { fxo.textContent = has ? String(d1) : "-"; }
     var fxf = document.getElementById("fx-formula");
-    if (fxf) { fxf.textContent = has ? ('=DATE(' + (+EXAM_DATES[0].slice(0, 4)) + ',' + (+EXAM_DATES[0].slice(5, 7)) + ',' + (+EXAM_DATES[0].slice(8, 10)) + ')-TODAY()') : "=시험일-TODAY()"; }
+    if (fxf) { fxf.textContent = has ? ('=DATE(' + (+ACT[0].slice(0, 4)) + ',' + (+ACT[0].slice(5, 7)) + ',' + (+ACT[0].slice(8, 10)) + ')-TODAY()') : "=시험일-TODAY()"; }
     var dsub = document.getElementById("d-sub");
-    if (dsub) { dsub.textContent = has ? (d2 === null ? ("시험 " + fmtDateKo(EXAM_DATES[0])) : ("2차 " + fmtDateKo(EXAM_DATES[1]) + " · " + txt(d2))) : "시험일 미설정"; }
+    if (dsub) { dsub.textContent = has ? (d2 === null ? ("시험 " + fmtDateKo(ACT[0])) : ("2차 " + fmtDateKo(ACT[1]) + " · " + txt(d2))) : "시험일 미설정"; }
     var mast = document.getElementById("mast-dday");
-    if (mast) { mast.textContent = has ? ("시험 " + fmtDateKo(EXAM_DATES[0]) + " " + txt(d1) + (d2 === null ? "" : " · 2차 " + fmtDateKo(EXAM_DATES[1]) + " " + txt(d2))) : "시험일 미설정"; }
+    if (mast) { mast.textContent = has ? ("시험 " + fmtDateKo(ACT[0]) + " " + txt(d1) + (d2 === null ? "" : " · 2차 " + fmtDateKo(ACT[1]) + " " + txt(d2))) : "시험일 미설정"; }
     var hsub = document.getElementById("hero-sub");
     if (hsub) {
       hsub.textContent = has
-        ? (routineStart() + " (D-" + ROUTINE_DAYS + ") 시작 · " + addDays(EXAM_DATES[0], -1) + " (D-1) 마감 · 하루 한 세트 40분 완주 → 채점이면 그 날 클리어 · 응시 횟수 제한 없음(예습·복습 자유) · 목표는 70 → 80 → 90 → 100 · 시험 " + fmtDateKo(EXAM_DATES[0]) + (d2 === null ? "" : " · 2차 " + fmtDateKo(EXAM_DATES[1])) + " — 70점 합격")
+        ? (routineStart(iso) + " (D-" + ROUTINE_DAYS + ") 시작 · " + addDays(ACT[0], -1) + " (D-1) 마감 · 하루 한 세트 40분 완주 → 채점이면 그 날 클리어 · 응시 횟수 제한 없음(예습·복습 자유) · 목표는 70 → 80 → 90 → 100 · 시험 " + fmtDateKo(ACT[0]) + (d2 === null ? "" : " · 2차 " + fmtDateKo(ACT[1])) + " — 70점 합격")
         : "시험일을 설정하면 D-7 ~ D-1 일주일 일정이 만들어집니다 · 하루 한 세트 40분 완주 → 채점이면 그 날 클리어 · 응시 횟수 제한 없음(예습·복습 자유) · 목표는 70 → 80 → 90 → 100 — 70점 합격";
     }
     var s1r = document.getElementById("stage1-range");
-    if (s1r) { s1r.textContent = has ? ("(" + routineStart() + " ~ " + addDays(EXAM_DATES[0], -1) + ")") : "(시험일 미설정)"; }
+    if (s1r) { s1r.textContent = has ? ("(" + routineStart(iso) + " ~ " + addDays(ACT[0], -1) + ")") : "(시험일 미설정)"; }
     var d00d = document.getElementById("d00-date");
-    if (d00d) { d00d.textContent = has ? ("시작 전 (~" + addDays(routineStart(), -1) + ")") : "시작 전"; }
+    if (d00d) { d00d.textContent = has ? ("시작 전 (~" + addDays(routineStart(iso), -1) + ")") : "시작 전"; }
     renderStrip();
     renderExamCards();
     Array.prototype.slice.call(document.querySelectorAll(".strip .cell.today")).forEach(function(c){ c.classList.remove("today"); });
@@ -2358,9 +2458,9 @@
       if (!examDateSet()) {
         stripStatus.hidden = false;
         stripStatus.textContent = "시험일이 설정되지 않았습니다 — 위 [시험일 설정]에서 시험 날짜를 넣어 주세요.";
-      } else if (iso < routineStart()) {
+      } else if (iso < routineStart(iso)) {
         stripStatus.hidden = false;
-        stripStatus.textContent = "일주일 일정은 " + routineStart() + " (D-" + ROUTINE_DAYS + ")에 시작합니다. 그 전에는 자유 연습 구간이에요.";
+        stripStatus.textContent = "일주일 일정은 " + routineStart(iso) + " (D-" + ROUTINE_DAYS + ")에 시작합니다. 그 전에는 자유 연습 구간이에요.";
       } else if (iso > EXAM_DATES[EXAM_DATES.length - 1]) {
         stripStatus.hidden = false;
         stripStatus.textContent = "시험이 끝났습니다 — 새 시험을 준비한다면 [시험일 설정]에서 시험일을 다시 넣으세요.";
@@ -2584,7 +2684,7 @@
       if (prevByDate[date]) { return { mode: "preview", day: prevByDate[date], records: recs, phaseLabel: label }; }
       return { mode: "future", day: null, records: recs, phaseLabel: label };
     }
-    var segs = studySegments();
+    var segs = studySegments(iso);
     if (!segs.length) { return; }              /* 시험일 미설정 — 날짜 카드 없음 */
     function dayLabel(date) {
       var n = dayDiff(date, segs[0].start) + 1;
@@ -2600,10 +2700,12 @@
       el.textContent = "시험일을 설정하면 그 날 기준 D-7 ~ D-1 일주일 일정이 여기에 만들어집니다.";
       return;
     }
-    var segs = studySegments()[0];
+    var segs = studySegments(iso)[0];
+    var actF = activeExams(iso);
     var n = (planSets || []).length;
     el.textContent = "일정 " + segs.start + "(D-" + ROUTINE_DAYS + ") ~ " + segs.deadline
-      + "(D-1) · 시험 " + EXAM_DATES[0] + (EXAM_DATES.length > 1 ? " · 2차 " + EXAM_DATES[1] : "")
+      + "(D-1) · 시험 " + actF[0] + (actF.length > 1 ? " · 2차 " + actF[1] : "")
+      + (EXAM_DATES.length > actF.length ? " · 지난 시험일 " + (EXAM_DATES.length - actF.length) + "개(기준 제외)" : "")
       + " · 보유 세트 " + n + "개 — "
       + (n ? "첫 응시(이름순) → 70점 미만 → 현재 목표 미달 → 보유 세트 순환 재응시 순으로 하루 한 세트씩 배정합니다. 목표는 기록 최고점에 따라 70 → 80 → 90 → 100 으로 올라갑니다."
            : "아직 세트가 없습니다. 학습 폴더에 '<이름>_문제.xlsx' 와 '<이름>_정답.xlsx' 를 넣으면 그 세트로 일정이 만들어집니다.");
@@ -2830,18 +2932,18 @@
       slot.appendChild(note);
       return;
     }
-    if (iso < routineStart()) {
+    if (iso < routineStart(iso)) {
       var prep2 = document.querySelector('.day-grid [data-day="d00"]');
       if (prep2) { slot.appendChild(makeClone(prep2)); }
-      note.textContent = "일주일 일정은 " + routineStart() + " (D-" + ROUTINE_DAYS + ")에 시작합니다. 그 전까지는 자유 연습 — 아래 세트 보드에서 아무 세트나 골라 풀어 보세요.";
+      note.textContent = "일주일 일정은 " + routineStart(iso) + " (D-" + ROUTINE_DAYS + ")에 시작합니다. 그 전까지는 자유 연습 — 아래 세트 보드에서 아무 세트나 골라 풀어 보세요.";
       slot.appendChild(note);
       return;
     }
     var card = document.querySelector('.day-grid [data-day="' + dayKey(iso) + '"]');
     if (!card && EXAM_DATES.indexOf(iso) >= 0) { card = document.querySelector('.exam-card[data-date="' + iso + '"]'); }
     if (card) { slot.appendChild(makeClone(card)); }
-    if (iso === EXAM_DATES[0]) { note.textContent = "오늘은 시험일입니다. 위 체크리스트만 확인하고 다녀오세요" + (EXAM_DATES.length > 1 ? " — 내일 2차가 있으니 저녁에는 복기 메모·실수 노트 1회독만 가볍게." : "."); }
-    else if (EXAM_DATES.length > 1 && iso === EXAM_DATES[1]) { note.textContent = "오늘은 2차 시험일입니다. 아침에 실수 노트와 어제 복기 메모만 한 번 훑고 출발하세요."; }
+    if (iso === EXAM_DATES[0]) { note.textContent = "오늘은 시험일입니다. 위 체크리스트만 확인하고 다녀오세요" + (EXAM_DATES.length > 1 ? " — 다음 시험일이 또 있으니 저녁에는 복기 메모·실수 노트 1회독만 가볍게." : "."); }
+    else if (EXAM_DATES.indexOf(iso) > 0) { note.textContent = "오늘도 시험일입니다. 아침에 실수 노트와 지난 시험 복기 메모만 한 번 훑고 출발하세요."; }
     else if (plan.kind === "after") { note.textContent = "시험이 끝났습니다 — 새 시험을 준비한다면 시험일을 다시 설정하세요."; }
     else if (plan.kind === "between") { note.textContent = "2차 시험 대비 — 오답 복습과 실수 노트만 가볍게."; }
     else if (plan.noSets) { note.textContent = NO_SETS_REASON + " — 학습 폴더에 '<이름>_문제.xlsx' 와 '<이름>_정답.xlsx' 를 넣으면 그 세트로 일정이 만들어집니다."; }

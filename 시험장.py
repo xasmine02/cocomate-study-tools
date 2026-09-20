@@ -76,13 +76,21 @@ v3.0.0: 배포판 — ① **시험일을 사용자가 입력**한다(세트설�
 연습, 시험일이 지났으면 "시험일을 다시 설정하세요" 안내. ③ **고정 세트 슬롯
 폐지** — 무엇을 푸는지는 사용자가 학습 폴더에 넣은 문제·정답 파일로 정해진다
 (첫 응시는 이름순, 그다음은 70점 미만 → 현재 목표 미달 → 보유 세트 순환 재응시).
-세트가 하나도 없으면 넣는 방법을 안내한다. ④ 첫 실행 때 자동 업데이트 고지를
-한 번 띄운다(동의를 묻지 않는 안내 — 저장소 주소와 끄는 방법 표시).
+세트가 하나도 없으면 넣는 방법을 안내한다.
+v3.1.0: 배포 설치 후 나온 요청 반영. ① **자동 업데이트를 첫 실행 때 묻는다** —
+동의/거절 두 갈래이고, 거절하면 `_설정.자동업데이트=false` 로 끈다(프로그램은
+그대로 돌고 [업데이트 확인]은 계속 쓸 수 있다). 창을 닫으면 거절로 본다.
+② **스캔 폴더를 화면에서 바꾼다**(`_설정.스캔폴더`) — 설치 폴더 위쪽을 통째로
+훑어 원치 않는 세트가 잡히던 문제. ③ **세트 숨기기**(`_설정.숨긴세트`) — 목록·
+일정·점수대 보드에서 빼되 파일도 기록도 지우지 않는다. ④ **시험일을 목록으로**
+다루어 추가·제거한다(0개면 자유 연습, 여러 개면 가장 가까운 미래 시험일 기준).
+⑤ 루틴 웹으로 가는 길을 시작 화면에서 분명히 하고, 서버가 안 떴으면 이유와
+대안을 알린다.
 
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "3.0.0"
+__version__ = "3.1.0"
 
 import argparse
 import hashlib
@@ -254,6 +262,13 @@ def find_grade_py(user_path=None):
 
 SET_CONFIG_PATH = os.path.join(BASE_DIR, "세트설정.json")
 EXPECTED_DIR_NAME = "기대값"      # 자동 배포되는 세트별 기대값 JSON 폴더
+
+# 세트 스캔 범위·숨김 (v3.1.0) — 세트설정.json `_설정`
+#   스캔폴더: 세트를 찾을 폴더. 없으면 default_scan_root()(= 시험장.py 상위 폴더).
+#   숨긴세트: 목록·일정·점수대 보드에서 뺄 세트의 정규화 키 목록. 파일도 기록도
+#            지우지 않고 화면에서만 뺀다 — 다시 보이게 하면 그대로 돌아온다.
+SCAN_ROOT_SETTING = "스캔폴더"
+HIDDEN_SETS_SETTING = "숨긴세트"
 
 # 루틴 웹 연동 서버 (v2.4.0, 규약: 문서/연동_API.md v2.4.1)
 ROUTINE_API_VERSION = "3.0.0"          # /api/state 의 version (규약 버전)
@@ -1297,6 +1312,118 @@ def set_app_setting(name, value, path=None):
     return save_set_config(cfg, p)
 
 
+# --- 세트 스캔 폴더 (v3.1.0) ----------------------------------------------
+
+
+def configured_scan_root(path=None, cfg=None):
+    """설정에 저장된 스캔 폴더. 없거나 폴더가 아니면 기본값(상위 폴더)."""
+    if cfg is not None:
+        v = _cfg_section(cfg, "_설정").get(SCAN_ROOT_SETTING)
+    else:
+        v = get_app_setting(SCAN_ROOT_SETTING, None, path=path)
+    if isinstance(v, str) and v.strip() and os.path.isdir(v):
+        return os.path.abspath(v)
+    return default_scan_root()
+
+
+def save_scan_root(folder, path=None):
+    """스캔 폴더 저장. None/빈 값이면 기본값으로 되돌린다. 반환: 적용된 경로."""
+    if folder is None or not str(folder).strip():
+        set_app_setting(SCAN_ROOT_SETTING, None, path=path)
+        return default_scan_root()
+    set_app_setting(SCAN_ROOT_SETTING, os.path.abspath(str(folder)), path=path)
+    return configured_scan_root(path=path)
+
+
+def scan_root_is_default(path=None, cfg=None):
+    """지금 스캔 폴더가 기본값(시험장.py 상위 폴더)인가."""
+    return os.path.abspath(configured_scan_root(path, cfg)) == \
+        os.path.abspath(default_scan_root())
+
+
+# --- 세트 개별 숨기기 (v3.1.0) --------------------------------------------
+
+
+def hidden_set_keys(cfg=None, path=None):
+    """숨긴 세트의 정규화 키 목록 (오름차순, 중복 제거)."""
+    sec = _cfg_section(cfg, "_설정") if cfg is not None \
+        else _cfg_section(load_set_config(path or SET_CONFIG_PATH), "_설정")
+    raw = sec.get(HIDDEN_SETS_SETTING)
+    out = []
+    for x in raw if isinstance(raw, (list, tuple)) else []:
+        k = str(x or "").strip()
+        if not k:
+            continue
+        k = norm_set_key(k) or k
+        if k not in out:
+            out.append(k)
+    return sorted(out)
+
+
+def set_hidden_keys(s):
+    """세트를 가리키는 정규화 키들 (대표 + 병합된 중복 세트)."""
+    keys = []
+    cands = [(s or {}).get("norm")] + [d.get("norm")
+                                       for d in ((s or {}).get("중복") or [])]
+    for k in cands:
+        k = str(k or "").strip()
+        k = (norm_set_key(k) or k) if k else ""
+        if k and k not in keys:
+            keys.append(k)
+    if not keys and (s or {}).get("problem"):
+        keys.append(norm_set_key(s["problem"]))
+    return keys
+
+
+def is_hidden_set(s, hidden=None, cfg=None, path=None):
+    """이 세트가 숨김 목록에 있는가."""
+    if hidden is None:
+        hidden = hidden_set_keys(cfg=cfg, path=path)
+    return bool(set(hidden or []) & set(set_hidden_keys(s)))
+
+
+def split_hidden_sets(sets, hidden=None, cfg=None, path=None):
+    """(보이는 세트, 숨긴 세트) 로 나눈다.
+
+    숨김은 **화면에서만** 빼는 것이라 파일도 기록도 지우지 않습니다 — 다시
+    보이게 하면 점수·기록이 그대로 돌아옵니다."""
+    if hidden is None:
+        hidden = hidden_set_keys(cfg=cfg, path=path)
+    hide = set(hidden or [])
+    shown, gone = [], []
+    for s in sets or []:
+        if hide & set(set_hidden_keys(s)):
+            s["숨김"] = True
+            gone.append(s)
+        else:
+            s.pop("숨김", None)
+            shown.append(s)
+    return shown, gone
+
+
+def set_set_hidden(key, hidden=True, path=None):
+    """세트 숨기기/보이기 (정규화 키 기준). 반환: 저장된 숨김 키 목록."""
+    k = str(key or "").strip()
+    k = (norm_set_key(k) or k) if k else ""
+    cur = hidden_set_keys(path=path)
+    if not k:
+        return cur
+    if hidden and k not in cur:
+        cur = sorted(cur + [k])
+    elif not hidden and k in cur:
+        cur = [x for x in cur if x != k]
+    else:
+        return cur
+    set_app_setting(HIDDEN_SETS_SETTING, cur, path=path)
+    return cur
+
+
+def clear_hidden_sets(path=None):
+    """숨긴 세트 전부 다시 보이게."""
+    set_app_setting(HIDDEN_SETS_SETTING, [], path=path)
+    return []
+
+
 # --- Excel 신뢰 위치 등록 (매크로 차단 배너 해결) ---
 
 TRUST_MANUAL_GUIDE = (
@@ -1713,8 +1840,9 @@ def classify_grading_error(rc, text):
 #   무엇을 푸는지는 **사용자가 가진 세트**로 정한다 (고정 세트 슬롯 없음).
 # ---------------------------------------------------------------------------
 
-EXAM_DATE_SETTING = "시험일"        # 세트설정.json `_설정` — 시험일 (YYYY-MM-DD)
-EXAM_DATE2_SETTING = "시험일2"      # 〃 2차 시험일 (선택, 없으면 null)
+EXAM_DATES_SETTING = "시험일목록"    # 세트설정.json `_설정` — 시험일 목록 (v3.1.0)
+EXAM_DATE_SETTING = "시험일"        # 〃 1번째 시험일 (구버전 호환 미러)
+EXAM_DATE2_SETTING = "시험일2"      # 〃 2번째 시험일 (구버전 호환 미러)
 ROUTINE_DAYS = 7                   # 커리큘럼 길이: D-7 ~ D-1
 
 GOAL_TIERS = [70, 80, 90, 100]   # 목표 사다리 (70=합격선, 그 위는 승급 목표)
@@ -1740,18 +1868,34 @@ def parse_iso_date(value):
 _EXAM_CACHE = {"path": None, "mtime": None, "value": []}
 
 
-def _exam_dates_from_cfg(cfg):
+def _norm_date_list(values):
+    """날짜 후보 목록 -> 오름차순 유일 date 목록 (깨진 값은 버림)."""
     out = []
-    sec = _cfg_section(cfg, "_설정")
-    for key in (EXAM_DATE_SETTING, EXAM_DATE2_SETTING):
-        d = parse_iso_date(sec.get(key))
+    for x in values or []:
+        d = parse_iso_date(x)
         if d and d not in out:
             out.append(d)
     return sorted(out)
 
 
+def _exam_dates_from_cfg(cfg):
+    """설정 -> 시험일 목록. `_설정.시험일목록`(v3.1.0)이 있으면 그것이 기준이고,
+    없으면 옛 `시험일`·`시험일2` 를 읽어 옮긴다(마이그레이션)."""
+    sec = _cfg_section(cfg, "_설정")
+    raw = sec.get(EXAM_DATES_SETTING)
+    if isinstance(raw, (list, tuple)):
+        return _norm_date_list(raw)
+    if isinstance(raw, str):                 # 한 개만 문자열로 저장된 경우
+        return _norm_date_list([raw])
+    return _norm_date_list([sec.get(EXAM_DATE_SETTING),
+                            sec.get(EXAM_DATE2_SETTING)])
+
+
 def exam_dates(cfg=None, path=None):
-    """설정에 저장된 시험일 목록 (1~2개, 오름차순). 미설정이면 []."""
+    """설정에 저장된 시험일 **전체** 목록 (0개 이상, 오름차순).
+
+    지난 시험일도 그대로 들어 있습니다 — 일정 기준이 되는 목록은
+    effective_exams() 가 따로 계산합니다."""
     if cfg is not None:
         return _exam_dates_from_cfg(cfg)
     p = path or SET_CONFIG_PATH
@@ -1767,56 +1911,103 @@ def exam_dates(cfg=None, path=None):
 
 
 def _exams(exam=None):
-    """엔진 내부: 인자로 받은 시험일(또는 설정값)을 정규화한 목록."""
+    """엔진 내부: 인자로 받은 시험일(또는 설정값)을 정규화한 **전체** 목록."""
     if exam is None:
         return exam_dates()
     if isinstance(exam, date):
         exam = [exam]
-    out = []
-    for x in exam or []:
-        d = parse_iso_date(x)
-        if d and d not in out:
-            out.append(d)
-    return sorted(out)
+    return _norm_date_list(exam)
+
+
+def effective_exams(exam=None, today=None):
+    """**일정 기준**이 되는 시험일 목록 (v3.1.0).
+
+    시험일은 여러 개를 넣을 수 있고, 일정(D-7 ~ D-1)은 언제나 **가장 가까운
+    미래 시험일**을 기준으로 잡는다. 지난 시험일은 목록에 남지만 기준에서는
+    빠진다. 전부 지났으면 전체 목록을 그대로 돌려준다("시험 이후" 안내를
+    위해). 0개면 [].
+    """
+    ex = _exams(exam)
+    if not ex:
+        return []
+    today = today or date.today()
+    return [d for d in ex if d >= today] or ex
+
+
+def save_exam_date_list(dates, path=None):
+    """시험일 목록 저장 (0개 허용). 저장된 목록(date 오름차순) 반환.
+
+    `_설정.시험일목록` 에 쓰고, 구버전이 읽는 `시험일`·`시험일2` 에도 앞의 두
+    개를 미러로 남긴다(3.0.x 로 되돌아가도 깨지지 않게)."""
+    p = path or SET_CONFIG_PATH
+    cfg = load_set_config(p)
+    out = _norm_date_list(dates)
+    sec = cfg.setdefault("_설정", {})
+    sec[EXAM_DATES_SETTING] = [d.isoformat() for d in out]
+    sec[EXAM_DATE_SETTING] = out[0].isoformat() if out else None
+    sec[EXAM_DATE2_SETTING] = out[1].isoformat() if len(out) > 1 else None
+    save_set_config(cfg, p)
+    _EXAM_CACHE.update(path=None, mtime=None, value=[])
+    return out
 
 
 def save_exam_dates(first, second=None, path=None):
-    """시험일 저장 (first 가 None 이면 미설정으로 지움). 저장된 목록 반환."""
-    p = path or SET_CONFIG_PATH
-    cfg = load_set_config(p)
+    """(구 API) 시험일 1~2개 저장 — 목록을 통째로 바꾼다.
+
+    first 가 None 이면 전부 지웁니다. 새 코드는 save_exam_date_list 를 쓰세요."""
     d1, d2 = parse_iso_date(first), parse_iso_date(second)
     if d1 is None:
         d1, d2 = None, None
     if d2 is not None and d1 is not None and d2 <= d1:
         d2 = None
-    sec = cfg.setdefault("_설정", {})
-    sec[EXAM_DATE_SETTING] = d1.isoformat() if d1 else None
-    sec[EXAM_DATE2_SETTING] = d2.isoformat() if d2 else None
-    save_set_config(cfg, p)
-    _EXAM_CACHE.update(path=None, mtime=None, value=[])
-    return [d for d in (d1, d2) if d]
+    return save_exam_date_list([d for d in (d1, d2) if d], path)
+
+
+def add_exam_date(value, path=None):
+    """시험일 하나 추가 (이미 있으면 그대로). (저장된 목록, 추가됨) 반환."""
+    d = parse_iso_date(value)
+    if d is None:
+        return exam_dates(path=path), False
+    cur = exam_dates(path=path)
+    if d in cur:
+        return cur, False
+    return save_exam_date_list(cur + [d], path), True
+
+
+def remove_exam_date(value, path=None):
+    """시험일 하나 제거. (저장된 목록, 지워짐) 반환."""
+    d = parse_iso_date(value)
+    cur = exam_dates(path=path)
+    if d is None or d not in cur:
+        return cur, False
+    return save_exam_date_list([x for x in cur if x != d], path), True
+
+
+def clear_exam_dates(path=None):
+    """시험일 전체 비우기 (0개 = 자유 연습 모드)."""
+    return save_exam_date_list([], path)
 
 
 def exam_date_set(exam=None):
-    """시험일이 설정돼 있으면 True."""
+    """시험일이 하나라도 설정돼 있으면 True."""
     return bool(_exams(exam))
 
 
-def routine_start(exam=None):
+def routine_start(exam=None, today=None):
     """Day 1(= D-7) 날짜. 시험일 미설정이면 None."""
-    ex = _exams(exam)
+    ex = effective_exams(exam, today)
     return ex[0] - timedelta(days=ROUTINE_DAYS) if ex else None
 
 
-def routine_tag(exam=None):
-    """기록.json 루틴 세대 표시 — 시험일마다 다른 값 (미설정이면 빈 문자열)."""
-    ex = _exams(exam)
+def routine_tag(exam=None, today=None):
+    """기록.json 루틴 세대 표시 — 기준 시험일마다 다른 값 (미설정이면 '')."""
+    ex = effective_exams(exam, today)
     return ex[0].isoformat() if ex else ""
 
 
-def progress_ns(exam=None):
-    """세트설정.json '_진행' 키 접두 — 시험일이 바뀌면 진행도 분리된다."""
-    ex = _exams(exam)
+def progress_ns(exam=None, today=None):
+    """세트설정.json '_진행' 키 접두 — 기준 시험일이 바뀌면 진행도 분리."""
+    ex = effective_exams(exam, today)
     return "r" + (ex[0].strftime("%Y%m%d") if ex else "0")
 
 
@@ -1837,9 +2028,9 @@ ROUTINE_PLAN = {
                         "30분 전 도착. 저장은 Ctrl+S 수시로, 계산작업은 한 "
                         "문제 3분 넘기면 다음으로 넘어가세요. 화이팅!"},
     PLAN_EXAM2: {"제목": "2차 시험일", "종류": "안내",
-                 "할일": "오늘이 2차 시험일입니다. 아침에 실수 노트와 어제의 "
-                        "복기 메모만 한 번 훑고 출발하세요. 그 항목만 지키면 "
-                        "됩니다 — 화이팅!"},
+                 "할일": "앞선 시험에 이어 오늘도 시험일입니다. 아침에 실수 "
+                        "노트와 지난 시험 복기 메모만 한 번 훑고 출발하세요. "
+                        "그 항목만 지키면 됩니다 — 화이팅!"},
     PLAN_AFTER: {"제목": "루틴 완주", "종류": "안내",
                  "할일": "일주일 루틴과 시험을 완주했습니다. 수고 많았습니다! "
                         "결과와 관계없이 쌓은 실력은 남습니다. 다음 시험을 "
@@ -1887,9 +2078,12 @@ def set_intake_help(root=None):
         "[세트 인식 진단]에 이유가 나옵니다.")
 
 
-def routine_date_for(no, exam=None):
-    """일정 번호 -> 날짜. Day N = 시험일 - (ROUTINE_DAYS + 1 - N)일."""
-    ex = _exams(exam)
+def routine_date_for(no, exam=None, today=None):
+    """일정 번호 -> 날짜. Day N = 기준 시험일 - (ROUTINE_DAYS + 1 - N)일.
+
+    기준 시험일 = 가장 가까운 미래 시험일(effective_exams). PLAN_EXAM2 는 그
+    다음 시험일(없으면 None)."""
+    ex = effective_exams(exam, today)
     if not ex:
         return None
     no = int(no)
@@ -1904,19 +2098,20 @@ def routine_date_for(no, exam=None):
 
 def routine_day_no(today=None, exam=None):
     """날짜 -> 일정 번호. 0=D-7 이전(자유 연습·미설정), 1~7=Day, 8=시험,
-    9=2차 시험, 10=시험 이후."""
+    9=다음 시험, 10=마지막 시험 이후."""
     today = today or date.today()
-    ex = _exams(exam)
-    if not ex:
+    all_ex = _exams(exam)
+    if not all_ex:
         return 0
+    if today in all_ex:      # 시험 당일 — 목록 순번대로 8(첫) / 9(그 다음)
+        return PLAN_EXAM1 if all_ex.index(today) == 0 else PLAN_EXAM2
+    ex = effective_exams(all_ex, today)
     if today > max(ex):
         return PLAN_AFTER
     for no in PLAN_ORDER:
-        d = routine_date_for(no, ex)
+        d = routine_date_for(no, ex, today)
         if d is not None and d == today:
             return no
-    if today > ex[0]:            # 1차와 2차 사이
-        return PLAN_AFTER
     return 0
 
 
@@ -1926,11 +2121,13 @@ def plan_day_tag(no):
 
 
 def dday_num(today=None, exam=None):
-    """시험까지 남은 날 수 (오늘이 시험일이면 0, 지났으면 음수). 미설정 None."""
-    ex = _exams(exam)
+    """다음 시험까지 남은 날 수 (오늘이 시험일이면 0, 전부 지났으면 음수).
+    시험일이 하나도 없으면 None."""
+    today = today or date.today()
+    ex = effective_exams(exam, today)
     if not ex:
         return None
-    return (ex[0] - (today or date.today())).days
+    return (ex[0] - today).days
 
 
 def dday_label(n):
@@ -1941,9 +2138,11 @@ def dday_label(n):
 
 
 def dday_text(today=None, exam=None):
-    """D-day 문구: '시험 D-6' (2차가 있으면 '시험 D-6 · 2차 D-7')."""
+    """D-day 문구: '시험 D-6' (다음 시험일이 또 있으면 '시험 D-6 · 2차 D-3').
+
+    기준은 가장 가까운 미래 시험일이고, 지난 시험일은 문구에 넣지 않는다."""
     today = today or date.today()
-    ex = _exams(exam)
+    ex = effective_exams(exam, today)
     if not ex:
         return "시험일 미설정"
     parts = [f"시험 {dday_label((ex[0] - today).days)}"]
@@ -2816,15 +3015,44 @@ def set_from_mapping(ent):
         return None
 
 
-def scan_diagnosis_text(root, config=None, specs=None, sets=None):
-    """[세트 인식 진단] 텍스트: 파일 → 키 → 역할 → 세트 → 슬롯 매칭 결과."""
-    lines = [f"[코코 시험장 세트 인식 진단] {__version__} · "
-             f"{datetime.now().strftime('%Y-%m-%d %H:%M')}",
-             f"스캔 루트: {root}", ""]
+def scan_diagnosis_text(root, config=None, specs=None, sets=None,
+                        hidden_sets=None):
+    """[세트 인식 진단] 텍스트: 파일 → 키 → 역할 → 세트 → 슬롯 매칭 결과.
+
+    맨 위에 지금 쓰는 **스캔 폴더**(기본값인지 직접 지정한 것인지)와 **숨긴
+    세트**를 적어, 세트가 왜 보이거나 안 보이는지 한 화면에서 알 수 있게 한다.
+    """
     if config is None:
         config = load_set_config()
+    hide_keys = hidden_set_keys(cfg=config)
+    default_root = default_scan_root()
+    is_default = os.path.abspath(str(root or "")) == os.path.abspath(default_root)
+    lines = [f"[코코 시험장 세트 인식 진단] {__version__} · "
+             f"{datetime.now().strftime('%Y-%m-%d %H:%M')}",
+             f"스캔 폴더: {root}"
+             + ("  (기본값 = 시험장.py 상위 폴더)" if is_default
+                else f"  (직접 지정 · 기본값: {default_root})"),
+             "  · 이 폴더와 하위 폴더에서만 세트를 찾습니다 — "
+             "[설정]에서 바꾸거나 기본값으로 되돌릴 수 있습니다."]
     if sets is None:
         sets = scan_sets(root, config) if root and os.path.isdir(root) else []
+        sets, auto_hidden = split_hidden_sets(sets, hide_keys)
+        if hidden_sets is None:
+            hidden_sets = auto_hidden
+    hidden_sets = list(hidden_sets or [])
+    if hide_keys:
+        names = {}
+        for s in hidden_sets:
+            for k in set_hidden_keys(s):
+                names[k] = s.get("name") or k
+        lines.append(f"숨긴 세트 {len(hide_keys)}개 (목록·일정·점수대 보드에서 "
+                     "빠짐 · 파일과 기록은 그대로): "
+                     + ", ".join(f"{names.get(k, '(폴더에 없음)')} [{k}]"
+                                 for k in hide_keys))
+        lines.append("  · [설정] → 세트 숨기기 에서 다시 보이게 할 수 있습니다.")
+    else:
+        lines.append("숨긴 세트: 없음")
+    lines.append("")
     owner = {}
     tie_files = {}          # 동점으로 연결 못 한 파일명 -> 사유
     for s in sets:
@@ -3170,21 +3398,22 @@ def retry_payload_for_set(s, minutes=15, json_path=None):
 # ---------------------------------------------------------------------------
 
 
-def study_segments(exam=None):
+def study_segments(exam=None, today=None):
     """시험일 -> 학습 구간 [{seg, seg_start, end, exam}] (D-7 ~ D-1 한 구간).
 
-    시험일 미설정이면 빈 목록. 2차 시험일이 있어도 커리큘럼은 1차 기준 하나다
-    (1차와 2차 사이는 학습 구간이 아니라 '2차 대비' 구간)."""
-    ex = _exams(exam)
+    기준은 **가장 가까운 미래 시험일** 하나다(effective_exams). 시험일이
+    여러 개여도 구간은 언제나 하나고, 앞 시험일이 지나면 다음 시험일 기준으로
+    옮겨 간다. 시험일이 하나도 없으면 빈 목록."""
+    ex = effective_exams(exam, today)
     if not ex:
         return []
     return [{"seg": 1, "seg_start": ex[0] - timedelta(days=ROUTINE_DAYS),
              "end": ex[0] - timedelta(days=1), "exam": ex[0]}]
 
 
-def next_segment_after(seg_no, exam=None):
+def next_segment_after(seg_no, exam=None, today=None):
     """seg_no 다음 학습 구간 (없으면 None) — 미리보기(preview)용."""
-    return next((sg for sg in study_segments(exam)
+    return next((sg for sg in study_segments(exam, today)
                  if sg["seg"] == seg_no + 1), None)
 
 
@@ -3192,18 +3421,19 @@ def segment_for(today, exam=None):
     """오늘 -> 구간 정보.
 
     kind: unset(시험일 미설정) / free(D-7 이전 자유 연습) / week(D-7~D-1) /
-          exam(시험 당일) / between(1차와 2차 사이) / after(시험 이후).
+          exam(시험 당일) / after(마지막 시험일 이후).
+    `exam_no` 는 **전체 시험일 목록** 기준 순번이라 2번째 시험 당일이면 2다.
+    (3.1.0: 지난 시험일은 기준에서 빠지므로 옛 `between` 구간은 더 이상 나오지
+    않는다 — 앞 시험이 끝나면 곧바로 다음 시험일 기준 free/week 가 된다.)
     """
-    ex = _exams(exam)
-    if not ex:
+    all_ex = _exams(exam)
+    if not all_ex:
         return {"kind": "unset"}
-    if today in ex:
-        return {"kind": "exam", "exam_no": ex.index(today) + 1}
-    if today > max(ex):
+    if today in all_ex:
+        return {"kind": "exam", "exam_no": all_ex.index(today) + 1}
+    if today > max(all_ex):
         return {"kind": "after"}
-    if today > ex[0]:                    # 1차와 2차 사이
-        return {"kind": "between", "exam_no": 2}
-    sg = study_segments(ex)[0]
+    sg = study_segments(all_ex, today)[0]
     if today < sg["seg_start"]:
         return {"kind": "free", "seg_start": sg["seg_start"], "end": sg["end"]}
     return {"kind": "week", "seg": sg["seg"], "seg_start": sg["seg_start"],
@@ -3937,10 +4167,14 @@ def auto_update_enabled(path=None):
     return bool(get_app_setting(AUTO_UPDATE_SETTING, True, path=path))
 
 
-# --- 첫 실행 고지 (자동 업데이트) ------------------------------------------
-# 이 프로그램은 묻지 않고 자동으로 최신 코드를 받아 적용한다. 남의 PC에 설치
-# 되므로 그 사실을 **첫 실행 때 한 번** 알린다. 동의를 묻는 형태가 아니라
-# 확인 버튼 하나짜리 안내다(끄는 방법도 함께 안내).
+# --- 첫 실행 자동 업데이트 동의 (v3.1.0) -----------------------------------
+# 남의 PC에 설치되는 프로그램이 묻지 않고 코드를 갈아 끼우면 안 되므로,
+# **첫 실행 때 동의 / 거절을 묻는다**(확인 하나짜리 고지였던 3.0.0 에서 바뀜).
+#   · 동의 → 실행할 때마다 자동으로 받아 적용.
+#   · 거절 → `_설정.자동업데이트 = false`. 프로그램은 그대로 돌고 [업데이트
+#            확인]으로 직접 받을 수 있다.
+#   · 창을 닫거나 응답이 없으면 **거절**로 본다 (안전한 기본값).
+# 선택은 저장되고 시작 화면 [설정]에서 언제든 바꿀 수 있다.
 FIRST_RUN_NOTICE_SETTING = "자동업데이트고지"
 
 
@@ -3956,28 +4190,47 @@ UPDATE_REPO_URL = _repo_url()
 
 
 def first_run_notice_text(repo_url=UPDATE_REPO_URL):
-    """첫 실행 자동 업데이트 고지 문구 (동의를 묻지 않는 안내)."""
+    """첫 실행 자동 업데이트 **동의** 문구 ([동의] / [거절] 두 버튼)."""
     return (
         "이 프로그램은 실행할 때마다 아래 저장소에서 최신 코드와 자료를 "
-        "내려받아 자동으로 적용합니다 (묻지 않고 적용).\n\n"
+        "내려받아 적용할 수 있습니다. 자동 업데이트를 쓸지 지금 골라 "
+        "주세요.\n\n"
         f"저장소: {repo_url}\n\n"
-        "· 받은 파일은 sha256 검증과 문법 검사를 거쳐 백업 후 교체됩니다.\n"
+        "· [동의] — 실행할 때마다 새 버전을 자동으로 받아 적용합니다. 받은 "
+        "파일은 sha256 검증과 문법 검사를 거쳐 백업 후 교체됩니다.\n"
+        "· [거절] — 자동 업데이트를 끕니다. 프로그램은 그대로 쓸 수 있고, "
+        "필요할 때 [업데이트 확인]으로 직접 받으면 됩니다.\n"
+        "· 이 창을 그냥 닫으면 **거절**로 봅니다.\n"
         "· 인터넷이 없거나 서버가 응답하지 않으면 그냥 지금 버전으로 "
-        "실행됩니다.\n"
-        "· 끄려면: 시작 화면의 [설정] → '자동 업데이트' 체크 해제, 또는 "
-        f"세트설정.json 의 \"_설정\" 에 \"{AUTO_UPDATE_SETTING}\": false 를 "
-        "넣으세요.\n\n"
-        "이 안내는 처음 한 번만 표시됩니다.")
+        "실행됩니다.\n\n"
+        f"고른 값은 세트설정.json 의 \"_설정\" → \"{AUTO_UPDATE_SETTING}\" 에 "
+        "저장되고, 시작 화면 [설정]에서 언제든 바꿀 수 있습니다.")
 
 
 def first_run_notice_pending(path=None):
-    """첫 실행 고지를 아직 안 띄웠으면 True."""
+    """첫 실행 동의를 아직 안 물었으면 True."""
     return not bool(get_app_setting(FIRST_RUN_NOTICE_SETTING, False, path=path))
 
 
 def mark_first_run_notice(path=None):
-    """첫 실행 고지를 띄웠다고 표시 (다음 실행부터는 안 뜬다)."""
+    """첫 실행 동의를 물었다고 표시 (다음 실행부터는 안 뜬다)."""
     return set_app_setting(FIRST_RUN_NOTICE_SETTING, True, path=path)
+
+
+def apply_update_consent(agree, path=None):
+    """첫 실행 동의/거절을 설정에 반영. 반환: 실제로 저장된 값(bool).
+
+    거절(또는 창을 닫음·무응답)이면 `_설정.자동업데이트 = false` 로 자동
+    업데이트를 끈다. 프로그램은 그대로 돌고 [업데이트 확인]은 계속 쓸 수 있다.
+    """
+    agree = bool(agree)
+    set_app_setting(AUTO_UPDATE_SETTING, agree, path=path)
+    mark_first_run_notice(path=path)
+    return agree
+
+
+UPDATE_CONSENT_YES = "동의 — 자동으로 최신 버전 받기"
+UPDATE_CONSENT_NO = "거절 — 자동 업데이트 끄기"
 
 
 def _http_get(url, timeout):
@@ -5378,9 +5631,9 @@ def _iso(d):
     return d.isoformat() if isinstance(d, date) else None
 
 
-def _seg_end_for(d, exam=None):
+def _seg_end_for(d, exam=None, today=None):
     """날짜가 속한 학습 구간의 마감일 (D-1). 구간 밖이면 그 날짜."""
-    for sg in study_segments(exam):
+    for sg in study_segments(exam, today):
         if sg["seg_start"] <= d <= sg["end"]:
             return sg["end"]
     return d
@@ -5413,7 +5666,8 @@ def _day_title(d, today, kind, slots, promoted, deadline, recs_by_date,
                exam=None):
     if kind == "exam":
         ex = _exams(exam)
-        return "시험일" if (ex and d == ex[0]) else "2차 시험일"
+        i = ex.index(d) if d in ex else 0
+        return "시험일" if i == 0 else f"{i + 1}차 시험일"
     if kind == "next":
         return "일정 밖"
     if kind == "past":
@@ -5440,13 +5694,14 @@ def serialize_days(adaptive, today, recs_by_date, by_set, dates=None,
     rest(슬롯 없음). past·exam·next 의 slots 는 []. review_day 는 규약 호환용
     으로 남겨 두되 이 일정에서는 항상 false.
     """
-    ex = _exams(exam)
+    all_ex = _exams(exam)
+    ex = effective_exams(all_ex, today)          # 일정 기준 = 다음 시험일
     week = bool(adaptive) and adaptive.get("kind") in ("week", "free")
     end = adaptive.get("end") if week else None
     boost = set(adaptive.get("boost_days") or []) if week else set()
     days_map = (adaptive.get("days") or {}) if week else {}
     free_map = (adaptive.get("free") or {}) if week else {}
-    deadlines = {sg["end"] for sg in study_segments(ex)}
+    deadlines = {sg["end"] for sg in study_segments(ex, today)}
     if dates is None:
         if not ex:
             return []
@@ -5458,14 +5713,14 @@ def serialize_days(adaptive, today, recs_by_date, by_set, dates=None,
     out = []
     for d in dates:
         slots = []
-        if d in ex:
+        if d in all_ex:
             kind, capacity = "exam", 0
         elif week and d > end:
-            kind, capacity = "next", base_capacity(d, _seg_end_for(d, ex))
+            kind, capacity = "next", base_capacity(d, _seg_end_for(d, ex, today))
         elif d < today:
-            kind, capacity = "past", base_capacity(d, _seg_end_for(d, ex))
+            kind, capacity = "past", base_capacity(d, _seg_end_for(d, ex, today))
         elif not week:
-            kind, capacity = "next", base_capacity(d, _seg_end_for(d, ex))
+            kind, capacity = "next", base_capacity(d, _seg_end_for(d, ex, today))
         else:
             slots = [serialize_slot(sl, by_set) for sl in days_map.get(d, [])]
             kind = "mock" if slots else "rest"
@@ -5474,7 +5729,7 @@ def serialize_days(adaptive, today, recs_by_date, by_set, dates=None,
         out.append({
             "date": d.isoformat(), "no": routine_day_no(d, ex), "kind": kind,
             "title": _day_title(d, today, kind, slots, promoted, d in deadlines,
-                                recs_by_date, ex),
+                                recs_by_date, all_ex),
             "capacity": capacity, "promoted": promoted,
             "deadline": d in deadlines, "review_day": False,
             "free": int(free_map.get(d, 0)) if kind in ("mock", "rest") else 0,
@@ -5578,13 +5833,14 @@ def build_state(sets, records=None, cfg=None, today=None, exam_running=False,
                     "days": {}, "reason": "", "warning": f"일정 계산 오류: {e}",
                     "exam_dates": list(ex)}
     preview = None
-    nxt = next_segment_after(adaptive.get("seg") or 0, ex) \
+    nxt = next_segment_after(adaptive.get("seg") or 0, ex, today) \
         if adaptive.get("kind") in ("week", "free") else None
     if nxt:                                   # 다음 학습 구간이 있을 때만 (지금은 없음)
         try:
             preview = build_adaptive_plan(nxt["seg_start"], records, sets, ex)
         except Exception as e:
             log_error("루틴 연동 다음 구간 미리보기", e)
+    ex_act = effective_exams(ex, today)
     recs, review, index = serialize_records(records, sets, cfg)
     checks = {str(k): bool(v) for k, v in
               _cfg_section(cfg, WEB_CHECKS_KEY).items()}
@@ -5609,14 +5865,21 @@ def build_state(sets, records=None, cfg=None, today=None, exam_running=False,
         "review": review,
         "checks": checks,
         "exam": {"dates": [d.isoformat() for d in ex],
+                 "active": [d.isoformat() for d in ex_act],
+                 "past": [d.isoformat() for d in ex if d < today],
+                 "next": (ex_act[0].isoformat() if ex_act else None),
                  "set": bool(ex),
                  "dday": dday_num(today, ex),
                  "routine_days": ROUTINE_DAYS,
-                 "start": _iso(routine_start(ex))},
+                 "start": _iso(routine_start(ex, today))},
         "settings": {"auto_open_routine": bool(
             _cfg_section(cfg, "_설정").get(ROUTINE_AUTO_OPEN_SETTING, False)),
                      "auto_update": bool(_cfg_section(cfg, "_설정").get(
                          AUTO_UPDATE_SETTING, True)),
+                     "scan_root": str(_cfg_section(cfg, "_설정").get(
+                         SCAN_ROOT_SETTING) or ""),
+                     "hidden_sets": hidden_set_keys(cfg),
+                     "exam_dates": [d.isoformat() for d in ex],
                      "exam_date": (ex[0].isoformat() if ex else None),
                      "exam_date2": (ex[1].isoformat() if len(ex) > 1 else None)},
     }
@@ -6002,12 +6265,34 @@ class RoutineServer:
         return self._write(job)
 
     def api_exam_date(self, body):
-        """시험일 저장 (v3.0.0) — 웹에서도 프로그램과 똑같이 바꿀 수 있다.
+        """시험일 저장 — 웹에서도 프로그램과 똑같이 바꿀 수 있다.
 
-        {"date": "YYYY-MM-DD"|null, "date2": "YYYY-MM-DD"|null}.
-        date 가 null/빈 값이면 시험일을 지운다(미설정). date2 가 date 보다
-        앞서거나 같으면 400.
+        v3.1.0: {"dates": ["YYYY-MM-DD", ...]} 로 **목록 전체**를 바꾼다
+        (빈 목록이면 시험일 없음 = 자유 연습). 구 형식
+        {"date": ..., "date2": ...} 도 그대로 받는다(둘 중 하나만 보낼 것).
         """
+        if "dates" in body:
+            raw = body.get("dates")
+            if raw is None:
+                raw = []
+            if not isinstance(raw, (list, tuple)):
+                raise RoutineRequestError(400, "dates 는 배열이어야 합니다")
+            out = []
+            for x in raw:
+                d = parse_iso_date(x)
+                if d is None:
+                    raise RoutineRequestError(
+                        400, f"dates 형식 오류 (YYYY-MM-DD): {x}")
+                if d not in out:
+                    out.append(d)
+            out.sort()
+
+            def job_list():
+                save_exam_date_list(out, SET_CONFIG_PATH)
+                self._changed("exam_date",
+                              {"dates": [d.isoformat() for d in out]})
+
+            return self._write(job_list)
         raw1, raw2 = body.get("date"), body.get("date2")
         d1 = parse_iso_date(raw1) if raw1 else None
         d2 = parse_iso_date(raw2) if raw2 else None
@@ -6988,11 +7273,66 @@ if HAS_TK:
                 return False
 
 
-    class ExamDateDialog(tk.Toplevel):
-        """시험일 입력 — 첫 실행 때 한 번 뜨고, [시험일 설정]으로 언제든 다시.
+    class UpdateConsentDialog(tk.Toplevel):
+        """첫 실행 자동 업데이트 **동의 / 거절** 창 (v3.1.0).
 
-        날짜는 YYYY-MM-DD 로 입력하거나 [+1일]/[-1일]·[다음 주] 버튼으로
-        맞춘다(외부 달력 위젯 없이 표준 tkinter 만 쓴다). 2차 시험일은 선택.
+        창을 닫거나(✕·Esc) 응답이 없으면 거절로 본다 — 남의 PC 에서 묻지 않고
+        코드를 갈아 끼우지 않기 위한 안전한 기본값이다.
+        """
+
+        def __init__(self, app, text=None):
+            super().__init__(app)
+            self.app = app
+            self.agreed = False          # 닫으면 거절 (안전한 기본값)
+            self.answered = False
+            self.title(f"{APP_TITLE} - 자동 업데이트 동의")
+            self.configure(bg=BG)
+            self.resizable(False, False)
+            frm = tk.Frame(self, bg=BG, padx=18, pady=14)
+            frm.pack(fill="both", expand=True)
+            tk.Label(frm, text="자동 업데이트를 쓸까요?", bg=BG, fg=INK,
+                     font=("Malgun Gothic", 12, "bold")).pack(anchor="w")
+            tk.Label(frm, text=text or first_run_notice_text(), bg=BG, fg=INK,
+                     font=UI_FONT, justify="left", wraplength=520).pack(
+                anchor="w", pady=(8, 12))
+            bf = tk.Frame(frm, bg=BG)
+            bf.pack(fill="x")
+            self.yes_btn = tk.Button(
+                bf, text=UPDATE_CONSENT_YES, font=UI_FONT_BOLD, bg=BRAND,
+                fg="white", activebackground=BRAND_DARK, relief="flat",
+                padx=16, pady=5, command=self.accept)
+            self.yes_btn.pack(side="left")
+            self.no_btn = tk.Button(
+                bf, text=UPDATE_CONSENT_NO, font=UI_FONT, relief="groove",
+                padx=14, pady=4, command=self.decline)
+            self.no_btn.pack(side="right")
+            try:
+                self.protocol("WM_DELETE_WINDOW", self.decline)
+                self.bind("<Escape>", lambda e: self.decline())
+                self.transient(app)
+                self.grab_set()
+                self.yes_btn.focus_set()
+            except Exception:
+                pass
+
+        def accept(self):
+            self.agreed, self.answered = True, True
+            self.destroy()
+            return True
+
+        def decline(self):
+            self.agreed, self.answered = False, True
+            self.destroy()
+            return False
+
+
+    class ExamDateDialog(tk.Toplevel):
+        """시험일 목록 — 첫 실행 때 한 번 뜨고, [시험일 설정]으로 언제든 다시.
+
+        v3.1.0: 시험일을 **여러 개** 넣고 개별로 지울 수 있다(0개도 허용).
+        일정(D-7 ~ D-1)은 언제나 가장 가까운 미래 시험일 기준이고, 지난
+        시험일은 목록에 남지만 기준에서 빠진다. 날짜는 YYYY-MM-DD 로 넣거나
+        [-1일]/[+1일]/[+7일] 버튼으로 맞춘다(표준 tkinter 만 쓴다).
         """
 
         def __init__(self, app, on_save=None, first_run=False):
@@ -7000,50 +7340,70 @@ if HAS_TK:
             self.app = app
             self.on_save = on_save
             self.saved = None
+            self.first_run = first_run
             self.title(f"{APP_TITLE} - 시험일 설정")
             self.configure(bg=BG)
             self.resizable(False, False)
-            cur = exam_dates()
+            self.dates = list(exam_dates())        # 화면에서 편집 중인 목록
             frm = tk.Frame(self, bg=BG, padx=16, pady=12)
             frm.pack(fill="both", expand=True)
-            head = ("시험 날짜를 입력하세요. 그 날 기준으로 "
+            head = ("시험 날짜를 넣으세요. 그 날 기준으로 "
                     f"D-{ROUTINE_DAYS} ~ D-1 일주일 일정이 만들어집니다."
                     if first_run else
-                    "시험 날짜를 바꾸면 일정이 그 날 기준으로 다시 계산됩니다.")
+                    "시험일을 바꾸면 일정이 다시 계산됩니다.")
             tk.Label(frm, text=head, bg=BG, fg=INK, font=UI_FONT_BOLD,
-                     wraplength=430, justify="left").pack(anchor="w")
-            tk.Label(frm, text="(7일이 안 남았으면 남은 날짜에 맞춰 뒤에서부터 "
-                               "배정하고, 더 많이 남았으면 D-7 전은 자유 "
-                               "연습입니다.)",
+                     wraplength=460, justify="left").pack(anchor="w")
+            tk.Label(frm, text="여러 개를 넣을 수 있고 하나씩 지울 수도 "
+                               "있습니다. 일정은 언제나 **가장 가까운 미래 "
+                               "시험일** 기준이고, 지난 시험일은 목록에 남되 "
+                               "기준에서 빠집니다. 시험일이 하나도 없으면 "
+                               "일정 대신 자유 연습 모드로 돕니다.",
                      bg=BG, fg=SUB, font=("Malgun Gothic", 9),
-                     wraplength=430, justify="left").pack(anchor="w",
+                     wraplength=460, justify="left").pack(anchor="w",
                                                           pady=(2, 8))
-            self.vars = []
-            for i, (label, note) in enumerate((
-                    ("시험일", "예: 2026-11-21"),
-                    ("2차 시험일 (선택)", "이틀 연속 응시 등 — 없으면 비워 두세요"))):
-                row = tk.Frame(frm, bg=BG)
-                row.pack(fill="x", pady=3)
-                tk.Label(row, text=label, bg=BG, fg=INK, font=UI_FONT,
-                         width=16, anchor="w").pack(side="left")
-                var = tk.StringVar(
-                    value=cur[i].isoformat() if len(cur) > i else "")
-                ent = tk.Entry(row, textvariable=var, font=UI_FONT, width=14)
-                ent.pack(side="left")
-                tk.Button(row, text="-1일", font=UI_FONT, relief="groove",
-                          padx=6, command=lambda v=var: self._shift(v, -1)
-                          ).pack(side="left", padx=(6, 0))
-                tk.Button(row, text="+1일", font=UI_FONT, relief="groove",
-                          padx=6, command=lambda v=var: self._shift(v, 1)
-                          ).pack(side="left", padx=(4, 0))
-                tk.Button(row, text="+7일", font=UI_FONT, relief="groove",
-                          padx=6, command=lambda v=var: self._shift(v, 7)
-                          ).pack(side="left", padx=(4, 0))
-                tk.Label(row, text=note, bg=BG, fg=SUB,
-                         font=("Malgun Gothic", 9)).pack(side="left", padx=6)
-                self.vars.append(var)
+            row = tk.Frame(frm, bg=BG)
+            row.pack(fill="x", pady=3)
+            tk.Label(row, text="추가할 날짜", bg=BG, fg=INK, font=UI_FONT,
+                     width=11, anchor="w").pack(side="left")
+            self.var = tk.StringVar(value=(self.dates[0].isoformat()
+                                           if self.dates else
+                                           date.today().isoformat()))
+            ent = tk.Entry(row, textvariable=self.var, font=UI_FONT, width=13)
+            ent.pack(side="left")
+            for label, days in (("-1일", -1), ("+1일", 1), ("+7일", 7)):
+                tk.Button(row, text=label, font=UI_FONT, relief="groove",
+                          padx=6, command=lambda d=days: self._shift(d)
+                          ).pack(side="left", padx=(5, 0))
+            self.add_btn = tk.Button(
+                row, text="추가", font=UI_FONT_BOLD, bg=BRAND, fg="white",
+                activebackground=BRAND_DARK, relief="flat", padx=14, pady=2,
+                command=self.add)
+            self.add_btn.pack(side="left", padx=(8, 0))
+            tk.Label(frm, text="예: 2026-11-21", bg=BG, fg=SUB,
+                     font=("Malgun Gothic", 9)).pack(anchor="w", pady=(2, 6))
+            tk.Label(frm, text="넣은 시험일", bg=BG, fg=INK,
+                     font=UI_FONT_BOLD).pack(anchor="w")
+            lf = tk.Frame(frm, bg=CARD, highlightbackground=LINE,
+                          highlightthickness=1)
+            lf.pack(fill="both", expand=True, pady=(3, 6))
+            self.listbox = tk.Listbox(lf, font=UI_FONT, height=6, bd=0,
+                                      highlightthickness=0, bg=CARD, fg=INK,
+                                      selectbackground=BRAND_SOFT,
+                                      selectforeground=BRAND_DARK,
+                                      activestyle="none", exportselection=False)
+            self.listbox.pack(fill="both", expand=True, padx=6, pady=5)
+            bf2 = tk.Frame(frm, bg=BG)
+            bf2.pack(fill="x")
+            self.del_btn = tk.Button(bf2, text="선택 삭제", font=UI_FONT,
+                                     relief="groove", padx=12, pady=3,
+                                     command=self.remove_selected)
+            self.del_btn.pack(side="left")
+            self.clear_btn = tk.Button(bf2, text="전체 비우기", font=UI_FONT,
+                                       relief="groove", padx=12, pady=3,
+                                       command=self.clear_all)
+            self.clear_btn.pack(side="left", padx=6)
             self.msg = tk.Label(frm, text="", bg=BG, fg=RED,
-                                font=("Malgun Gothic", 9), wraplength=430,
+                                font=("Malgun Gothic", 9), wraplength=460,
                                 justify="left")
             self.msg.pack(anchor="w", pady=(6, 0))
             bf = tk.Frame(frm, bg=BG)
@@ -7056,41 +7416,94 @@ if HAS_TK:
             tk.Button(bf, text="나중에" if first_run else "취소", font=UI_FONT,
                       relief="groove", padx=12, pady=3,
                       command=self.destroy).pack(side="right")
+            self._render()
             try:
                 self.transient(app)
                 self.grab_set()
             except Exception:
                 pass
 
-        def _shift(self, var, days):
-            base = parse_iso_date(var.get()) or date.today()
-            var.set((base + timedelta(days=days)).isoformat())
+        # --- 목록 편집 (순수 로직은 add_exam_date/remove_exam_date 와 같은 규칙) ---
+
+        def _shift(self, days):
+            base = parse_iso_date(self.var.get()) or date.today()
+            self.var.set((base + timedelta(days=days)).isoformat())
+
+        def _render(self):
+            self.dates = _norm_date_list(self.dates)
+            self.listbox.delete(0, "end")
+            today = date.today()
+            act = effective_exams(self.dates, today)
+            for d in self.dates:
+                if d < today:
+                    tag = "지남 (일정 기준에서 제외)"
+                elif act and d == act[0]:
+                    tag = f"기준 시험일 · {dday_label((d - today).days)}"
+                else:
+                    tag = dday_label((d - today).days)
+                self.listbox.insert("end",
+                                    f" {d.isoformat()} ({'월화수목금토일'[d.weekday()]})"
+                                    f"  —  {tag}")
+            if not self.dates:
+                self.listbox.insert("end", " (시험일 없음 — 자유 연습 모드)")
+            for b, st in ((self.del_btn, bool(self.dates)),
+                          (self.clear_btn, bool(self.dates))):
+                b.configure(state="normal" if st else "disabled")
 
         def values(self):
-            return [v.get().strip() for v in self.vars]
+            """저장될 시험일 목록 (ISO 문자열)."""
+            return [d.isoformat() for d in _norm_date_list(self.dates)]
+
+        def add(self, value=None):
+            txt = str(value if value is not None else self.var.get()).strip()
+            if not txt:
+                self.msg.configure(text="추가할 날짜를 입력하세요 (YYYY-MM-DD).")
+                return False
+            d = parse_iso_date(txt)
+            if d is None:
+                self.msg.configure(text=f"날짜 형식이 올바르지 않습니다: {txt}")
+                return False
+            if d in self.dates:
+                self.msg.configure(text=f"이미 들어 있는 시험일입니다: "
+                                        f"{d.isoformat()}")
+                return False
+            self.dates.append(d)
+            self.msg.configure(text="")
+            self._render()
+            return True
+
+        def remove(self, value):
+            d = parse_iso_date(value)
+            if d is None or d not in self.dates:
+                return False
+            self.dates = [x for x in self.dates if x != d]
+            self.msg.configure(text="")
+            self._render()
+            return True
+
+        def remove_selected(self):
+            sel = self.listbox.curselection()
+            if not sel or sel[0] >= len(self.dates):
+                self.msg.configure(text="목록에서 지울 시험일을 먼저 고르세요.")
+                return False
+            return self.remove(self.dates[sel[0]])
+
+        def clear_all(self):
+            self.dates = []
+            self.msg.configure(text="")
+            self._render()
+            return True
 
         def validate(self):
-            """(시험일, 2차, 오류문구) — 오류가 없으면 오류문구는 ''."""
-            t1, t2 = self.values()
-            d1 = parse_iso_date(t1)
-            if not t1:
-                return None, None, "시험일을 입력하세요 (YYYY-MM-DD)."
-            if d1 is None:
-                return None, None, f"날짜 형식이 올바르지 않습니다: {t1}"
-            d2 = parse_iso_date(t2) if t2 else None
-            if t2 and d2 is None:
-                return d1, None, f"2차 시험일 형식이 올바르지 않습니다: {t2}"
-            if d2 is not None and d2 <= d1:
-                return d1, None, "2차 시험일은 시험일보다 뒤여야 합니다."
-            return d1, d2, ""
+            """(목록, 오류문구) — 시험일 0개도 정상(자유 연습)."""
+            return _norm_date_list(self.dates), ""
 
         def save(self):
-            d1, d2, err = self.validate()
+            dates, err = self.validate()
             if err:
                 self.msg.configure(text=err)
                 return False
-            self.saved = save_exam_dates(d1, d2)
-            mark_first_run_notice()      # 첫 실행 흐름을 여기까지 왔으면 표시
+            self.saved = save_exam_date_list(dates)
             if callable(self.on_save):
                 try:
                     self.on_save(self.saved)
@@ -7098,6 +7511,232 @@ if HAS_TK:
                     log_error("시험일 저장 후 갱신", e)
             self.destroy()
             return True
+
+
+    class SettingsDialog(tk.Toplevel):
+        """[설정] — 스캔 폴더 · 세트 숨기기 · 자동 업데이트 · 루틴 자동 열기.
+
+        v3.1.0에서 생겼다. 세트를 찾을 폴더를 GUI 에서 고르고(설정에 저장되어
+        다음 실행에도 유지), 인식된 세트를 개별로 숨길 수 있다. 숨김은 파일도
+        기록도 지우지 않고 목록·일정·점수대 보드에서만 뺀다.
+        """
+
+        def __init__(self, app):
+            super().__init__(app)
+            self.app = app
+            self.rows = []                # 목록 순서대로의 세트 dict
+            self.title(f"{APP_TITLE} - 설정")
+            self.configure(bg=BG)
+            self.geometry("640x600")
+            self.minsize(520, 460)
+            frm = tk.Frame(self, bg=BG, padx=16, pady=12)
+            frm.pack(fill="both", expand=True)
+
+            # --- 세트 스캔 폴더 ---
+            tk.Label(frm, text="세트 스캔 폴더", bg=BG, fg=INK,
+                     font=UI_FONT_BOLD).pack(anchor="w")
+            tk.Label(frm, text="이 폴더와 하위 폴더에서 '<이름>_문제.xlsx' + "
+                               "'<이름>_정답.xlsx' 짝을 찾습니다. 기본값은 "
+                               "시험장.py 가 있는 폴더의 상위 폴더라, 기존 "
+                               "공부 폴더 근처에 풀면 갖고 있던 세트가 함께 "
+                               "잡힙니다 — 원치 않으면 폴더를 좁히거나 세트를 "
+                               "개별로 숨기세요.",
+                     bg=BG, fg=SUB, font=("Malgun Gothic", 9), wraplength=580,
+                     justify="left").pack(anchor="w", pady=(2, 4))
+            self.root_lbl = tk.Label(frm, text="", bg=CARD, fg=INK,
+                                     font=("Consolas", 9), justify="left",
+                                     anchor="w", padx=8, pady=6,
+                                     wraplength=580,
+                                     highlightbackground=LINE,
+                                     highlightthickness=1)
+            self.root_lbl.pack(fill="x")
+            rf = tk.Frame(frm, bg=BG)
+            rf.pack(fill="x", pady=(4, 10))
+            tk.Button(rf, text="폴더 선택", font=UI_FONT_BOLD, bg=BRAND,
+                      fg="white", activebackground=BRAND_DARK, relief="flat",
+                      padx=14, pady=3, command=self.choose_root).pack(side="left")
+            tk.Button(rf, text="기본값으로", font=UI_FONT, relief="groove",
+                      padx=12, pady=3, command=self.reset_root).pack(
+                side="left", padx=6)
+            tk.Button(rf, text="세트 다시 스캔", font=UI_FONT, relief="groove",
+                      padx=12, pady=3, command=self.app.refresh_all).pack(
+                side="left", padx=6)
+
+            # --- 세트 숨기기 ---
+            tk.Label(frm, text="세트 숨기기", bg=BG, fg=INK,
+                     font=UI_FONT_BOLD).pack(anchor="w")
+            tk.Label(frm, text="숨긴 세트는 세트 목록 · 오늘의 학습 일정 · "
+                               "점수대 보드에서 빠집니다. 파일과 응시 기록은 "
+                               "그대로 두므로 다시 보이게 하면 점수도 그대로 "
+                               "돌아옵니다.",
+                     bg=BG, fg=SUB, font=("Malgun Gothic", 9), wraplength=580,
+                     justify="left").pack(anchor="w", pady=(2, 4))
+            lf = tk.Frame(frm, bg=CARD, highlightbackground=LINE,
+                          highlightthickness=1)
+            lf.pack(fill="both", expand=True)
+            self.listbox = tk.Listbox(lf, font=UI_FONT, bd=0,
+                                      highlightthickness=0, bg=CARD, fg=INK,
+                                      selectbackground=BRAND_SOFT,
+                                      selectforeground=BRAND_DARK,
+                                      activestyle="none", exportselection=False)
+            sb = tk.Scrollbar(lf, command=self.listbox.yview)
+            self.listbox.configure(yscrollcommand=sb.set)
+            self.listbox.pack(side="left", fill="both", expand=True,
+                              padx=(6, 0), pady=6)
+            sb.pack(side="right", fill="y")
+            self.listbox.bind("<Double-Button-1>", lambda e: self.toggle())
+            hf = tk.Frame(frm, bg=BG)
+            hf.pack(fill="x", pady=(4, 10))
+            tk.Button(hf, text="숨기기 / 다시 보이기", font=UI_FONT_BOLD,
+                      relief="groove", padx=12, pady=3,
+                      command=self.toggle).pack(side="left")
+            tk.Button(hf, text="전부 다시 보이기", font=UI_FONT,
+                      relief="groove", padx=12, pady=3,
+                      command=self.unhide_all).pack(side="left", padx=6)
+            self.hide_msg = tk.Label(hf, text="", bg=BG, fg=SUB,
+                                     font=("Malgun Gothic", 9))
+            self.hide_msg.pack(side="left", padx=8)
+
+            # --- 기타 토글 ---
+            tf = tk.Frame(frm, bg=BG)
+            tf.pack(fill="x")
+            self.auto_update_var = tk.BooleanVar(value=auto_update_enabled())
+            tk.Checkbutton(tf, text="자동 업데이트 (실행할 때마다 새 버전 적용)",
+                           variable=self.auto_update_var, bg=BG, fg=INK,
+                           activebackground=BG, font=UI_FONT,
+                           command=self._toggle_auto_update).pack(anchor="w")
+            self.auto_open_var = tk.BooleanVar(
+                value=bool(get_app_setting(ROUTINE_AUTO_OPEN_SETTING, False)))
+            tk.Checkbutton(tf, text="시작할 때 루틴 웹페이지 자동 열기",
+                           variable=self.auto_open_var, bg=BG, fg=INK,
+                           activebackground=BG, font=UI_FONT,
+                           command=self._toggle_auto_open).pack(anchor="w")
+            tk.Label(frm, text="자동 업데이트를 꺼도 [업데이트 확인]으로 언제든 "
+                               "직접 받을 수 있습니다.",
+                     bg=BG, fg=SUB, font=("Malgun Gothic", 9),
+                     wraplength=580, justify="left").pack(anchor="w",
+                                                          pady=(2, 8))
+            tk.Button(frm, text="닫기", font=UI_FONT, relief="groove",
+                      padx=16, pady=4, command=self.destroy).pack(anchor="e")
+            self.refresh_root_label()
+            self.refresh_sets_list()
+            try:
+                self.transient(app)
+            except Exception:
+                pass
+
+        # --- 스캔 폴더 ---
+        def refresh_root_label(self):
+            cur = self.app.scan_root
+            tag = ("기본값 (시험장.py 상위 폴더)" if os.path.abspath(cur) ==
+                   os.path.abspath(default_scan_root()) else "직접 지정")
+            extra = ""
+            if getattr(self.app, "scan_root_fixed", False):
+                extra = ("\n※ 이번 실행은 --scan-root 로 지정된 폴더를 씁니다 "
+                         "— 저장한 값은 다음 실행부터 적용됩니다.")
+            self.root_lbl.configure(text=f"{cur}\n({tag})" + extra)
+
+        def choose_root(self):
+            folder = filedialog.askdirectory(
+                parent=self, title="세트를 찾을 폴더 선택",
+                initialdir=self.app.scan_root or default_scan_root())
+            if not folder:
+                return None
+            return self.apply_root(folder)
+
+        def apply_root(self, folder):
+            applied = save_scan_root(folder)
+            self.app.scan_root = applied
+            self.app.scan_root_fixed = False
+            startup_log(f"스캔 폴더 변경: {applied} "
+                        f"(세트설정 _설정.{SCAN_ROOT_SETTING})")
+            self.refresh_root_label()
+            self.app.refresh_all()
+            self.app.show_toast(f"세트 스캔 폴더를 바꿨습니다 — {applied} "
+                                "(다음 실행에도 유지됩니다)", seconds=8)
+            return applied
+
+        def reset_root(self):
+            applied = save_scan_root(None)
+            self.app.scan_root = applied
+            self.app.scan_root_fixed = False
+            startup_log(f"스캔 폴더 기본값 복귀: {applied}")
+            self.refresh_root_label()
+            self.app.refresh_all()
+            self.app.show_toast(f"세트 스캔 폴더를 기본값으로 되돌렸습니다 — "
+                                f"{applied}", seconds=8)
+            return applied
+
+        # --- 세트 숨기기 ---
+        def refresh_sets_list(self):
+            hidden = hidden_set_keys()
+            rows = list(self.app.sets) + list(
+                getattr(self.app, "hidden_sets", []) or [])
+            rows.sort(key=lambda s: str(s.get("name") or ""))
+            self.rows = rows
+            sel = self.listbox.curselection()
+            self.listbox.delete(0, "end")
+            for s in rows:
+                mark = "[숨김] " if is_hidden_set(s, hidden) else "        "
+                self.listbox.insert("end", f" {mark}{s.get('name') or '?'}")
+            if not rows:
+                self.listbox.insert("end", " (인식된 세트가 없습니다)")
+            if sel and sel[0] < len(rows):
+                self.listbox.selection_set(sel[0])
+            self.hide_msg.configure(
+                text=f"숨긴 세트 {len(hidden)}개" if hidden else "숨긴 세트 없음")
+            self.refresh_root_label()
+
+        def _selected(self):
+            sel = self.listbox.curselection()
+            if not sel or sel[0] >= len(self.rows):
+                return None
+            return self.rows[sel[0]]
+
+        def toggle(self):
+            s = self._selected()
+            if s is None:
+                self.hide_msg.configure(text="목록에서 세트를 먼저 고르세요.")
+                return None
+            hidden = is_hidden_set(s)
+            for k in set_hidden_keys(s):
+                set_set_hidden(k, not hidden)
+            startup_log(f"세트 {'다시 보이기' if hidden else '숨기기'}: "
+                        f"{s.get('name')} ({', '.join(set_hidden_keys(s))})")
+            self.app.refresh_all()
+            self.app.show_toast(
+                f"'{s.get('name')}' 세트를 다시 목록에 넣었습니다"
+                if hidden else
+                f"'{s.get('name')}' 세트를 숨겼습니다 — 파일과 기록은 그대로 "
+                "두고 목록·일정·점수대 보드에서만 뺍니다", seconds=7)
+            return not hidden
+
+        def unhide_all(self):
+            clear_hidden_sets()
+            startup_log("숨긴 세트 전부 해제")
+            self.app.refresh_all()
+            self.app.show_toast("숨긴 세트를 전부 다시 보이게 했습니다",
+                                seconds=6)
+            return True
+
+        # --- 토글 ---
+        def _toggle_auto_update(self):
+            on = bool(self.auto_update_var.get())
+            try:
+                self.app.auto_update_var.set(on)
+            except Exception:
+                pass
+            return self.app._toggle_auto_update()
+
+        def _toggle_auto_open(self):
+            on = bool(self.auto_open_var.get())
+            try:
+                self.app.routine_auto_open_var.set(on)
+            except Exception:
+                pass
+            return self.app._toggle_routine_auto_open()
+
+
 
 
     class ScoreBoardWindow(tk.Toplevel):
@@ -7882,8 +8521,11 @@ if HAS_TK:
             self.title(APP_TITLE)
             self.configure(bg=BG)
             self.minsize(680, 520)
-            self.scan_root = scan_root or default_scan_root()
+            self.scan_root = scan_root or configured_scan_root()
+            self.scan_root_fixed = bool(scan_root)   # --scan-root 로 못박음
             self.sets = []
+            self.hidden_sets = []      # 숨긴 세트 (목록에서 뺀 것 — 파일은 그대로)
+            self.settings_win = None   # 설정 창 (열려 있으면)
             self.grade_py = find_grade_py()
             self.exam_running = False
             self._grade_state = None
@@ -7907,6 +8549,7 @@ if HAS_TK:
             self._current_exam = None         # 진행 중 시험 dict
             self._excel_warn = None           # Excel 확인 안내 창
             self.routine = None               # 루틴 웹 연동 서버 (RoutineServer)
+            self.routine_error = ""           # 서버를 못 띄운 이유 (화면 표시용)
             self._routine_jobs = queue.Queue()   # 서버 스레드 → Tk 스레드 작업 큐
             self.exam_date_win = None         # 시험일 입력 창 (열려 있으면)
             self._build_ui()
@@ -7926,37 +8569,81 @@ if HAS_TK:
                     f"v{notice.get('to')}(으)로 자동 업데이트됨 — "
                     f"{notice.get('notes') or '변경 사항 안내 없음'}",
                     seconds=15))
-            if auto_update:
-                startup_log("업데이트 확인 시작 (백그라운드, 타임아웃 3초)")
-                self._poll_token += 1
-                tok = self._poll_token
-                threading.Thread(target=self._bg_update_check,
-                                 daemon=True).start()
-                self.after(1200, lambda: self._update_poll(tok))
+            if auto_update and not first_run_notice_pending():
+                self._begin_update_check()
+            elif auto_update:
+                # 첫 실행: 동의를 묻기 전에는 확인도 하지 않는다 (거절할 수 있게)
+                startup_log("첫 실행 — 자동 업데이트 동의를 받은 뒤에 확인합니다")
             if auto_update:
                 # 지난 기록 자동 재채점 (이의제기 반영) — 백그라운드, 사용자 조작 없음
                 self.after(600, self._start_regrade)
             if auto_update and self.routine_auto_open_var.get() \
                     and self.routine is not None:
                 self.after(900, self.open_routine_page)   # 시작 시 자동 열기
-            # 첫 실행: ① 자동 업데이트 고지(확인 하나 — 동의를 묻지 않는다)
-            #          ② 시험일 입력 (없으면)
+            # 첫 실행: ① 자동 업데이트 동의/거절 ② 시험일 입력 (없으면)
             self.after(150, self._first_run_flow)
 
         # ---------------- 첫 실행 ----------------
 
+        def _begin_update_check(self):
+            """백그라운드 업데이트 확인 시작 (동의한 뒤에만 부른다)."""
+            startup_log("업데이트 확인 시작 (백그라운드, 타임아웃 3초)")
+            self._poll_token += 1
+            tok = self._poll_token
+            threading.Thread(target=self._bg_update_check, daemon=True).start()
+            self.after(1200, lambda: self._update_poll(tok))
+            return tok
+
+        def ask_update_consent(self):
+            """첫 실행 자동 업데이트 동의 창 — 반환: 동의했으면 True.
+
+            창을 닫거나 응답이 없으면 거절로 보고 자동 업데이트를 끈다."""
+            startup_log("첫 실행 자동 업데이트 동의 창 표시")
+            agreed = False
+            try:
+                dlg = UpdateConsentDialog(self)
+                self.wait_window(dlg)
+                agreed = bool(getattr(dlg, "agreed", False))
+            except Exception as e:
+                log_error("자동 업데이트 동의 창", e)
+                agreed = False
+            apply_update_consent(agreed)
+            try:
+                self.auto_update_var.set(agreed)
+            except Exception:
+                pass
+            startup_log(f"자동 업데이트 {'동의' if agreed else '거절'} → "
+                        f"세트설정 _설정.{AUTO_UPDATE_SETTING}="
+                        f"{'true' if agreed else 'false'}")
+            self.show_toast(
+                "자동 업데이트에 동의했습니다 — 실행할 때마다 새 버전을 "
+                "자동으로 적용합니다 ([설정]에서 끌 수 있습니다)" if agreed else
+                "자동 업데이트를 끈 채로 시작합니다 — 필요할 때 [업데이트 "
+                "확인]으로 직접 받으면 됩니다 ([설정]에서 켤 수 있습니다)",
+                seconds=10)
+            return agreed
+
         def _first_run_flow(self):
-            """첫 실행 고지 → 시험일 입력. 둘 다 끝났으면 아무것도 안 한다."""
+            """첫 실행 동의 → 시험일 입력. 둘 다 끝났으면 아무것도 안 한다."""
             try:
                 if first_run_notice_pending():
-                    startup_log("첫 실행 자동 업데이트 고지 표시")
-                    messagebox.showinfo(f"{APP_TITLE} - 자동 업데이트 안내",
-                                        first_run_notice_text(), parent=self)
-                    mark_first_run_notice()
+                    agreed = self.ask_update_consent()
+                    if agreed and self.auto_update:
+                        self._begin_update_check()
                 if not exam_date_set():
                     self.open_exam_date_dialog(first_run=True)
             except Exception as e:
                 log_error("첫 실행 안내", e)
+
+        def open_settings(self):
+            """[설정] — 스캔 폴더 · 세트 숨기기 · 자동 업데이트 · 루틴 자동 열기."""
+            win = getattr(self, "settings_win", None)
+            if win is not None and win.winfo_exists():
+                win.lift()
+                win.refresh_sets_list()
+                return win
+            self.settings_win = SettingsDialog(self)
+            return self.settings_win
 
         def open_exam_date_dialog(self, first_run=False):
             """[시험일 설정] — 시험 날짜 입력 창."""
@@ -8060,6 +8747,7 @@ if HAS_TK:
                 font=("Malgun Gothic", 8), anchor="w")
             self._render_plan_card()
 
+            self._build_routine_bar(self).pack(fill="x", padx=16, pady=(8, 0))
             self._build_status_card(self).pack(fill="x", padx=16, pady=(8, 0))
 
             body = tk.Frame(self, bg=BG, padx=16, pady=12)
@@ -8068,8 +8756,13 @@ if HAS_TK:
             body.columnconfigure(1, weight=2)
             body.rowconfigure(1, weight=1)
 
-            tk.Label(body, text="응시 가능한 모의고사", bg=BG, fg=INK,
-                     font=UI_FONT_BOLD).grid(row=0, column=0, sticky="w")
+            listhead = tk.Frame(body, bg=BG)
+            listhead.grid(row=0, column=0, sticky="w")
+            tk.Label(listhead, text="응시 가능한 모의고사", bg=BG, fg=INK,
+                     font=UI_FONT_BOLD).pack(side="left")
+            self.hidden_note_lbl = tk.Label(
+                listhead, text="", bg=BG, fg=SUB, font=("Malgun Gothic", 9))
+            self.hidden_note_lbl.pack(side="left", padx=(8, 0))
             listfrm = tk.Frame(body, bg=CARD, highlightbackground=LINE,
                                highlightthickness=1)
             listfrm.grid(row=1, column=0, sticky="nsew", pady=(4, 8))
@@ -8144,6 +8837,9 @@ if HAS_TK:
             tk.Button(ctrl, text="시작 로그 보기", font=UI_FONT, relief="groove",
                       padx=10, pady=4, command=self.show_startup_log).pack(
                 side="left", padx=4)
+            tk.Button(ctrl, text="설정", font=UI_FONT_BOLD, relief="groove",
+                      padx=12, pady=4, command=self.open_settings).pack(
+                side="left", padx=4)
             tk.Button(ctrl, text="업데이트 확인", font=UI_FONT, relief="groove",
                       padx=10, pady=4,
                       command=self.manual_update_check).pack(
@@ -8187,8 +8883,9 @@ if HAS_TK:
             direct = [s for s in self.sets if s.get("direct")]
             scanned = scan_sets(self.scan_root)
             norms = {s["norm"] for s in scanned}
-            self.sets = scanned + [s for s in direct
-                                   if s.get("norm") not in norms]
+            merged = scanned + [s for s in direct
+                                if s.get("norm") not in norms]
+            self.sets, self.hidden_sets = split_hidden_sets(merged)
             self.listbox.delete(0, "end")
             for s in self.sets:
                 mark = "[직접] " if s.get("direct") else (
@@ -8200,6 +8897,13 @@ if HAS_TK:
                 self._show_info()
             if getattr(self, "plan_title_lbl", None) is not None:
                 self.recompute_plan()      # 세트 편입/자동 선택/재배치 반영
+            self._sync_hidden_note()
+            win = getattr(self, "settings_win", None)
+            if win is not None and win.winfo_exists():
+                try:
+                    win.refresh_sets_list()
+                except Exception as e:
+                    log_error("설정 창 세트 목록 갱신", e)
 
         def refresh_records(self):
             records = load_records()
@@ -8290,6 +8994,109 @@ if HAS_TK:
 
         # ---------------- 루틴 웹 연동 (v2.4.0) ----------------
 
+        def _build_routine_bar(self, parent):
+            """루틴 웹페이지로 가는 길 (v3.1.0) — 프로그램 안에서 바로 연다.
+
+            루틴 페이지는 따로 내려받아 여는 물건이 아니라 이 프로그램이 띄우는
+            로컬 서버의 화면이다. 서버가 안 떴으면 왜 못 여는지와 대안(파일로
+            열기 = 폴백 모드)을 여기서 바로 알려 준다."""
+            bar = tk.Frame(parent, bg="#EAF1FB", padx=14, pady=8,
+                           highlightbackground="#B9D0EF", highlightthickness=1)
+            self.routine_bar = bar
+            top = tk.Frame(bar, bg="#EAF1FB")
+            top.pack(fill="x")
+            tk.Label(top, text="루틴 웹페이지", bg="#EAF1FB", fg="#174A96",
+                     font=UI_FONT_BOLD).pack(side="left")
+            self.routine_open_btn = tk.Button(
+                top, text="루틴 페이지 열기", font=UI_FONT_BOLD, bg="#1F5FBF",
+                fg="white", activebackground="#174A96", relief="flat",
+                padx=14, pady=3, command=self.open_routine_page)
+            self.routine_open_btn.pack(side="right")
+            self.routine_file_btn = tk.Button(
+                top, text="파일로 열기", font=UI_FONT, relief="groove",
+                bg="#EAF1FB", fg="#174A96", padx=10, pady=2,
+                command=self.open_routine_file)
+            self.routine_file_btn.pack(side="right", padx=(0, 8))
+            self.routine_quiz_btn = tk.Button(
+                top, text="함수 퀴즈", font=UI_FONT, relief="groove",
+                bg="#EAF1FB", fg="#174A96", padx=10, pady=2,
+                command=lambda: self.open_routine_page("quiz"))
+            self.routine_quiz_btn.pack(side="right", padx=(0, 8))
+            self.routine_bar_lbl = tk.Label(
+                bar, text="", bg="#EAF1FB", fg=INK, font=("Malgun Gothic", 9),
+                justify="left", anchor="w", wraplength=640)
+            self.routine_bar_lbl.pack(fill="x", pady=(4, 0))
+            return bar
+
+        def routine_bar_text(self):
+            """루틴 바 문구 (서버 상태에 따라). 반환: (문구, 정상 여부)."""
+            if self.routine_alive():
+                return ("오늘 할 일 · 날짜별 일정 · 실수 노트 · 함수 퀴즈를 "
+                        "브라우저에서 봅니다. 시험장이 켜져 있는 동안 점수·"
+                        "체크가 자동으로 오갑니다 — 따로 내려받는 페이지가 "
+                        f"아니라 이 프로그램이 여는 화면입니다.\n주소: "
+                        f"{self.routine.url().split('?')[0]} "
+                        "(주소창에 직접 입력해도 됩니다)", True)
+            why = getattr(self, "routine_error", "") or "알 수 없는 이유"
+            return ("⚠ 루틴 연동 서버를 띄우지 못했습니다 — " + why +
+                    "\n방화벽이 127.0.0.1 접속을 막았거나 포트를 못 잡은 "
+                    "경우입니다. [파일로 열기]를 누르면 페이지 자체는 열 수 "
+                    "있지만(폴백 모드) 점수·체크 동기화는 되지 않고 브라우저에 "
+                    "저장된 값으로만 돕니다. [새로 고침] 뒤에도 같으면 프로그램을 "
+                    "다시 실행해 보세요.", False)
+
+        def _sync_routine_bar(self):
+            """루틴 바 문구·버튼 상태 갱신."""
+            lbl = getattr(self, "routine_bar_lbl", None)
+            if lbl is None:
+                return
+            text, ok = self.routine_bar_text()
+            lbl.configure(text=text, fg=INK if ok else RED)
+            for name in ("routine_open_btn", "routine_quiz_btn"):
+                btn = getattr(self, name, None)
+                if btn is not None:
+                    btn.configure(state="normal" if ok else "disabled")
+            btn = getattr(self, "routine_btn", None)
+            if btn is not None:
+                btn.configure(text="루틴 열기" if ok else "루틴 (서버 꺼짐)")
+
+        def _sync_hidden_note(self):
+            """목록 위 '숨긴 세트 N개' 표시 갱신."""
+            lbl = getattr(self, "hidden_note_lbl", None)
+            if lbl is None:
+                return
+            n = len(getattr(self, "hidden_sets", []) or [])
+            lbl.configure(text=f"· 숨긴 세트 {n}개 ([설정]에서 다시 보이게)"
+                          if n else "")
+
+        def open_routine_file(self):
+            """폴백: 루틴 페이지 파일을 브라우저로 직접 엽니다(연동 없음).
+
+            서버가 안 떴을 때의 대안이라, 페이지는 브라우저에 저장된 값으로만
+            돌고 시험장의 기록과는 오가지 않습니다."""
+            hp = routine_html_path()
+            if not os.path.isfile(hp):
+                messagebox.showwarning(
+                    APP_TITLE, f"루틴 페이지 파일을 찾지 못했습니다:\n{hp}\n"
+                    "[업데이트 확인]으로 내려받거나 배포 ZIP 의 시험장/루틴.html "
+                    "을 같은 폴더에 두세요.", parent=self)
+                return None
+            url = "file:///" + os.path.abspath(hp).replace("\\", "/").lstrip("/")
+            try:
+                ok = bool(webbrowser.open(url))
+            except Exception as e:
+                log_error("루틴 페이지 파일 열기", e)
+                ok = False
+            startup_log(f"루틴 페이지 파일 열기(폴백): {hp} → "
+                        f"{'브라우저 실행' if ok else '실패'}")
+            self.show_toast(
+                "루틴 페이지를 파일로 열었습니다 — 폴백 모드라 시험장과 "
+                "동기화되지 않고 브라우저에 저장된 값으로만 돕니다. 연동하려면 "
+                "[루틴 페이지 열기]를 쓰세요." if ok else
+                f"브라우저를 열지 못했습니다. 이 파일을 직접 여세요: {hp}",
+                seconds=10)
+            return url if ok else None
+
         def _start_routine_server(self):
             """로컬 연동 서버 기동: 8765 → 저장된 포트 → 빈 포트. 실패해도 프로그램은
             계속 뜨고(연동 기능만 꺼짐), 실제 포트는 `_설정.루틴포트`에 저장."""
@@ -8302,9 +9109,11 @@ if HAS_TK:
                     on_change=self.on_routine_changed,
                     exam_running_fn=lambda: self.exam_running, port=prefer)
                 srv.start()
+                self.routine_error = ""
             except Exception as e:
                 log_error("루틴 서버 시작", e)
                 startup_log(f"루틴 서버를 띄우지 못했습니다 ({e}) — 연동 없이 계속")
+                self.routine_error = str(e) or e.__class__.__name__
                 srv = None
             self.routine = srv
             if srv is not None:
@@ -8314,6 +9123,7 @@ if HAS_TK:
                 except Exception:
                     pass
             self.after(100, self._routine_pump)
+            self._sync_routine_bar()
             return srv
 
         def _routine_pump(self):
@@ -8345,10 +9155,17 @@ if HAS_TK:
             """[루틴 열기] — 기본 브라우저로 루틴 페이지(토큰 포함 주소) 열기.
             tab='quiz' 면 함수 퀴즈 탭. 반환: 연 주소(실패 None)."""
             if not self.routine_alive():
-                messagebox.showwarning(
-                    APP_TITLE, "루틴 연동 서버가 실행되지 않아 페이지를 열 수 "
-                    "없습니다.\n[시작 로그 보기]에서 '루틴 서버' 줄을 확인하고 "
-                    "프로그램을 다시 실행해 보세요.", parent=self)
+                why = getattr(self, "routine_error", "") or "알 수 없는 이유"
+                if messagebox.askyesno(
+                        APP_TITLE,
+                        f"루틴 연동 서버를 띄우지 못해 연동 모드로는 열 수 "
+                        f"없습니다.\n사유: {why}\n\n대신 루틴 페이지를 "
+                        "파일로 열까요? (폴백 모드 — 점수·체크가 시험장과 "
+                        "오가지 않고 브라우저에 저장된 값으로만 돕니다)\n\n"
+                        "[아니요]를 고르면 [시작 로그 보기]에서 '루틴 서버' "
+                        "줄을 확인하고 프로그램을 다시 실행해 보세요.",
+                        parent=self):
+                    return self.open_routine_file()
                 return None
             url = self.routine.url(tab)
             try:
@@ -9515,7 +10332,9 @@ if HAS_TK:
         def show_scan_diagnosis(self):
             """[세트 인식 진단] — 텍스트 표 + 클립보드 복사."""
             try:
-                text = scan_diagnosis_text(self.scan_root, sets=self.sets)
+                text = scan_diagnosis_text(
+                    self.scan_root, sets=self.sets,
+                    hidden_sets=getattr(self, "hidden_sets", []))
             except Exception as e:
                 log_error("세트 인식 진단", e)
                 text = f"진단 생성 중 오류: {e}"
@@ -9872,7 +10691,7 @@ def run_smoke():
     assert app.exam_date_btn.cget("text") == "시험일 설정"
     ad = app.recompute_plan()
     assert ad is None or ad.get("kind") in (
-        "unset", "free", "week", "exam", "between", "after"), ad
+        "unset", "free", "week", "exam", "after"), ad
     if ad and ad.get("kind") == "week":
         today_plan = app.plan_for(routine_day_no())
         assert today_plan.get("적응형") is True
@@ -9891,21 +10710,46 @@ def run_smoke():
     app._shift_plan(1)                       # Day 7(D-1) 다음은 시험일 (시간순)
     assert app.plan_no == PLAN_EXAM1
     assert "시험일" in app.plan_title_lbl.cget("text")
-    # 시험일 입력 창 (첫 실행·[시험일 설정])
+    # 시험일 목록 창 (첫 실행·[시험일 설정]) — 추가/제거/전체 비우기
     dlg_e = ExamDateDialog(app)
     app.update_idletasks()
     app.update()
-    assert dlg_e.values()[0] == smoke_exam.isoformat(), dlg_e.values()
-    dlg_e.vars[0].set("")
-    assert dlg_e.validate()[2].startswith("시험일을 입력"), dlg_e.validate()
-    dlg_e.vars[0].set(smoke_exam.isoformat())
-    dlg_e.vars[1].set((smoke_exam - timedelta(days=1)).isoformat())
-    assert "뒤여야" in dlg_e.validate()[2], dlg_e.validate()
-    dlg_e.vars[1].set("")
+    assert dlg_e.values() == [smoke_exam.isoformat()], dlg_e.values()
+    second = smoke_exam + timedelta(days=3)
+    assert dlg_e.add(second.isoformat()) is True
+    assert dlg_e.add(second.isoformat()) is False, "중복은 안 들어간다"
+    assert dlg_e.add("내일") is False, "형식 오류는 안 들어간다"
+    assert dlg_e.values() == [smoke_exam.isoformat(), second.isoformat()], \
+        dlg_e.values()
+    assert dlg_e.remove(second.isoformat()) is True
+    assert dlg_e.values() == [smoke_exam.isoformat()]
+    assert dlg_e.clear_all() is True and dlg_e.values() == []
+    assert dlg_e.validate() == ([], ""), "시험일 0개도 정상"
+    dlg_e.add(smoke_exam.isoformat())
     assert dlg_e.save() is True and exam_dates() == [smoke_exam]
-    # 첫 실행 자동 업데이트 고지 문구 (동의를 묻지 않는 안내)
+    # 첫 실행 자동 업데이트 동의 창 (동의 / 거절 — 닫으면 거절)
     assert UPDATE_REPO_URL in first_run_notice_text()
-    assert "동의" not in first_run_notice_text()
+    assert "동의" in first_run_notice_text() and "거절" in first_run_notice_text()
+    _au_saved = auto_update_enabled()
+    dlg_c = UpdateConsentDialog(app)
+    app.update_idletasks()
+    app.update()
+    assert dlg_c.agreed is False and dlg_c.answered is False, "기본값은 거절"
+    dlg_c.decline()
+    assert dlg_c.agreed is False and dlg_c.answered is True
+    assert apply_update_consent(False) is False \
+        and auto_update_enabled() is False and not first_run_notice_pending()
+    assert apply_update_consent(True) is True and auto_update_enabled() is True
+    set_app_setting(AUTO_UPDATE_SETTING, _au_saved)
+    # [설정] 창 — 스캔 폴더 · 세트 숨기기
+    dlg_s = app.open_settings()
+    app.update_idletasks()
+    app.update()
+    assert dlg_s is app.open_settings(), "설정 창은 하나만"
+    assert app.scan_root in dlg_s.root_lbl.cget("text")
+    assert dlg_s.reset_root() == default_scan_root()
+    assert scan_root_is_default() is True
+    dlg_s.destroy()
     # 단계 가이드 창 — 하루 1세트(Day 3): 필수 ①② + 선택 ③④⑤ = 5스텝
     save_step_progress("d03", set())
     guide = StepGuideWindow(app, plan_for_day(3))
@@ -10092,7 +10936,9 @@ def run_smoke():
         tail = f.read()
     assert "ZeroDivisionError" in tail and "tk callback" in tail, tail[-200:]
     # 세트 인식 진단 창
-    diag = DiagnosisWindow(app, scan_diagnosis_text(app.scan_root, sets=app.sets))
+    diag = DiagnosisWindow(app, scan_diagnosis_text(
+        app.scan_root, sets=app.sets,
+        hidden_sets=getattr(app, "hidden_sets", [])))
     app.update_idletasks()
     app.update()
     assert "일정 슬롯 매칭" in diag.text_value and diag.copy() is True
