@@ -216,6 +216,22 @@
   .corr-delta.down{border-color:var(--warn); color:var(--warn)}
   .rc-corr{margin:6px 0 0; font-size:12.5px; color:var(--accent-deep); display:flex; flex-wrap:wrap; gap:6px; align-items:baseline}
 
+  /* 숨긴 요소는 레이아웃 규칙보다 우선해서 감춘다 (2차 시험일 카드 등) */
+  [hidden]{display:none !important}
+
+  /* ===== 시험일 입력 카드 (첫 화면에서 가장 먼저 해야 할 일) ===== */
+  .exam-setup{margin:0 0 14px; padding:12px 14px; background:var(--card); border:1px solid var(--line); box-shadow:var(--shadow)}
+  .exam-setup.es-empty{border-color:var(--warn); background:var(--warn-soft)}
+  .es-head{display:flex; flex-wrap:wrap; gap:4px 10px; align-items:baseline}
+  .es-head strong{font-size:15px}
+  .es-note{font-size:12.5px; color:var(--muted)}
+  .es-row{margin-top:8px; display:flex; flex-wrap:wrap; gap:8px; align-items:center}
+  .es-row label{font-size:12.5px; color:var(--muted)}
+  .es-row input[type="date"]{padding:5px 8px; border:1px solid var(--line); background:var(--bg); color:inherit; font:inherit; font-size:13.5px; font-family:"IBM Plex Mono", ui-monospace, monospace}
+  .es-save{padding:6px 16px; font-size:13.5px}
+  .es-msg{margin:7px 0 0; font-size:12.5px; color:var(--accent-deep); min-height:1em}
+  .es-msg.bad{color:var(--warn)}
+
   /* ===== 게임형 히어로 (티어 · 게이지 · 연속 · 도전 과제 · 오늘 잠금) ===== */
   .game{margin-top:16px; padding:14px 16px; background:var(--card); border:1px solid var(--line); box-shadow:var(--shadow)}
   .g-tiers{display:flex; flex-wrap:wrap; gap:6px; align-items:center}
@@ -689,8 +705,8 @@
 
   <!-- ============ 마스트헤드 + 탭바 ============ -->
   <header class="masthead">
-    <h1>컴활 2급 실기 · 2주 완성 스프린트</h1>
-    <span class="mast-dday" id="mast-dday">1차 9/17 (목) D-11 · 2차 9/18 (금) D-12</span>
+    <h1>컴활 2급 실기 · 1주 완성 스프린트</h1>
+    <span class="mast-dday" id="mast-dday">시험일 미설정</span>
   </header>
 
   <div class="link-bar" id="link-bar" hidden aria-live="polite">
@@ -702,8 +718,8 @@
 
   <nav class="tabbar" role="tablist" aria-label="루틴 섹션">
     <button type="button" role="tab" id="tab-today"    aria-controls="panel-today"    aria-selected="true"  tabindex="0">오늘</button>
-    <button type="button" role="tab" id="tab-stage1"   aria-controls="panel-stage1"   aria-selected="false" tabindex="-1">일정 (9/3–9/16)</button>
-    <button type="button" role="tab" id="tab-stage2"   aria-controls="panel-stage2"   aria-selected="false" tabindex="-1">시험일 (9/17·18)</button>
+    <button type="button" role="tab" id="tab-stage1"   aria-controls="panel-stage1"   aria-selected="false" tabindex="-1">일정 (D-7 ~ D-1)</button>
+    <button type="button" role="tab" id="tab-stage2"   aria-controls="panel-stage2"   aria-selected="false" tabindex="-1">시험일</button>
     <button type="button" role="tab" id="tab-fn"       aria-controls="panel-fn"       aria-selected="false" tabindex="-1">함수 사전</button>
     <button type="button" role="tab" id="tab-quiz"     aria-controls="panel-quiz"     aria-selected="false" tabindex="-1">함수 퀴즈</button>
     <button type="button" role="tab" id="tab-mistakes" aria-controls="panel-mistakes" aria-selected="false" tabindex="-1">실수 노트</button>
@@ -714,13 +730,28 @@
   <section role="tabpanel" id="panel-today" aria-labelledby="tab-today">
 
     <div id="today-normal">
+      <div class="exam-setup" id="exam-setup">
+        <div class="es-head">
+          <strong id="es-title">시험일</strong>
+          <span class="es-note" id="es-note">시험 날짜를 넣으면 그 날 기준 D-7 ~ D-1 일주일 일정이 만들어집니다.</span>
+        </div>
+        <div class="es-row">
+          <label for="exam-date-1">시험일</label>
+          <input type="date" id="exam-date-1" pattern="\d{4}-\d{2}-\d{2}" placeholder="YYYY-MM-DD" aria-describedby="es-note">
+          <label for="exam-date-2">2차 시험일 (선택)</label>
+          <input type="date" id="exam-date-2" pattern="\d{4}-\d{2}-\d{2}" placeholder="YYYY-MM-DD">
+          <button type="button" id="exam-date-save" class="start-btn es-save">저장</button>
+          <button type="button" id="exam-date-clear" class="quiz-nav-btn">지우기</button>
+        </div>
+        <p class="es-msg" id="exam-date-msg" aria-live="polite"></p>
+      </div>
       <div class="hero">
         <div class="hero-top">
           <div class="hero-title">
-            <p class="fx"><span class="fx-tag">fx</span><code>=DATE(2026,9,17)-TODAY()</code><span class="fx-out" id="fx-out">11</span></p>
-            <p class="hero-sub"><strong>9/3 (목) 시작 · 9/16 (수) 마감</strong> · 하루 한 세트 40분 완주 → 채점이면 그 날 클리어 · 응시 횟수 제한 없음(예습·복습 자유) · 목표는 70 → 80 → 90 → 100 · <strong>1차 9/17 (목)</strong> · <strong>2차 9/18 (금)</strong> 이틀 연속 — 70점 합격</p>
+            <p class="fx"><span class="fx-tag">fx</span><code id="fx-formula">=시험일-TODAY()</code><span class="fx-out" id="fx-out">-</span></p>
+            <p class="hero-sub" id="hero-sub">시험일을 설정하면 D-7 ~ D-1 일주일 일정이 만들어집니다 · 하루 한 세트 40분 완주 → 채점이면 그 날 클리어 · 응시 횟수 제한 없음(예습·복습 자유) · 목표는 70 → 80 → 90 → 100 — 70점 합격</p>
           </div>
-          <div class="hero-d"><div class="d-num" id="d-num" aria-label="1차 시험까지 남은 날">D-11</div><p class="d-sub" id="d-sub">2차 9/18 (금) · D-12</p></div>
+          <div class="hero-d"><div class="d-num" id="d-num" aria-label="시험까지 남은 날">D-?</div><p class="d-sub" id="d-sub">시험일 미설정</p></div>
         </div>
 
         <div class="game" id="game-panel">
@@ -746,31 +777,14 @@
         <div class="corr-strip" id="corr-strip" hidden aria-live="polite"></div>
 
         <div>
-          <div class="strip-wrap" role="img" aria-label="9월 3일부터 9월 18일까지 날짜 스트립. 매일 모의 1세트, 주말 9월 5일·6일·12일·13일은 2세트, 9월 16일 마감, 1차 시험 9월 17일, 2차 시험 9월 18일. 오늘 날짜는 자동 표시.">
-            <div class="strip" aria-hidden="true">
-              <div class="cell mock" data-date="2026-09-03"><span class="wd">목</span><span class="dt">3</span><span class="mk">모의</span></div>
-              <div class="cell mock" data-date="2026-09-04"><span class="wd">금</span><span class="dt">4</span><span class="mk">모의</span></div>
-              <div class="cell mock mock2" data-date="2026-09-05"><span class="wd">토</span><span class="dt">5</span><span class="mk">2세트</span></div>
-              <div class="cell mock mock2" data-date="2026-09-06"><span class="wd">일</span><span class="dt">6</span><span class="mk">2세트</span></div>
-              <div class="cell mock" data-date="2026-09-07"><span class="wd">월</span><span class="dt">7</span><span class="mk">모의</span></div>
-              <div class="cell mock" data-date="2026-09-08"><span class="wd">화</span><span class="dt">8</span><span class="mk">모의</span></div>
-              <div class="cell mock" data-date="2026-09-09"><span class="wd">수</span><span class="dt">9</span><span class="mk">모의</span></div>
-              <div class="cell mock" data-date="2026-09-10"><span class="wd">목</span><span class="dt">10</span><span class="mk">모의</span></div>
-              <div class="cell mock" data-date="2026-09-11"><span class="wd">금</span><span class="dt">11</span><span class="mk">모의</span></div>
-              <div class="cell mock mock2" data-date="2026-09-12"><span class="wd">토</span><span class="dt">12</span><span class="mk">2세트</span></div>
-              <div class="cell mock mock2" data-date="2026-09-13"><span class="wd">일</span><span class="dt">13</span><span class="mk">2세트</span></div>
-              <div class="cell mock" data-date="2026-09-14"><span class="wd">월</span><span class="dt">14</span><span class="mk">모의</span></div>
-              <div class="cell mock" data-date="2026-09-15"><span class="wd">화</span><span class="dt">15</span><span class="mk">모의</span></div>
-              <div class="cell mock" data-date="2026-09-16"><span class="wd">수</span><span class="dt">16</span><span class="mk">마감</span></div>
-              <div class="cell exam" data-date="2026-09-17"><span class="wd">목</span><span class="dt">17</span><span class="mk">시험</span></div>
-              <div class="cell exam" data-date="2026-09-18"><span class="wd">금</span><span class="dt">18</span><span class="mk">시험</span></div>
-            </div>
+          <div class="strip-wrap" role="img" id="strip-wrap" aria-label="시험일 기준 D-7 ~ 시험일 날짜 스트립. 하루 한 세트 추천, 마지막 학습일은 마감, 마지막 칸은 시험일. 오늘 날짜는 자동 표시.">
+            <div class="strip" id="strip" aria-hidden="true"></div>
           </div>
           <div class="strip-legend">
             <span class="key"><i class="k-today"></i>오늘 (자동 표시)</span>
             <span class="key"><i class="k-mock"></i>모의 추천 1세트 (횟수 제한 없음)</span>
             <span class="key"><i class="k-mock2"></i>자유 복습</span>
-            <span class="key"><i class="k-exam"></i>시험일 (1차 9/17 · 2차 9/18)</span>
+            <span class="key"><i class="k-exam"></i>시험일</span>
           </div>
           <p class="today-note" id="strip-status" hidden></p>
         </div>
@@ -847,23 +861,23 @@
     </div>
   </section>
 
-  <!-- ============ 탭 2 · 일정 (9/3 – 9/16) ============ -->
+  <!-- ============ 탭 2 · 일정 (D-7 ~ D-1) ============ -->
   <section role="tabpanel" id="panel-stage1" aria-labelledby="tab-stage1" hidden>
-    <div class="sec-head"><h2>일정 — 하루 한 세트 (9/3 – 9/16)</h2></div>
-    <p class="sec-sub">하루 한 세트 40분 완주 → 채점까지가 그 날 클리어(오답노트·오답 재풀이·함수 퀴즈는 선택) · <strong>응시 횟수 제한 없음</strong> — 날짜별 세트는 강제가 아니라 <strong>추천</strong>이라 예습·복습으로 얼마든지 더 풀 수 있습니다 · 목표는 70(합격선) → 80 → 90 → 100 단계로 올라가고, 현재 목표는 지금까지의 최고점으로 정해집니다 · 추천 순서는 ① 미응시 ② 70점 미만(최고점 낮은 순) ③ 현재 목표 미달 순, 더 추천할 세트가 없으면 그 날은 자유 복습 · 9/17 (목) 1차 · 9/18 (금) 2차 시험</p>
+    <div class="sec-head"><h2>일정 — 하루 한 세트 <span id="stage1-range"></span></h2></div>
+    <p class="sec-sub">시험일 기준 <strong>D-7 ~ D-1</strong> 일주일 일정입니다. 7일이 안 남았으면 남은 날짜에 맞춰 뒤에서부터 배정하고, 더 많이 남았으면 D-7 전은 자유 연습입니다 · 하루 한 세트 40분 완주 → 채점까지가 그 날 클리어(오답노트·오답 재풀이·함수 퀴즈는 선택) · <strong>응시 횟수 제한 없음</strong> — 날짜별 세트는 강제가 아니라 <strong>추천</strong>이라 예습·복습으로 얼마든지 더 풀 수 있습니다 · 목표는 70(합격선) → 80 → 90 → 100 단계로 올라갑니다 · 무엇을 푸는지는 <strong>내가 넣은 문제 파일</strong>로 정해집니다 — 추천 순서는 ① 미응시(이름순) ② 70점 미만(최고점 낮은 순) ③ 현재 목표 미달 ④ 그래도 날이 남으면 보유 세트를 순서대로 다시 배정(오답 복습 후 재응시)</p>
     <p class="sec-sub" id="fixed-plan"></p>
     <div class="day-grid" id="grid-prep">
       <article class="day-card" data-day="d00">
         <header class="dc-head">
-          <span class="dc-tag">Day 0</span><span class="dc-date">시작 전 (9/2 수)</span><span class="chip">준비</span>
+          <span class="dc-tag">준비</span><span class="dc-date" id="d00-date">시작 전</span><span class="chip">준비</span>
         </header>
-        <h3>시작 전 준비 — 내일 첫 완주를 위해</h3>
+        <h3>시작 전 준비 — 첫 완주를 위해</h3>
         <div class="dc-block">
           <p class="dc-label">체크리스트 (선택 — 클리어 대상 아님)</p>
           <ul class="task-list">
-            <li><label><input type="checkbox" id="d00t1"><span>시험장 프로그램 설치 확인 — 시험 모드·오답노트 모드·오답 재풀이를 한 번씩 열어 보기</span></label></li>
-            <li><label><input type="checkbox" id="d00t2"><span>세트 파일 준비 — 기출 7세트 + 코코 모의고사 1·2회 (새 세트는 계속 추가 가능)</span></label></li>
-            <li><label><input type="checkbox" id="d00t3"><span>이 루틴 한 바퀴 훑어보기 — 실수 노트·함수 사전 위치 확인</span></label></li>
+            <li><label><input type="checkbox" id="d00t1"><span>시험일 설정 — 오늘 탭 맨 위 [시험일]에 시험 날짜를 넣으면 D-7 ~ D-1 일정이 만들어집니다</span></label></li>
+            <li><label><input type="checkbox" id="d00t2"><span>내 문제·정답 파일 넣기 — 학습 폴더에 <code>&lt;이름&gt;_문제.xlsx</code> 와 <code>&lt;이름&gt;_정답.xlsx</code> 를 같은 이름으로 (문제지 PDF는 <code>&lt;이름&gt;_문제지.pdf</code>). 기대값 JSON은 없어도 기본 배점으로 채점합니다</span></label></li>
+            <li><label><input type="checkbox" id="d00t3"><span>시험장 프로그램에서 [세트 다시 스캔] → 목록에 보이는지 확인 (안 보이면 [세트 인식 진단])</span></label></li>
           </ul>
         </div>
         <footer class="dc-foot">
@@ -872,19 +886,19 @@
       </article>
     </div>
     <div class="sec-head"><h2>날짜별 배정 — 자동 재계산</h2></div>
-    <p class="sec-sub">하루 추천 한 세트 — 지난 날은 완료/응시 없음, 오늘은 진행 중, 앞으로는 예정. 기록이 바뀌면 다음 로드 때 자동으로 다시 계산됩니다(70점 미만 세트는 다시 추천, 현재 목표를 넘긴 세트는 빠짐). 마감일 9/16은 마지막 세트 + 실수 노트 1회독.</p>
+    <p class="sec-sub">하루 추천 한 세트 — 지난 날은 완료/응시 없음, 오늘은 진행 중, 앞으로는 예정. 기록이 바뀌면 다음 로드 때 자동으로 다시 계산됩니다(70점 미만 세트는 다시 추천, 현재 목표를 넘긴 세트는 빠짐). 마지막 학습일(D-1)은 마지막 세트 + 실수 노트 1회독.</p>
     <div class="day-grid" id="grid-stage1"></div>
   </section>
 
-  <!-- ============ 탭 3 · 시험일 (9/17 · 9/18) ============ -->
+  <!-- ============ 탭 3 · 시험일 ============ -->
   <section role="tabpanel" id="panel-stage2" aria-labelledby="tab-stage2" hidden>
-    <div class="sec-head"><h2>시험일 — 9/17 (목) 1차 · 9/18 (금) 2차</h2></div>
-    <p class="sec-sub">이틀 연속 시험. 1차 당일 저녁에는 세트 없이 복기 메모(막힌 유형)와 실수 노트 1회독만 가볍게 · 2차 아침에는 실수 노트와 어제 복기 메모만 훑고 출발 · 두 번 다 70점이면 합격 — 1차에 합격하면 2차는 점수 확인 겸 편하게.</p>
+    <div class="sec-head"><h2>시험일 <span id="exam-tab-range"></span></h2></div>
+    <p class="sec-sub" id="exam-tab-sub">시험 날짜를 설정하면 여기에 D-DAY 카드가 뜹니다. 2차 시험일을 넣으면 2차 카드도 함께 나옵니다 — 70점이면 합격.</p>
 
-    <div class="sec-head"><h2>9/17 (목) — 1차 시험</h2></div>
-    <article class="exam-card" data-date="2026-09-17">
+    <div class="sec-head" id="exam1-head"><h2><span id="exam1-title">시험일</span></h2></div>
+    <article class="exam-card" data-exam="1" data-date="">
       <header class="dc-head">
-        <span class="dc-tag">1차 D-DAY</span><span class="dc-date">9/17 (목) · 40분</span><span class="chip chip-exam">시험</span>
+        <span class="dc-tag">D-DAY</span><span class="dc-date" id="exam1-date">40분</span><span class="chip chip-exam">시험</span>
       </header>
       <div class="exam-cols">
         <div>
@@ -899,8 +913,8 @@
           </ul>
           <p class="dc-label">시험 후 저녁 — 세트 없음, 가볍게</p>
           <ul class="check-list">
-            <li><label><input type="checkbox" id="e07">1차 복기 메모 — 막힌 유형·시간이 부족했던 구간을 실수 노트에 3줄로</label></li>
-            <li><label><input type="checkbox" id="e08">실수 노트 탭 전체 1회독 · 일찍 자기 — 내일 2차</label></li>
+            <li><label><input type="checkbox" id="e07">복기 메모 — 막힌 유형·시간이 부족했던 구간을 실수 노트에 3줄로</label></li>
+            <li><label><input type="checkbox" id="e08">실수 노트 탭 전체 1회독 · 일찍 자기</label></li>
           </ul>
         </div>
         <div>
@@ -909,15 +923,15 @@
             <span class="seg-1">기본 8</span><span class="seg-2">계산 15</span><span class="seg-3">분석 7</span><span class="seg-4">기타 8</span><span class="seg-5"></span>
           </div>
           <p class="time-list">기본작업 8분 → 계산작업 15분 → 분석작업 7분 → 기타작업 8분 → 검토 2분</p>
-          <p class="time-list">계산작업에서 2분 이상 막히는 문제는 표시하고 넘어간다. 검토 2분에 저장 상태와 시나리오·매크로를 최종 확인. 시험 후 막힌 유형을 메모해 두면 내일 2차 직전에 바로 쓴다.</p>
+          <p class="time-list">계산작업에서 2분 이상 막히는 문제는 표시하고 넘어간다. 검토 2분에 저장 상태와 시나리오·매크로를 최종 확인. 시험 후 막힌 유형을 메모해 두면 다음 시험 직전에 바로 쓴다.</p>
         </div>
       </div>
     </article>
 
-    <div class="sec-head"><h2>9/18 (금) — 2차 시험</h2></div>
-    <article class="exam-card" data-date="2026-09-18">
+    <div class="sec-head" id="exam2-head" hidden><h2><span id="exam2-title">2차 시험일</span></h2></div>
+    <article class="exam-card" data-exam="2" data-date="" hidden>
       <header class="dc-head">
-        <span class="dc-tag">2차 D-DAY</span><span class="dc-date">9/18 (금) · 40분</span><span class="chip chip-exam">시험</span>
+        <span class="dc-tag">2차 D-DAY</span><span class="dc-date" id="exam2-date">40분</span><span class="chip chip-exam">시험</span>
       </header>
       <div class="exam-cols">
         <div>
@@ -928,7 +942,7 @@
             <li><label><input type="checkbox" id="e13">자동 저장 없음 — 파트 하나 끝날 때마다 Ctrl+S</label></li>
             <li><label><input type="checkbox" id="e14">계산작업은 확실한 문제부터 (부분점수 없음)</label></li>
             <li><label><input type="checkbox" id="e15">매크로 실행 테스트 · 시나리오 철자 재확인</label></li>
-            <li><label><input type="checkbox" id="e16">아침에 실수 노트 + 어제 1차 복기 메모만 한 번 더 보기 (새 세트 금지)</label></li>
+            <li><label><input type="checkbox" id="e16">아침에 실수 노트 + 지난 시험 복기 메모만 한 번 더 보기 (새 세트 금지)</label></li>
           </ul>
         </div>
         <div>
@@ -937,7 +951,7 @@
             <span class="seg-1">기본 8</span><span class="seg-2">계산 15</span><span class="seg-3">분석 7</span><span class="seg-4">기타 8</span><span class="seg-5"></span>
           </div>
           <p class="time-list">기본작업 8분 → 계산작업 15분 → 분석작업 7분 → 기타작업 8분 → 검토 2분</p>
-          <p class="time-list">2주간 완주한 세트가 이미 몸에 있다 — 어제 1차와 같은 리듬으로. 검토 2분에 저장 상태와 시나리오·매크로만 최종 확인.</p>
+          <p class="time-list">일주일간 완주한 세트가 이미 몸에 있다 — 지난 시험과 같은 리듬으로. 검토 2분에 저장 상태와 시나리오·매크로만 최종 확인.</p>
         </div>
       </div>
     </article>
@@ -1361,9 +1375,7 @@
   var KEY5 = "cca-d18-routine-v5";
   var KEY4 = "cca-d18-routine-v4";
   var KEY3 = "cca-d18-routine-v3";
-  var START_ISO = "2026-09-03";
-  var EXAM_ISO = "2026-09-17";
-  var EXAM2_ISO = "2026-09-18";
+  var EXAM_KEY = "cca-exam-dates-v1";   /* 폴백 모드 시험일 저장 (localStorage) */
   var lastCleared = null; /* 이번 세션에서 방금 오늘 카드를 클리어했는지 (축하 표시용) */
 
   /* ---------- 시험장 연동 모드 (로컬 서버 127.0.0.1) — 감지 조건·토큰·상태 (규약 연동_API.md v2.4.1) ---------- */
@@ -1385,41 +1397,42 @@
 
   /* ---------- 적응형 일정 · 채점결과 매핑 (순수 함수 — 시험장 프로그램과 동일 규격) ---------- */
   /* __IMPORT_PURE_START__ */
-  var FIXED_SETS = [
-    { key:"sangsi1", name:"2024 상시 1회" },
-    { key:"koko1",   name:"코코 모의고사 1회" },
-    { key:"atype",   name:"2024 A형" },
-    { key:"sangsi2", name:"2024 상시 2회" },
-    { key:"koko2",   name:"코코 모의고사 2회" },
-    { key:"btype",   name:"2024 B형" },
-    { key:"s24",     name:"24 2급 상시" },
-    { key:"cca",     name:"컴활 2급 상시" },
-    { key:"y2026",   name:"2026 1회" }
-  ];
-  var ROUTINE_START = "2026-09-03";
-  var EXAM_DATES = ["2026-09-17", "2026-09-18"];   /* 시험 1 · 시험 2 (이틀 연속) */
+  /* 세트는 사용자가 가진 것으로만 만들어진다 — 고정 세트 목록·고정 일정표는 없다(v3.0.0).
+     연동 모드에서는 시험장이 스캔한 세트를, 폴백 모드에서는 가져온 채점결과에 나온 세트를 쓴다. */
+  var ROUTINE_DAYS = 7;                      /* 커리큘럼 길이: D-7 ~ D-1 */
+  var EXAM_DATES = [];                       /* 시험일 (1~2개, 오름차순) — 사용자가 입력 */
   var GOAL_TIERS = [70, 80, 90, 100];        /* 목표 사다리 (70 = 합격선, 그 위는 승급 목표) */
   var PASS_LINE = 70, DAILY_CAP = 1;         /* 하루 추천 1세트 (v2.7.0: 응시 횟수 제한은 없음) */
   var AUTO_NAME = "자동 선택";
-  /* 고정 일정표 — 시험장 ROUTINE_PLAN d01~d14 와 글자 그대로 동일.
-     하루 1세트: d01~d09 는 첫응시 우선순위 9세트, d10~d14 는 기록을 보고 자동 선택(null).
-     goal 은 기본 단계인 70(합격선) — 실제 목표는 기록 최고점에 따라 80·90·100 으로 올라간다. */
-  var FIXED_PLAN = [
-    { day:"d01", date:"2026-09-03", sets:["sangsi1"], goal:70 },
-    { day:"d02", date:"2026-09-04", sets:["koko1"], goal:70 },
-    { day:"d03", date:"2026-09-05", sets:["atype"], goal:70 },
-    { day:"d04", date:"2026-09-06", sets:["sangsi2"], goal:70 },
-    { day:"d05", date:"2026-09-07", sets:["koko2"], goal:70 },
-    { day:"d06", date:"2026-09-08", sets:["btype"], goal:70 },
-    { day:"d07", date:"2026-09-09", sets:["s24"], goal:70 },
-    { day:"d08", date:"2026-09-10", sets:["cca"], goal:70 },
-    { day:"d09", date:"2026-09-11", sets:["y2026"], goal:70 },
-    { day:"d10", date:"2026-09-12", sets:[null], goal:70 },
-    { day:"d11", date:"2026-09-13", sets:[null], goal:70 },
-    { day:"d12", date:"2026-09-14", sets:[null], goal:70 },
-    { day:"d13", date:"2026-09-15", sets:[null], goal:70 },
-    { day:"d14", date:"2026-09-16", sets:[null], goal:70, special:"실수노트" }
-  ];
+  var NO_SETS_REASON = "세트 없음 — 문제·정답 파일을 넣어 주세요";
+  var ROLE_TOKENS = ["문제지", "기대값", "정답지", "답안지", "정답", "답안", "문제"];
+
+  function isIsoDate(s) { return typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s); }
+  function parseIso(s) { return isIsoDate(String(s || "").slice(0, 10)) ? String(s).slice(0, 10) : null; }
+  /* 시험일 설정 (1차 필수 · 2차 선택). 잘못된 값은 버리고 오름차순 유일 목록으로 둔다. */
+  function setExamDates(list) {
+    var out = [];
+    (list || []).forEach(function(x){
+      var d = parseIso(x);
+      if (d && out.indexOf(d) < 0) { out.push(d); }
+    });
+    out.sort();
+    EXAM_DATES = out.slice(0, 2);
+    return EXAM_DATES.slice();
+  }
+  function examDateSet() { return EXAM_DATES.length > 0; }
+  function routineStart() { return examDateSet() ? addDays(EXAM_DATES[0], -ROUTINE_DAYS) : null; }
+  function ddayNum(today) { return examDateSet() ? dayDiff(EXAM_DATES[0], today) : null; }
+  function ddayLabel(n) {
+    if (n === null || n === undefined) { return ""; }
+    return n === 0 ? "D-day" : (n > 0 ? "D-" + n : "D+" + (-n));
+  }
+  function ddayText(today) {
+    if (!examDateSet()) { return "시험일 미설정"; }
+    var parts = ["시험 " + ddayLabel(dayDiff(EXAM_DATES[0], today))];
+    if (EXAM_DATES.length > 1) { parts.push("2차 " + ddayLabel(dayDiff(EXAM_DATES[1], today))); }
+    return parts.join(" · ");
+  }
 
   function pad2(n) { return (n < 10 ? "0" : "") + n; }
   function normalizeSetName(s) {
@@ -1428,29 +1441,21 @@
       .replace(/[\s_\-.()\[\]]+/g, "");
   }
   function stripExt(name) { return String(name || "").replace(/\.[a-z0-9]+$/i, ""); }
-  /* 세트명 → 세트 키 (고정 9세트, 그 외는 "new:정규화명"으로 신규 편입) */
-  function canonSet(problemName) {
-    var n = normalizeSetName(problemName);
-    if (!n) { return null; }
-    if (n.indexOf("코코") >= 0) {
-      if (n.indexOf("1회") >= 0) { return "koko1"; }
-      if (n.indexOf("2회") >= 0) { return "koko2"; }
-      return "new:" + n;
-    }
-    if (n.indexOf("상시1회") >= 0) { return "sangsi1"; }
-    if (n.indexOf("상시2회") >= 0) { return "sangsi2"; }
-    if (n.indexOf("2026") >= 0 && n.indexOf("1회") >= 0) { return "y2026"; }
-    if (n.indexOf("a형") >= 0) { return "atype"; }
-    if (n.indexOf("b형") >= 0) { return "btype"; }
-    if (n.indexOf("24") >= 0 && n.indexOf("2급상시") >= 0) { return "s24"; }
-    if (n.indexOf("컴활") >= 0 && n.indexOf("상시") >= 0) { return "cca"; }
-    return "new:" + n;
+  /* 세트명 → 세트 키 = 정규화 키 (시험장 norm_set_key 와 같은 규칙: 소문자화,
+     공백·구분자 제거, 역할 토큰(문제/정답/문제지/기대값) 제거). 고정 세트 표는 없다. */
+  function normSetKey(name) {
+    var s = normalizeSetName(name);
+    ROLE_TOKENS.forEach(function(t){ s = s.split(t).join(""); });
+    return s;
   }
-  function setName(key, fallback) {
-    for (var i = 0; i < FIXED_SETS.length; i++) { if (FIXED_SETS[i].key === key) { return FIXED_SETS[i].name; } }
-    if (key && key.indexOf("new:") === 0) { return fallback || key.slice(4); }
-    return fallback || "세트 미지정";
+  function canonSet(problemName) { return normSetKey(problemName) || null; }
+  /* 표시명 = 파일명에서 뒤쪽 '문제'/'문제지' 토큰을 뗀 것 (시험장 display_name 과 동일) */
+  function displaySetName(problemName) {
+    var stem = stripExt(String(problemName || ""));
+    var out = stem.replace(/[\s_\-]*[(\[]?\s*문제(지)?\s*[)\]]?[\s_\-]*$/, "").replace(/^[\s_\-]+|[\s_\-]+$/g, "");
+    return out || stem;
   }
+  function setName(key, fallback) { return fallback || key || "세트 미지정"; }
   function addDays(iso, n) {
     var p = iso.split("-");
     var d = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2]) + n * 86400000);
@@ -1467,15 +1472,17 @@
   function isWeekend(iso) { var w = weekdayIdx(iso); return w === 0 || w === 6; }
   function fmtMD(iso) { return (+iso.slice(5, 7)) + "/" + (+iso.slice(8, 10)); }
   function resultToRecord(rec) {
-    return { date: String(rec.generated || "").slice(0, 10), set: canonSet(rec.problem), name: stripExt(rec.problem), total: rec.total, target: (typeof rec.target === "number") ? rec.target : null, src: "import" };
+    return { date: String(rec.generated || "").slice(0, 10), set: canonSet(rec.problem), name: displaySetName(rec.problem), total: rec.total, target: (typeof rec.target === "number") ? rec.target : null, src: "import" };
   }
-  /* 세트 풀 = 고정 9세트 + 기록에 등장한 신규 세트 */
+  /* 세트 풀 = 기록에 등장한 세트 전부 (폴백 모드 — 가져온 채점결과에서 모은다).
+     연동 모드에서는 시험장이 스캔한 세트 목록(api.sets)을 그대로 쓴다. */
   function collectSets(records) {
-    var extra = {};
+    var seen = {}, out = [];
     (records || []).forEach(function(r){
-      if (r && r.set && r.set.indexOf("new:") === 0 && !extra[r.set]) { extra[r.set] = r.name || r.set.slice(4); }
+      if (r && r.set && !seen[r.set]) { seen[r.set] = true; out.push({ key: r.set, name: r.name || r.set }); }
     });
-    return FIXED_SETS.concat(Object.keys(extra).map(function(k){ return { key: k, name: extra[k] }; }));
+    out.sort(function(a, b){ return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0); });
+    return out;
   }
   function sortRecords(records) {
     return (records || []).filter(function(r){ return r && typeof r.date === "string" && r.date.length === 10; })
@@ -1486,29 +1493,22 @@
         return (a.total || 0) - (b.total || 0);
       });
   }
-  /* 학습 구간: 시험일 목록에서 도출 — 이전 시험일 다음 날 ~ 다음 시험일 전날, 학습일 0인 구간은 건너뜀.
-     9/17·9/18 시험이면 9/3~9/16 단일 구간 (시험장 study_segments 와 동일) */
+  /* 학습 구간 = 시험일 기준 D-7 ~ D-1 한 구간 (시험장 study_segments 와 동일).
+     시험일이 설정되지 않았으면 빈 목록. */
   function studySegments() {
-    var segs = [], prev = ROUTINE_START;
-    EXAM_DATES.slice().sort().forEach(function(ex){
-      var start = prev, end = addDays(ex, -1);
-      if (end >= start) { segs.push({ no: segs.length + 1, start: start, deadline: end, exam: ex }); }
-      prev = addDays(ex, 1);
-    });
-    return segs;
+    if (!examDateSet()) { return []; }
+    return [{ no: 1, start: addDays(EXAM_DATES[0], -ROUTINE_DAYS), deadline: addDays(EXAM_DATES[0], -1), exam: EXAM_DATES[0] }];
   }
-  var PHASES = studySegments();
-  /* 구간: 시험일 → exam, 마지막 시험일 이후 → after, 그 외 → 속한 학습 구간(study) */
+  /* 구간 kind: unset(미설정) · free(D-7 이전 자유 연습) · week(D-7~D-1) ·
+     exam(시험 당일) · between(1차와 2차 사이) · after(시험 이후) */
   function segmentFor(today) {
+    if (!examDateSet()) { return { kind: "unset" }; }
     if (EXAM_DATES.indexOf(today) >= 0) { return { kind: "exam", examNo: EXAM_DATES.indexOf(today) + 1 }; }
     if (today > EXAM_DATES[EXAM_DATES.length - 1]) { return { kind: "after" }; }
-    for (var i = 0; i < PHASES.length; i++) {
-      var sg = PHASES[i];
-      if (today <= sg.deadline) {
-        return { kind: "study", seg: sg.no, segStart: sg.start, start: today > sg.start ? today : sg.start, end: sg.deadline };
-      }
-    }
-    return { kind: "after" };
+    if (today > EXAM_DATES[0]) { return { kind: "between", examNo: 2 }; }
+    var sg = studySegments()[0];
+    if (today < sg.start) { return { kind: "free", segStart: sg.start, start: sg.start, end: sg.deadline }; }
+    return { kind: "week", seg: sg.no, segStart: sg.start, start: today > sg.start ? today : sg.start, end: sg.deadline };
   }
   /* 기본 용량: 주말·평일·마감일 구분 없이 언제나 추천 1세트 (응시 횟수 제한이 아님) */
   function baseCapacity(d, segEnd) { return DAILY_CAP; }
@@ -1633,7 +1633,7 @@
     });
     var run = 0, prev = null;
     days.slice().sort().forEach(function(d){
-      if (d < ROUTINE_START || EXAM_DATES.indexOf(d) >= 0) { return; }
+      if (EXAM_DATES.indexOf(d) >= 0) { return; }
       run = (prev !== null && addDays(prev, 1) === d) ? run + 1 : 1;
       prev = d;
       if (run >= 3) { mark("streak3", d); }
@@ -1738,33 +1738,30 @@
     return "목표 " + goal + "점(" + (goal === PASS_LINE ? "합격선" : "승급") + ")";
   }
   /* 연속 응시 — 시험장 streak_info 와 동일: current 는 오늘(미응시면 어제)까지, best 는 루틴 시작일부터 */
+  /* 연속 응시 — 첫 응시일부터 오늘까지 (시험일은 세지 않음). 시험장 streak_info 와 동일 */
   function streakInfo(records, today) {
-    var days = {};
+    var days = {}, keys = [];
     scoredRecords(records).forEach(function(r){
-      if (r.date >= ROUTINE_START && r.date <= today && EXAM_DATES.indexOf(r.date) < 0) { days[r.date] = true; }
+      if (r.date <= today && EXAM_DATES.indexOf(r.date) < 0 && !days[r.date]) { days[r.date] = true; keys.push(r.date); }
     });
     var todayDone = days[today] === true;
     var cur = 0, d = todayDone ? today : addDays(today, -1);
     while (days[d]) { cur++; d = addDays(d, -1); }
     var best = 0, run = 0;
-    for (d = ROUTINE_START; d <= today; d = addDays(d, 1)) {
+    keys.sort();
+    for (d = keys.length ? keys[0] : today; d <= today; d = addDays(d, 1)) {
       run = days[d] ? run + 1 : 0;
       if (run > best) { best = run; }
     }
     return { current: cur, best: best, today_done: todayDone };
   }
-  /* 첫응시 우선순위: 고정 9세트 순 → 그 외 이름순("신규") */
+  /* 첫 응시 순서 = 이름순 (고정 우선순위 표 폐지 — 시험장 prioritized_sets 와 동일) */
   function prioritizedSets(sets) {
-    var fixed = [], rest = [];
-    FIXED_SETS.forEach(function(f){
-      var s = sets.filter(function(x){ return x.key === f.key; })[0];
-      if (s) { fixed.push({ set: s, label: f.name }); }
+    var ordered = (sets || []).slice().sort(function(a, b){
+      if (a.name !== b.name) { return a.name < b.name ? -1 : 1; }
+      return a.key < b.key ? -1 : (a.key > b.key ? 1 : 0);
     });
-    sets.forEach(function(s){
-      if (!FIXED_SETS.some(function(f){ return f.key === s.key; })) { rest.push(s); }
-    });
-    rest.sort(function(a, b){ return a.name < b.name ? -1 : (a.name > b.name ? 1 : 0); });
-    return fixed.concat(rest.map(function(s){ return { set: s, label: "신규" }; }));
+    return ordered.map(function(s, i){ return { set: s, label: (i + 1) + "/" + ordered.length }; });
   }
   function bestOf(recs) {
     var b = null;
@@ -1775,24 +1772,32 @@
     return { kind: kind, set: s ? s.key : null, name: s ? s.name : AUTO_NAME, target: (goal === undefined) ? null : goal, auto: !s, why: why, countsAsRetry: false, mandatory: false, best: null };
   }
   /*
-   * 적응형 일정 — 시험장 v2.5.0 build_adaptive_plan 과 동일 규격 (결정적)
+   * 적응형 일정 — 시험장 build_adaptive_plan 과 동일 규격 (결정적)
+   *  · 기간은 시험일 기준 D-7 ~ D-1. 7일이 안 남았으면 뒤에서부터 잘려 오늘~D-1 만 남고,
+   *    7일보다 많이 남았으면 D-7 전은 자유 연습(kind free — 앞으로 올 일주일은 미리 보여 준다).
    *  · 하루 **추천** 1세트. v2.7.0: 응시 횟수 제한이 없어 오늘 이미 응시했어도 추천은 그대로 남는다.
-   *    주말 2세트·밀림 승격·용량 확장·'선택' 강등·전 세트 완주 보장은 없앴다(경고도 없음).
    *  · 목표는 사다리 70 → 80 → 90 → 100. 현재 목표 = 아직 달성하지 못한 가장 낮은 단계(전체 기록 최고점 기준).
-   *  · 세트 선택 ① 미응시(우선순위 순, kind first) ② 70점 미만(최고점 낮은 순, kind retry)
-   *    ③ 현재 목표 미달(최고점 낮은 순, kind goal) ④ 없으면 그 날은 비워 둔다(free = 자유 복습).
-   *  · 재응시 풀은 순환하되 같은 날 같은 세트는 건너뛴다(하루 1세트라 실제로는 날마다 하나).
+   *  · 세트 선택 ① 미응시(이름순, kind first) ② 70점 미만(최고점 낮은 순, kind retry)
+   *    ③ 현재 목표 미달(최고점 낮은 순, kind goal) ④ 그래도 날이 남으면 보유 세트를 순서대로
+   *    다시 배정(kind goal — 오답 복습 후 재응시) ⑤ 전 세트가 이미 목표 이상이면 그 날은 비워 둔다.
+   *  · 세트가 하나도 없으면 배정 없이 "문제·정답 파일을 넣어 주세요" 안내만 남는다(noSets).
    */
   function buildAdaptivePlan(today, records, sets) {
-    sets = sets || FIXED_SETS;
+    sets = sets || [];
     var seg = segmentFor(today);
     var lv = levelInfo(records);
     var plan = { today: today, kind: seg.kind, phase: seg.seg || 0, ended: seg.kind === "after", examNo: seg.examNo || 0,
                  start: null, deadline: null, exam: null, days: [], promoted: [], optional: [], optionalNames: [], missed: [], reason: "", warning: null, warnings: [],
                  retryTarget: 0, remainingSets: 0, todayRecords: [], doneInPhase: 0, progress: { done: 0, need: 0 }, shrunk: false,
                  level: lv, streak: streakInfo(records, today), attemptsLeft: 0, todayLocked: false,
-                 passedSets: 0, totalSets: sets.length, allClear: false, retryQueue: [] };
-    if (seg.kind !== "study") { return plan; }
+                 passedSets: 0, totalSets: sets.length, allClear: false, noSets: !sets.length,
+                 examDates: EXAM_DATES.slice(), dday: ddayNum(today), routineDays: ROUTINE_DAYS, retryQueue: [] };
+    if (seg.kind !== "week" && seg.kind !== "free") {
+      if (seg.kind === "unset") { plan.reason = "시험일 미설정 — 시험 날짜를 입력하면 일정이 만들어집니다"; }
+      else if (seg.kind === "after") { plan.reason = "시험이 끝났습니다 — 새 시험을 준비한다면 시험일을 다시 설정하세요"; }
+      else if (seg.kind === "between") { plan.reason = "2차 시험 대비 — 오답 복습과 실수 노트만 가볍게"; }
+      return plan;
+    }
     var start = seg.start, end = seg.end, segStart = seg.segStart;
     plan.start = start; plan.deadline = end; plan.exam = addDays(end, 1);
     var recs = sortRecords(records).filter(function(r){ return r.mode !== "부분연습" && r.mode !== "오답재풀이"; });
@@ -1829,11 +1834,14 @@
     var retryPool = belowPass.map(function(s){ return ["retry", s]; }).concat(belowGoal.map(function(s){ return ["goal", s]; }));
     plan.allClear = sets.length > 0 && !firstPool.length && !retryPool.length;
     plan.retryQueue = retryPool.map(function(p){ return { kind: p[0], set: p[1].key, name: p[1].name, best: bests[p[1].key] === undefined ? null : bests[p[1].key] }; });
+    /* ④ 첫 응시도 재응시 후보도 동나면 보유 세트를 이름순으로 돌려 다시 배정한다
+       (세트 수가 일주일보다 적을 때 — 오답 복습 후 점수 올리기) */
+    var roundPool = plan.allClear ? [] : ordered.map(function(o){ return o.set; });
 
-    var queue = firstPool.map(function(o){ return makeSlot("first", o.set, goal, "첫 응시 · 우선순위 " + o.label); });
+    var queue = firstPool.map(function(o){ return makeSlot("first", o.set, goal, "첫 응시 · 보유 세트 " + o.label); });
     var perDay = {}, free = {};
     days.forEach(function(dd){ perDay[dd] = []; });
-    var cursor = 0;
+    var cursor = 0, rcursor = 0;
     days.forEach(function(dd){
       while (perDay[dd].length < cap[dd]) {
         if (queue.length) {
@@ -1842,17 +1850,24 @@
           perDay[dd].push(fs);
           continue;
         }
-        var pick = null;
-        for (var t = 0; t < retryPool.length; t++) {
-          var cand = retryPool[cursor % retryPool.length];
+        var pick = null, t, cand;
+        for (t = 0; t < retryPool.length; t++) {
+          cand = retryPool[cursor % retryPool.length];
           cursor++;
           if (perDay[dd].every(function(x){ return x.set !== cand[1].key; })) { pick = cand; break; }
+        }
+        if (!pick && roundPool.length) {
+          for (t = 0; t < roundPool.length; t++) {
+            cand = roundPool[rcursor % roundPool.length];
+            rcursor++;
+            if (perDay[dd].every(function(x){ return x.set !== cand.key; })) { pick = ["goal", cand]; break; }
+          }
         }
         if (!pick) { break; }                         /* 배정할 세트 없음 → 자유 복습 */
         var b = bests[pick[1].key];
         var bTxt = (b === null || b === undefined) ? "점수 없음" : (b + "점");
         var why = pick[0] === "retry" ? ("재응시 · 최고점 " + bTxt + " (합격선 " + PASS_LINE + " 미달)")
-                                      : ("목표 " + goal + "점 도전 · 최고점 " + bTxt);
+                                      : ("오답 복습 후 재응시 · 목표 " + goal + "점 · 최고점 " + bTxt);
         var rs = makeSlot(pick[0], pick[1], goal, why);
         rs.best = (b === undefined) ? null : b;
         rs.date = dd;
@@ -1876,8 +1891,14 @@
       if (EXAM_DATES.indexOf(md) < 0 && !(byDate[md] && byDate[md].length)) { missed.push(md); }
     }
     plan.missed = missed;
-    plan.reason = lv.tier === "perfect" ? ("만점 달성 · 남은 학습일 " + plan.attemptsLeft + "일")
-                                        : ("현재 목표 " + goal + "점 · 남은 학습일 " + plan.attemptsLeft + "일");
+    if (!sets.length) {
+      plan.reason = NO_SETS_REASON;
+    } else if (seg.kind === "free") {
+      plan.reason = "자유 연습 · " + segStart + "(D-" + ROUTINE_DAYS + ")부터 일주일 일정 시작 · 현재 목표 " + goal + "점";
+    } else {
+      plan.reason = lv.tier === "perfect" ? ("만점 달성 · 남은 학습일 " + plan.attemptsLeft + "일")
+                                          : ("현재 목표 " + goal + "점 · 남은 학습일 " + plan.attemptsLeft + "일");
+    }
     plan.doneInPhase = scoredRecords(recs).filter(function(r){
       return r.date >= segStart && r.date <= end && r.date <= today && EXAM_DATES.indexOf(r.date) < 0;
     }).length;
@@ -1887,8 +1908,10 @@
   }
   function planSummary(plan) {
     if (!plan) { return ""; }
-    if (plan.kind === "exam") { return plan.examNo === 1 ? "오늘은 1차 시험일 — 시험 후 저녁에는 세트 없이 복기 메모·실수 노트 1회독만 (시험일 탭)." : "오늘은 2차 시험일 — 아침에 실수 노트와 어제 복기 메모만 훑고 출발 (시험일 탭)."; }
-    if (plan.kind === "after") { return "루틴(9/3 – 9/16)과 시험 2회(9/17·18)가 끝났습니다."; }
+    if (plan.kind === "unset") { return "시험일이 아직 설정되지 않았습니다 — [시험일 설정]에서 시험 날짜를 입력하면 D-7 ~ D-1 일주일 일정이 만들어집니다."; }
+    if (plan.kind === "exam") { return plan.examNo === 1 ? "오늘은 시험일 — 체크리스트만 확인하고 다녀오세요 (시험일 탭)." : "오늘은 2차 시험일 — 아침에 실수 노트와 어제 복기 메모만 훑고 출발 (시험일 탭)."; }
+    if (plan.kind === "between") { return "2차 시험 대비 — 오답 복습과 실수 노트만 가볍게."; }
+    if (plan.kind === "after") { return "일주일 루틴과 시험이 끝났습니다 — 새 시험을 준비한다면 시험일을 다시 설정하세요."; }
     if (plan.reason) { return plan.reason + (plan.todayRecords.length ? " · 오늘 " + plan.todayRecords.length + "회 응시함 (횟수 제한 없음)" : ""); }
     return "하루 한 세트 추천 — 남은 학습일 " + plan.attemptsLeft + "일 (마감 " + fmtMD(plan.deadline) + ")";
   }
@@ -1940,12 +1963,9 @@
   /* __IMPORT_PURE_END__ */
 
   /* ---------- 상태 로드 (v5 · v4/v3에서 마이그레이션: 체크 초기화, 채점결과·점수 이력·퀴즈 보존) ---------- */
-  /* v4(Day 키) 수동 점수 → 날짜·세트 기록: Day → 날짜는 현재 고정 일정표, 세트는 그 Day 의 고정 세트(자동 선택 날은 미지정) */
+  /* v4(Day 키) 수동 점수는 고정 일정표가 있어야 날짜로 옮길 수 있었는데 그 표가 없어졌다(v3.0.0) —
+     날짜를 알 수 없으므로 마이그레이션에서 제외한다(채점결과·퀴즈·체크는 그대로 옮긴다). */
   var V4_DATES = {}, V4_SETS = {};
-  FIXED_PLAN.forEach(function(f){
-    V4_DATES[f.day] = f.date;
-    if (f.sets[0]) { V4_SETS[f.day] = f.sets.slice(); }
-  });
   var state = null;
   try {
     var raw5 = localStorage.getItem(KEY5);
@@ -2000,6 +2020,19 @@
   }
   save();
 
+  /* ---------- 시험일 (연동 모드: 시험장 설정 · 폴백 모드: localStorage) ---------- */
+  function loadExamDatesLocal() {
+    try {
+      var raw = localStorage.getItem(EXAM_KEY);
+      if (raw) { var a = JSON.parse(raw); if (Array.isArray(a)) { return a; } }
+    } catch (e) { /* 저장소 없음 */ }
+    return [];
+  }
+  function saveExamDatesLocal(list) {
+    try { localStorage.setItem(EXAM_KEY, JSON.stringify(list)); } catch (e) { /* 저장 불가 무시 */ }
+  }
+  setExamDates(loadExamDatesLocal());
+
   /* ---------- 기록 · 일정 · 게이트 헬퍼 ---------- */
   function allRecords() {
     if (linked()) {
@@ -2009,7 +2042,7 @@
     state.manual.forEach(function(m){ out.push({ date: m.date, set: m.set, name: m.name, total: m.total, target: (typeof m.target === "number") ? m.target : null, src: "manual" }); });
     return sortRecords(out);
   }
-  var plan = null, plan2 = null, planSets = FIXED_SETS;
+  var plan = null, plan2 = null, planSets = [];
   function computePlan(todayIso) {
     if (linked()) {
       planSets = api.sets;
@@ -2020,7 +2053,7 @@
     var recs = allRecords();
     planSets = collectSets(recs);
     plan = buildAdaptivePlan(todayIso, recs, planSets);
-    plan2 = (plan.phase === 1 && PHASES[1]) ? buildAdaptivePlan(PHASES[1].start, recs, planSets) : null;
+    plan2 = null;                         /* 1주 커리큘럼은 단일 구간이라 미리보기 없음 */
     return plan;
   }
   function recordsOn(date) { return allRecords().filter(function(r){ return r.date === date; }); }
@@ -2093,7 +2126,7 @@
   function trackClear(fn) {
     var before = todayCleared();
     fn();
-    computePlan(plan ? plan.today : START_ISO);
+    computePlan(plan ? plan.today : iso);
     if (!before && todayCleared()) { lastCleared = plan.today; }
   }
 
@@ -2164,43 +2197,173 @@
   }
   computePlan(iso);
 
-  /* ---------- D-카운터(1차·2차) · 날짜 스트립 오늘 표시 (동적) ---------- */
+  /* ---------- 시험일 · D-카운터 · 날짜 스트립 (전부 시험일에서 계산) ---------- */
+  function fmtDateKo(isoStr) {
+    if (!isIsoDate(isoStr)) { return ""; }
+    return (+isoStr.slice(5, 7)) + "/" + (+isoStr.slice(8, 10)) + " (" + wdNames[weekdayIdx(isoStr)] + ")";
+  }
+  /* 스트립: D-7 ~ 마지막 시험일 (7일이 안 남았으면 오늘부터). 시험일 미설정이면 비운다. */
+  function renderStrip() {
+    var strip = document.getElementById("strip");
+    var wrap = document.getElementById("strip-wrap");
+    if (!strip) { return; }
+    strip.textContent = "";
+    if (!examDateSet()) {
+      if (wrap) { wrap.hidden = true; }
+      return;
+    }
+    if (wrap) { wrap.hidden = false; }
+    var segs = studySegments()[0];
+    var from = segs.start < iso ? segs.start : segs.start;    /* 지난 날도 보여 준다 */
+    var last = EXAM_DATES[EXAM_DATES.length - 1];
+    for (var d = from; d <= last; d = addDays(d, 1)) {
+      var cell = document.createElement("div");
+      var isExam = EXAM_DATES.indexOf(d) >= 0;
+      cell.className = "cell " + (isExam ? "exam" : "mock");
+      cell.setAttribute("data-date", d);
+      var wd = document.createElement("span"); wd.className = "wd"; wd.textContent = wdNames[weekdayIdx(d)];
+      var dt = document.createElement("span"); dt.className = "dt"; dt.textContent = String(+d.slice(8, 10));
+      var mk = document.createElement("span"); mk.className = "mk";
+      mk.textContent = isExam ? "시험" : (d === segs.deadline ? "마감" : "모의");
+      cell.appendChild(wd); cell.appendChild(dt); cell.appendChild(mk);
+      strip.appendChild(cell);
+    }
+  }
+  /* 시험일 탭의 D-DAY 카드 (1차는 항상, 2차는 설정됐을 때만) */
+  function renderExamCards() {
+    [1, 2].forEach(function(no){
+      var card = document.querySelector('.exam-card[data-exam="' + no + '"]');
+      var head = document.getElementById("exam" + no + "-head");
+      var d = EXAM_DATES[no - 1] || "";
+      var on = !!d;
+      if (card) {
+        card.setAttribute("data-date", d);
+        if (no === 2) { card.hidden = !on; }
+        var dl = document.getElementById("exam" + no + "-date");
+        if (dl) { dl.textContent = (on ? fmtDateKo(d) + " · " : "") + "40분"; }
+      }
+      if (head) {
+        if (no === 2) { head.hidden = !on; }
+        var tl = document.getElementById("exam" + no + "-title");
+        if (tl) { tl.textContent = (on ? fmtDateKo(d) + " — " : "") + (no === 1 ? "시험일" : "2차 시험일"); }
+      }
+    });
+    var range = document.getElementById("exam-tab-range");
+    if (range) { range.textContent = examDateSet() ? ("— " + EXAM_DATES.map(fmtDateKo).join(" · ")) : ""; }
+    var sub = document.getElementById("exam-tab-sub");
+    if (sub && examDateSet()) {
+      sub.textContent = EXAM_DATES.length > 1
+        ? "이틀 연속 시험. 1차 당일 저녁에는 세트 없이 복기 메모(막힌 유형)와 실수 노트 1회독만 가볍게 · 2차 아침에는 실수 노트와 어제 복기 메모만 훑고 출발 — 70점이면 합격."
+        : "시험 당일 체크리스트와 40분 시간 배분입니다. 전날은 새 세트 대신 실수 노트 1회독 — 70점이면 합격.";
+    }
+  }
+  /* 시험일 입력 카드 — 연동 모드면 시험장에 저장(POST /api/exam_date), 폴백이면 localStorage.
+     프로그램과 웹이 같은 기능을 갖도록 양쪽 모두에서 바꿀 수 있다. */
+  function renderExamSetup() {
+    var i1 = document.getElementById("exam-date-1"), i2 = document.getElementById("exam-date-2");
+    var note = document.getElementById("es-note"), title = document.getElementById("es-title");
+    if (i1 && document.activeElement !== i1) { i1.value = EXAM_DATES[0] || ""; }
+    if (i2 && document.activeElement !== i2) { i2.value = EXAM_DATES[1] || ""; }
+    if (title) { title.textContent = examDateSet() ? ("시험일 " + fmtDateKo(EXAM_DATES[0]) + (EXAM_DATES.length > 1 ? " · 2차 " + fmtDateKo(EXAM_DATES[1]) : "")) : "시험일을 먼저 설정하세요"; }
+    if (note) {
+      note.textContent = examDateSet()
+        ? ("D-" + ROUTINE_DAYS + " ~ D-1 일주일 일정이 이 날짜 기준으로 계산됩니다" + (linked() ? " (시험장과 함께 저장)" : " (이 브라우저에 저장)") + ".")
+        : ("시험 날짜를 넣으면 그 날 기준 D-" + ROUTINE_DAYS + " ~ D-1 일주일 일정이 만들어집니다. 7일이 안 남았으면 남은 날짜에 맞춰 뒤에서부터 배정합니다.");
+    }
+    var setup = document.getElementById("exam-setup");
+    if (setup) { setup.classList.toggle("es-empty", !examDateSet()); }
+  }
+  function examMsg(text, bad) {
+    var el = document.getElementById("exam-date-msg");
+    if (!el) { return; }
+    el.textContent = text || "";
+    el.classList.toggle("bad", bad === true);
+  }
+  function applyExamDates(list, done) {
+    var d1 = parseIso(list[0]), d2 = parseIso(list[1]);
+    if (list[0] && !d1) { examMsg("시험일 형식이 올바르지 않습니다 (YYYY-MM-DD).", true); return; }
+    if (list[1] && !d2) { examMsg("2차 시험일 형식이 올바르지 않습니다 (YYYY-MM-DD).", true); return; }
+    if (d1 && d2 && d2 <= d1) { examMsg("2차 시험일은 시험일보다 뒤여야 합니다.", true); return; }
+    var next = d1 ? (d2 ? [d1, d2] : [d1]) : [];
+    if (linked()) {
+      apiPost("/api/exam_date", { date: d1, date2: d2 }, function(ok, j){
+        if (!ok) { examMsg("시험장에 저장하지 못했습니다 — " + errText(j), true); return; }
+        applyState(j, { force: true });
+        examMsg(next.length ? "시험일을 저장했습니다 — 일정을 다시 계산했습니다." : "시험일을 지웠습니다.", false);
+        if (done) { done(); }
+      });
+      return;
+    }
+    setExamDates(next);
+    saveExamDatesLocal(EXAM_DATES.slice());
+    examMsg(next.length ? "시험일을 저장했습니다 — 일정을 다시 계산했습니다." : "시험일을 지웠습니다.", false);
+    renderAll();
+    if (done) { done(); }
+  }
+  function wireExamSetup() {
+    var save = document.getElementById("exam-date-save");
+    var clear = document.getElementById("exam-date-clear");
+    if (save) {
+      save.addEventListener("click", function(){
+        var i1 = document.getElementById("exam-date-1"), i2 = document.getElementById("exam-date-2");
+        var v1 = i1 ? i1.value.trim() : "";
+        if (!v1) { examMsg("시험일을 입력하세요 (YYYY-MM-DD).", true); return; }
+        applyExamDates([v1, i2 ? i2.value.trim() : ""]);
+      });
+    }
+    if (clear) { clear.addEventListener("click", function(){ applyExamDates(["", ""]); }); }
+  }
+  wireExamSetup();
   function renderCalendar(){
     var dateLabel = document.getElementById("today-date");
     if (dateLabel) {
       dateLabel.textContent = "— " + (now.getMonth() + 1) + "/" + now.getDate() + " (" + wdNames[now.getDay()] + ")";
     }
-    var t0 = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-    function left(y, m, d) { return Math.round((new Date(y, m, d).getTime() - t0.getTime()) / 86400000); }
     function txt(n) { return n > 0 ? "D-" + n : (n === 0 ? "D-DAY" : "종료"); }
-    var d1 = left(2026, 8, 17), d2 = left(2026, 8, 18);
+    var has = examDateSet();
+    var d1 = has ? dayDiff(EXAM_DATES[0], iso) : null;
+    var d2 = (has && EXAM_DATES.length > 1) ? dayDiff(EXAM_DATES[1], iso) : null;
     var dnum = document.getElementById("d-num");
-    if (dnum) { dnum.textContent = txt(d1); }
+    if (dnum) { dnum.textContent = has ? txt(d1) : "D-?"; }
     var fxo = document.getElementById("fx-out");
-    if (fxo) { fxo.textContent = String(d1); }
+    if (fxo) { fxo.textContent = has ? String(d1) : "-"; }
+    var fxf = document.getElementById("fx-formula");
+    if (fxf) { fxf.textContent = has ? ('=DATE(' + (+EXAM_DATES[0].slice(0, 4)) + ',' + (+EXAM_DATES[0].slice(5, 7)) + ',' + (+EXAM_DATES[0].slice(8, 10)) + ')-TODAY()') : "=시험일-TODAY()"; }
     var dsub = document.getElementById("d-sub");
-    if (dsub) { dsub.textContent = "2차 9/18 (금) · " + txt(d2); }
+    if (dsub) { dsub.textContent = has ? (d2 === null ? ("시험 " + fmtDateKo(EXAM_DATES[0])) : ("2차 " + fmtDateKo(EXAM_DATES[1]) + " · " + txt(d2))) : "시험일 미설정"; }
     var mast = document.getElementById("mast-dday");
-    if (mast) { mast.textContent = "1차 9/17 (목) " + txt(d1) + " · 2차 9/18 (금) " + txt(d2); }
+    if (mast) { mast.textContent = has ? ("시험 " + fmtDateKo(EXAM_DATES[0]) + " " + txt(d1) + (d2 === null ? "" : " · 2차 " + fmtDateKo(EXAM_DATES[1]) + " " + txt(d2))) : "시험일 미설정"; }
+    var hsub = document.getElementById("hero-sub");
+    if (hsub) {
+      hsub.textContent = has
+        ? (routineStart() + " (D-" + ROUTINE_DAYS + ") 시작 · " + addDays(EXAM_DATES[0], -1) + " (D-1) 마감 · 하루 한 세트 40분 완주 → 채점이면 그 날 클리어 · 응시 횟수 제한 없음(예습·복습 자유) · 목표는 70 → 80 → 90 → 100 · 시험 " + fmtDateKo(EXAM_DATES[0]) + (d2 === null ? "" : " · 2차 " + fmtDateKo(EXAM_DATES[1])) + " — 70점 합격")
+        : "시험일을 설정하면 D-7 ~ D-1 일주일 일정이 만들어집니다 · 하루 한 세트 40분 완주 → 채점이면 그 날 클리어 · 응시 횟수 제한 없음(예습·복습 자유) · 목표는 70 → 80 → 90 → 100 — 70점 합격";
+    }
+    var s1r = document.getElementById("stage1-range");
+    if (s1r) { s1r.textContent = has ? ("(" + routineStart() + " ~ " + addDays(EXAM_DATES[0], -1) + ")") : "(시험일 미설정)"; }
+    var d00d = document.getElementById("d00-date");
+    if (d00d) { d00d.textContent = has ? ("시작 전 (~" + addDays(routineStart(), -1) + ")") : "시작 전"; }
+    renderStrip();
+    renderExamCards();
     Array.prototype.slice.call(document.querySelectorAll(".strip .cell.today")).forEach(function(c){ c.classList.remove("today"); });
     var todayCell = document.querySelector('.strip .cell[data-date="' + iso + '"]');
     if (todayCell) {
       todayCell.classList.add("today");
-      var mk = todayCell.querySelector(".mk");
-      if (mk && !mk.textContent) { mk.textContent = "오늘"; }
+      var mk2 = todayCell.querySelector(".mk");
+      if (mk2) { mk2.textContent = "오늘"; }
     }
     var stripStatus = document.getElementById("strip-status");
     if (stripStatus) {
       stripStatus.hidden = true;
-      if (iso === "2026-09-02") {
+      if (!examDateSet()) {
         stripStatus.hidden = false;
-        stripStatus.textContent = "내일 9/3 (목) 시작 — 오늘은 시험장 설치와 세트 파일 준비만 해 두세요 (Day 0 카드).";
-      } else if (iso < START_ISO) {
+        stripStatus.textContent = "시험일이 설정되지 않았습니다 — 위 [시험일 설정]에서 시험 날짜를 넣어 주세요.";
+      } else if (iso < routineStart()) {
         stripStatus.hidden = false;
-        stripStatus.textContent = "루틴은 9/3 (목)에 시작합니다. 그 전에는 준비 카드(Day 0)를 체크해 두세요.";
-      } else if (iso > EXAM2_ISO) {
+        stripStatus.textContent = "일주일 일정은 " + routineStart() + " (D-" + ROUTINE_DAYS + ")에 시작합니다. 그 전에는 자유 연습 구간이에요.";
+      } else if (iso > EXAM_DATES[EXAM_DATES.length - 1]) {
         stripStatus.hidden = false;
-        stripStatus.textContent = "루틴(9/3 – 9/16)과 시험 2회(9/17·18)가 끝났습니다.";
+        stripStatus.textContent = "시험이 끝났습니다 — 새 시험을 준비한다면 [시험일 설정]에서 시험일을 다시 넣으세요.";
       }
     }
   }
@@ -2298,7 +2461,7 @@
       h3 = "자유 복습 — 필수 과제 없음 (실수 노트 · 함수 퀴즈)";
     }
     var notes = [];
-    if (day && day.deadlineDay) { notes.push("마지막 세트 + 실수 노트 1회독 + 일찍 자기 — 내일 1차 시험"); }
+    if (day && day.deadlineDay) { notes.push("마지막 세트 + 실수 노트 1회독 + 일찍 자기 — 내일이 시험일"); }
     if ((mode === "today" || mode === "future") && plan && plan.level) {
       notes.push(plan.level.tier === "perfect" ? "만점(100점) 달성 — 남은 세트도 100점 도전" : ("현재 목표 " + plan.level.current_goal + "점"));
     }
@@ -2381,12 +2544,12 @@
         }
         html += taskLi(dk + "t5", "⑤ 선택 — 함수 퀴즈 10문제", false, dk, { key: date + "|quiz" });
         if (day && day.deadlineDay) {
-          html += taskLi(dk + "t6", "실수 노트 탭 전체 1회독", false, dk, { key: date + "|t6" }) + taskLi(dk + "t7", "일찍 자기 — 내일 1차 시험 (모레 2차)", false, dk, { key: date + "|t7" });
+          html += taskLi(dk + "t6", "실수 노트 탭 전체 1회독", false, dk, { key: date + "|t6" }) + taskLi(dk + "t7", "일찍 자기 — 내일이 시험일", false, dk, { key: date + "|t7" });
         }
       } else {
         STEP_TASKS.forEach(function(t){ html += taskLi(dk + t.n, t.text, t.req, dk); });
         if (day && day.deadlineDay) {
-          html += taskLi(dk + "t6", "실수 노트 탭 전체 1회독", false, dk) + taskLi(dk + "t7", "일찍 자기 — 내일 1차 시험 (모레 2차)", false, dk);
+          html += taskLi(dk + "t6", "실수 노트 탭 전체 1회독", false, dk) + taskLi(dk + "t7", "일찍 자기 — 내일이 시험일", false, dk);
         }
       }
       html += '</ul></div>';
@@ -2419,21 +2582,31 @@
       if (date === iso) { return { mode: "today", day: planByDate[date] || null, records: recs, phaseLabel: label }; }
       if (planByDate[date]) { return { mode: "future", day: planByDate[date], records: recs, phaseLabel: label }; }
       if (prevByDate[date]) { return { mode: "preview", day: prevByDate[date], records: recs, phaseLabel: label }; }
-      if (linked() && plan.phase === 1 && PHASES[1] && date >= PHASES[1].start) { return { mode: "next", day: null, records: recs, phaseLabel: label }; }
       return { mode: "future", day: null, records: recs, phaseLabel: label };
     }
-    function dayLabel(date) { return "Day " + (dayDiff(date, START_ISO) + 1); }
-    dateRange(PHASES[0].start, PHASES[0].deadline).forEach(function(date){ if (g1) { g1.appendChild(buildDateCard(date, ctxFor(date, dayLabel(date)))); } });
-    if (PHASES[1]) { dateRange(PHASES[1].start, PHASES[1].deadline).forEach(function(date){ if (g2) { g2.appendChild(buildDateCard(date, ctxFor(date, dayLabel(date)))); } }); }
+    var segs = studySegments();
+    if (!segs.length) { return; }              /* 시험일 미설정 — 날짜 카드 없음 */
+    function dayLabel(date) {
+      var n = dayDiff(date, segs[0].start) + 1;
+      return "Day " + n + " (D-" + (ROUTINE_DAYS + 1 - n) + ")";
+    }
+    dateRange(segs[0].start, segs[0].deadline).forEach(function(date){ if (g1) { g1.appendChild(buildDateCard(date, ctxFor(date, dayLabel(date)))); } });
   }
-  /* 고정 일정표 한 줄(밀림 없을 때의 기본 배정) — 시험장 ROUTINE_PLAN 과 동일 */
+  /* 일정 규칙 한 줄 — 고정 일정표는 없다(보유 세트로 매번 계산) */
   function renderFixedPlan() {
     var el = document.getElementById("fixed-plan");
     if (!el) { return; }
-    el.textContent = "기본 일정표(기록 없을 때 · 하루 추천 1세트): " + FIXED_PLAN.map(function(f){
-      var body = f.sets.map(function(k){ return k ? (SET_SHORT[k] || k) : "자동 선택"; }).join("+");
-      return fmtMD(f.date) + " " + body + (f.special ? "+실수 노트" : "");
-    }).join(" · ") + " · 목표는 기록 최고점에 따라 70 → 80 → 90 → 100 으로 올라갑니다";
+    if (!examDateSet()) {
+      el.textContent = "시험일을 설정하면 그 날 기준 D-7 ~ D-1 일주일 일정이 여기에 만들어집니다.";
+      return;
+    }
+    var segs = studySegments()[0];
+    var n = (planSets || []).length;
+    el.textContent = "일정 " + segs.start + "(D-" + ROUTINE_DAYS + ") ~ " + segs.deadline
+      + "(D-1) · 시험 " + EXAM_DATES[0] + (EXAM_DATES.length > 1 ? " · 2차 " + EXAM_DATES[1] : "")
+      + " · 보유 세트 " + n + "개 — "
+      + (n ? "첫 응시(이름순) → 70점 미만 → 현재 목표 미달 → 보유 세트 순환 재응시 순으로 하루 한 세트씩 배정합니다. 목표는 기록 최고점에 따라 70 → 80 → 90 → 100 으로 올라갑니다."
+           : "아직 세트가 없습니다. 학습 폴더에 '<이름>_문제.xlsx' 와 '<이름>_정답.xlsx' 를 넣으면 그 세트로 일정이 만들어집니다.");
   }
 
   /* ---------- 렌더 ---------- */
@@ -2650,19 +2823,28 @@
     slot.textContent = "";
     var note = document.createElement("p");
     note.className = "today-note";
-    if (iso < START_ISO) {
+    if (!examDateSet()) {
       var prep = document.querySelector('.day-grid [data-day="d00"]');
       if (prep) { slot.appendChild(makeClone(prep)); }
-      note.textContent = (iso === "2026-09-02" ? "내일 9/3 (목) 시작입니다." : "루틴은 9/3 (목)에 시작합니다.") + " 위 준비 카드를 체크해 두세요. 첫 카드는 일정 탭에서 미리 볼 수 있어요.";
+      note.textContent = "시험일이 아직 설정되지 않았습니다 — 위 [시험일 설정]에서 시험 날짜를 넣으면 D-7 ~ D-1 일주일 일정이 만들어집니다.";
+      slot.appendChild(note);
+      return;
+    }
+    if (iso < routineStart()) {
+      var prep2 = document.querySelector('.day-grid [data-day="d00"]');
+      if (prep2) { slot.appendChild(makeClone(prep2)); }
+      note.textContent = "일주일 일정은 " + routineStart() + " (D-" + ROUTINE_DAYS + ")에 시작합니다. 그 전까지는 자유 연습 — 아래 세트 보드에서 아무 세트나 골라 풀어 보세요.";
       slot.appendChild(note);
       return;
     }
     var card = document.querySelector('.day-grid [data-day="' + dayKey(iso) + '"]');
     if (!card && EXAM_DATES.indexOf(iso) >= 0) { card = document.querySelector('.exam-card[data-date="' + iso + '"]'); }
     if (card) { slot.appendChild(makeClone(card)); }
-    if (iso === EXAM_ISO) { note.textContent = "오늘은 1차 시험일입니다. 위 체크리스트를 확인하고, 시험 후 저녁에는 세트 없이 복기 메모·실수 노트 1회독만 체크하세요 — 내일 2차가 있습니다."; }
-    else if (iso === EXAM2_ISO) { note.textContent = "오늘은 2차 시험일입니다. 아침에 실수 노트와 어제 복기 메모만 한 번 훑고 출발하세요."; }
-    else if (plan.phase === 0) { note.textContent = "루틴 기간이 지났습니다."; }
+    if (iso === EXAM_DATES[0]) { note.textContent = "오늘은 시험일입니다. 위 체크리스트만 확인하고 다녀오세요" + (EXAM_DATES.length > 1 ? " — 내일 2차가 있으니 저녁에는 복기 메모·실수 노트 1회독만 가볍게." : "."); }
+    else if (EXAM_DATES.length > 1 && iso === EXAM_DATES[1]) { note.textContent = "오늘은 2차 시험일입니다. 아침에 실수 노트와 어제 복기 메모만 한 번 훑고 출발하세요."; }
+    else if (plan.kind === "after") { note.textContent = "시험이 끝났습니다 — 새 시험을 준비한다면 시험일을 다시 설정하세요."; }
+    else if (plan.kind === "between") { note.textContent = "2차 시험 대비 — 오답 복습과 실수 노트만 가볍게."; }
+    else if (plan.noSets) { note.textContent = NO_SETS_REASON + " — 학습 폴더에 '<이름>_문제.xlsx' 와 '<이름>_정답.xlsx' 를 넣으면 그 세트로 일정이 만들어집니다."; }
     else if (!card) { note.textContent = "오늘은 배정이 없습니다."; }
     else if (plan.todayRecords.length) { note.textContent = "오늘 " + plan.todayRecords.length + "회 응시했습니다 — 응시 횟수 제한은 없어요. 아래 세트 보드에서 점수를 올리고 싶은 세트를 골라 바로 다시 풀 수 있습니다."; }
     else if (plan.allClear) { note.textContent = "전 세트가 현재 목표를 넘었습니다 — 오늘은 자유 복습."; }
@@ -2706,7 +2888,7 @@
     var hint = document.createElement("p");
     hint.className = "focus-note";
     var miss = todayMissing();
-    hint.textContent = card ? (miss.length ? "클리어까지: " + miss.join(" · ") : "클리어 조건 충족") : (iso < START_ISO ? "내일부터 시작 — 오늘은 준비만." : "오늘은 배정이 없습니다.");
+    hint.textContent = card ? (miss.length ? "클리어까지: " + miss.join(" · ") : "클리어 조건 충족") : (!examDateSet() ? "시험일을 먼저 설정하세요." : "오늘은 배정이 없습니다.");
     slot.appendChild(hint);
   }
   function fmtWhen(isoStr) {
@@ -2921,6 +3103,7 @@
     if (linked() && typingNow()) { api.deferred = true; return; }
     api.deferred = false;
     computePlan(iso);
+    renderExamSetup();
     renderCalendar();
     renderModeUI();
     renderLinkBar();
@@ -3020,11 +3203,12 @@
     }).map(function(d){ return apiDayToJs(d, refToday, end, boost, byDate); });
   }
   /* 프로그램 plan → v5 렌더러가 쓰는 plan 객체 (엔진 미러 대신 값만 옮긴다) */
+  var API_PLAN_KINDS = ["unset", "free", "week", "exam", "between", "after"];
   function planFromApi(st, todayIso) {
     var p = st.plan;
     var seg = segmentFor(todayIso);
-    var kind = (p.kind === "study" || p.kind === "exam" || p.kind === "after") ? p.kind : seg.kind;
-    var phase = kind === "study" ? ((p.seg === 1 || p.seg === 2) ? p.seg : (seg.seg || 0)) : 0;
+    var kind = (API_PLAN_KINDS.indexOf(p.kind) >= 0) ? p.kind : seg.kind;
+    var phase = (kind === "week" || kind === "free") ? (p.seg === 1 ? 1 : (seg.seg || 1)) : 0;
     var out = { today: todayIso, kind: kind, phase: phase, ended: kind === "after", examNo: kind === "exam" ? (EXAM_DATES.indexOf(todayIso) + 1) : 0,
                 start: null, deadline: null, exam: null, days: [], promoted: [], optional: [], optionalNames: [], missed: [], reason: "", warning: null, warnings: [],
                 retryTarget: 0, remainingSets: 0, todayRecords: [], doneInPhase: 0, progress: { done: 0, need: 0 }, shrunk: false,
@@ -3035,11 +3219,16 @@
                 passedSets: (typeof p.passed_sets === "number") ? p.passed_sets : 0,
                 totalSets: (typeof p.total_sets === "number") ? p.total_sets : st.sets.length,
                 allClear: p.all_clear === true,
+                noSets: p.no_sets === true || (typeof p.total_sets === "number" && p.total_sets === 0),
+                examDates: EXAM_DATES.slice(), dday: ddayNum(todayIso), routineDays: ROUTINE_DAYS,
                 retryQueue: arr(p.retry_queue).filter(function(q){ return q && typeof q === "object"; }).map(function(q){
                   return { kind: String(q.kind || "retry"), set: String(q.set || ""), name: String(q.name || "?"),
                            best: (typeof q.best === "number") ? q.best : null };
                 }) };
-    if (kind !== "study") { return out; }
+    if (kind !== "week" && kind !== "free") {
+      out.reason = p.reason ? String(p.reason) : "";
+      return out;
+    }
     var segStart = isoOr(p.seg_start, seg.segStart), end = isoOr(p.end, seg.end), start = isoOr(p.start, seg.start);
     out.start = start; out.deadline = end; out.exam = addDays(end, 1);
     out.missed = arr(p.missed_days).filter(function(x){ return typeof x === "string"; });
@@ -3061,10 +3250,12 @@
   }
   function previewFromApi(st, cur) {
     var pv = st.plan.preview;
-    if (!cur || cur.phase !== 1 || !PHASES[1] || !pv || typeof pv !== "object" || !Array.isArray(pv.days)) { return null; }
+    if (!cur || !pv || typeof pv !== "object" || !Array.isArray(pv.days)) { return null; }
     var byDate = {};
     allRecords().forEach(function(r){ (byDate[r.date] = byDate[r.date] || []).push(r); });
-    return { days: daysFromApi(pv.days, PHASES[1].start, PHASES[1].start, PHASES[1].deadline, arr(pv.boost_days), byDate) };
+    var first = pv.days[0], last = pv.days[pv.days.length - 1];
+    if (!first || !last) { return null; }
+    return { days: daysFromApi(pv.days, first.date, first.date, last.date, arr(pv.boost_days), byDate) };
   }
 
   /* ---------- 시험장 연동: 통신 ---------- */
@@ -3120,6 +3311,9 @@
     api.corrections = correctionsFromApi(api.st);
     api.connected = true;
     api.lastSync = Date.now();
+    /* 시험일은 프로그램(시험장)이 원본 — 연동 중에는 언제나 서버 값을 따른다 */
+    setExamDates((api.st.exam && Array.isArray(api.st.exam.dates)) ? api.st.exam.dates
+                 : (api.st.plan && Array.isArray(api.st.plan.exam_dates) ? api.st.plan.exam_dates : []));
     if (!changed) { renderLinkBar(); return; }
     setToday(st.today);
     computePlan(iso);
