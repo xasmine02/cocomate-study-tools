@@ -1,0 +1,7 @@
+__pycache__/
+*.pyc
+채점결과/
+세트설정.json
+시험일설정.json
+풀이_*.xlsm
+풀이_*.xlsx
