@@ -1,9 +1,22 @@
 <title>컴활 2급 D-18 스프린트</title>
 <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Do+Hyeon&family=IBM+Plex+Sans+KR:wght@400;500;700&family=IBM+Plex+Mono:wght@400;600&display=swap">
 <style>
+  /* ===== 색 토큰 =====
+     색은 전부 이 블록에서만 정한다 — 아래 규칙들은 var(--…) 만 쓴다.
+       · :root                                기본값(라이트)
+       · @media (prefers-color-scheme: dark)  시스템이 다크면 다크 (기본 동작)
+       · :root[data-theme="dark"|"light"]     헤더 [테마] 버튼. 시스템 설정을 이긴다
+                                              (다크가 기본인 환경에서 라이트 고정도 된다)
+     다크 값은 --dk-* 에 한 벌만 적어 두고 아래 두 선택자가 그대로 옮겨 담는다.
+       · 브랜드 초록 #107C41 은 어두운 바탕에서 묻혀 다크용을 따로 밝게 잡았다
+         (--accent #34B36B · 더 밝은 --accent-deep #7BCFA0 — 라이트와 명암 관계가 뒤집힌다).
+       · 배경 계열(line·accent-soft·warn-soft·code-bg)은 라이트의 "카드 대비 밝기차(CIE L*)"를
+         그대로 뒤집어 맞춰, 표 선·칩·게이지 트랙이 다크에서도 같은 세기로 보인다. */
   :root{
+    color-scheme:light;
     --bg:#FAFBF9;
     --ink:#17251C;
+    --ink-soft:#33443A;
     --accent:#107C41;
     --accent-deep:#0B5C30;
     --warn:#B7791F;
@@ -15,38 +28,60 @@
     --code-bg:#F1F5F1;
     --scrim:rgba(23,37,28,.45);
     --shadow:0 1px 2px rgba(23,37,28,.05), 0 4px 14px rgba(23,37,28,.05);
+
+    /* 다크 팔레트 원본 — 값은 여기 한 곳에만 있다 */
+    --dk-bg:#101613;
+    --dk-ink:#E4EDE6;
+    --dk-ink-soft:#C2D2C7;
+    --dk-accent:#34B36B;
+    --dk-accent-deep:#7BCFA0;
+    --dk-warn:#D9A441;
+    --dk-line:#2A382F;
+    --dk-card:#18211C;
+    --dk-muted:#94A698;
+    --dk-accent-soft:#1C2D22;
+    --dk-warn-soft:#2F2918;
+    --dk-code-bg:#111A14;
+    --dk-scrim:rgba(0,0,0,.62);
+    --dk-shadow:0 1px 2px rgba(0,0,0,.4), 0 4px 14px rgba(0,0,0,.3);
   }
+  /* 시스템이 다크일 때 — [테마]를 라이트로 고정해 두지 않았다면 */
   @media (prefers-color-scheme: dark){
     :root:not([data-theme="light"]){
-      --bg:#101613;
-      --ink:#E4EDE6;
-      --accent:#34B36B;
-      --accent-deep:#7BCFA0;
-      --warn:#D9A441;
-      --line:#263229;
-      --card:#18211C;
-      --muted:#94A698;
-      --accent-soft:#1B2A20;
-      --warn-soft:#2A2416;
-      --code-bg:#131C16;
-      --scrim:rgba(0,0,0,.6);
-      --shadow:0 1px 2px rgba(0,0,0,.35), 0 4px 14px rgba(0,0,0,.25);
+      color-scheme:dark;
+      --bg:var(--dk-bg);
+      --ink:var(--dk-ink);
+      --ink-soft:var(--dk-ink-soft);
+      --accent:var(--dk-accent);
+      --accent-deep:var(--dk-accent-deep);
+      --warn:var(--dk-warn);
+      --line:var(--dk-line);
+      --card:var(--dk-card);
+      --muted:var(--dk-muted);
+      --accent-soft:var(--dk-accent-soft);
+      --warn-soft:var(--dk-warn-soft);
+      --code-bg:var(--dk-code-bg);
+      --scrim:var(--dk-scrim);
+      --shadow:var(--dk-shadow);
     }
   }
+  /* [테마] 버튼으로 다크 고정 — 시스템이 라이트여도 다크 */
   :root[data-theme="dark"]{
-    --bg:#101613;
-    --ink:#E4EDE6;
-    --accent:#34B36B;
-    --accent-deep:#7BCFA0;
-    --warn:#D9A441;
-    --line:#263229;
-    --card:#18211C;
-    --muted:#94A698;
-    --accent-soft:#1B2A20;
-    --warn-soft:#2A2416;
-    --code-bg:#131C16;
-    --scrim:rgba(0,0,0,.6);
-    --shadow:0 1px 2px rgba(0,0,0,.35), 0 4px 14px rgba(0,0,0,.25);
+    color-scheme:dark;
+    --bg:var(--dk-bg);
+    --ink:var(--dk-ink);
+    --ink-soft:var(--dk-ink-soft);
+    --accent:var(--dk-accent);
+    --accent-deep:var(--dk-accent-deep);
+    --warn:var(--dk-warn);
+    --line:var(--dk-line);
+    --card:var(--dk-card);
+    --muted:var(--dk-muted);
+    --accent-soft:var(--dk-accent-soft);
+    --warn-soft:var(--dk-warn-soft);
+    --code-bg:var(--dk-code-bg);
+    --scrim:var(--dk-scrim);
+    --shadow:var(--dk-shadow);
   }
 
   *{box-sizing:border-box}
@@ -95,6 +130,16 @@
   }
   .masthead h1{font-size:24px}
   .mast-dday{color:var(--warn); font-size:18px; white-space:nowrap; font-variant-numeric:tabular-nums}
+  .mast-right{display:inline-flex; align-items:baseline; gap:8px 14px; flex-wrap:wrap}
+  /* 화면 테마 토글 — 시스템 / 라이트 / 다크 순서로 돌고, 고른 값은 저장된다 */
+  .theme-btn{
+    appearance:none; cursor:pointer; font:inherit; font-size:12.5px; font-weight:700;
+    background:var(--card); border:1px solid var(--line); color:var(--muted);
+    padding:4px 11px; white-space:nowrap; line-height:1.5;
+  }
+  .theme-btn:hover{color:var(--accent-deep); border-color:var(--accent)}
+  .theme-btn:focus-visible{outline:2px solid var(--accent); outline-offset:2px}
+  .theme-btn .tb-now{color:var(--accent-deep)}
   .tabbar{
     position:sticky; top:0; z-index:30;
     background:var(--bg);
@@ -708,13 +753,37 @@
     *{transition:none !important; animation:none !important}
   }
 </style>
+<script>
+/* 테마 부트 — 저장해 둔 테마를 본문이 그려지기 전에 <html> 에 붙여 깜빡임을 없앤다.
+   ?theme=dark · #theme=dark 로도 열 수 있다(캡처·공유용) — 이때는 눌러야 저장된다.
+   값은 본 스크립트(state.theme)와 같은 v5 키를 읽는다. */
+(function(){
+  var OK = { system:1, light:1, dark:1 }, mode = "system";
+  try {
+    var raw = localStorage.getItem("cca-d18-routine-v5");
+    if (raw) { var s = JSON.parse(raw); if (s && OK[s.theme]) { mode = s.theme; } }
+  } catch (e) { /* 저장소 없는 환경 무시 */ }
+  try {
+    var m = /[?&#]theme=(system|light|dark)(?![a-z])/i.exec((location.search || "") + (location.hash || ""));
+    if (m) { mode = m[1].toLowerCase(); window.__ccaThemeBoot = mode; }
+  } catch (e2) { /* URL 못 읽는 환경 무시 */ }
+  try {
+    var root = document.documentElement;
+    if (mode === "light" || mode === "dark") { root.setAttribute("data-theme", mode); }
+    else { root.removeAttribute("data-theme"); }
+  } catch (e3) { /* 무시 */ }
+})();
+</script>
 
 <main class="page">
 
   <!-- ============ 마스트헤드 + 탭바 ============ -->
   <header class="masthead">
     <h1>컴활 2급 실기 · 1주 완성 스프린트</h1>
-    <span class="mast-dday" id="mast-dday">시험일 미설정</span>
+    <span class="mast-right">
+      <span class="mast-dday" id="mast-dday">시험일 미설정</span>
+      <button type="button" id="theme-toggle" class="theme-btn">테마 <span class="tb-now" id="theme-label">시스템</span></button>
+    </span>
   </header>
 
   <div class="link-bar" id="link-bar" hidden aria-live="polite">
@@ -2040,6 +2109,47 @@
     try { localStorage.setItem(KEY5, JSON.stringify(state)); } catch (e) { /* 저장 불가 환경 무시 */ }
   }
   save();
+
+  /* ---------- 화면 테마 (시스템 · 라이트 · 다크) ----------
+     색은 :root 의 토큰 한 벌로만 정해진다 — 여기서는 <html data-theme> 만 바꾼다.
+     data-theme 이 붙으면 토글이 시스템 설정을 양쪽으로 이긴다
+     (시스템 라이트 → 다크 고정, 시스템 다크 → 라이트 고정).
+     고른 값은 다른 진행 상황과 같은 자리(state → localStorage v5 키)에 함께 남는다. */
+  var THEME_MODES = ["system", "light", "dark"];
+  var THEME_LABELS = { system: "시스템", light: "라이트", dark: "다크" };
+  function themeMode() {
+    return THEME_MODES.indexOf(state.theme) >= 0 ? state.theme : "system";
+  }
+  function applyTheme(mode) {
+    var root = document.documentElement;
+    if (mode === "light" || mode === "dark") { root.setAttribute("data-theme", mode); }
+    else { root.removeAttribute("data-theme"); }
+    var lab = document.getElementById("theme-label");
+    if (lab) { lab.textContent = THEME_LABELS[mode] || THEME_LABELS.system; }
+    var btn = document.getElementById("theme-toggle");
+    if (btn) {
+      var next = THEME_MODES[(THEME_MODES.indexOf(mode) + 1) % THEME_MODES.length];
+      var txt = "화면 테마 — 지금 " + (THEME_LABELS[mode] || THEME_LABELS.system)
+        + (mode === "system" ? "(기기 설정을 따름)" : "") + " · 누르면 " + THEME_LABELS[next];
+      btn.setAttribute("aria-label", txt);
+      btn.title = txt;
+    }
+  }
+  (function(){
+    /* 부트 스크립트가 URL(?theme=…)로 정해 둔 값이 있으면 그것부터 — 저장은 눌렀을 때만 */
+    var boot = window.__ccaThemeBoot;
+    if (THEME_MODES.indexOf(boot) >= 0) { state.theme = boot; }
+    if (THEME_MODES.indexOf(state.theme) < 0) { state.theme = "system"; }
+    applyTheme(state.theme);
+    var btn = document.getElementById("theme-toggle");
+    if (btn) {
+      btn.addEventListener("click", function(){
+        state.theme = THEME_MODES[(THEME_MODES.indexOf(themeMode()) + 1) % THEME_MODES.length];
+        applyTheme(state.theme);
+        save();
+      });
+    }
+  })();
 
   /* ---------- 시험일 (연동 모드: 시험장 설정 · 폴백 모드: localStorage) ---------- */
   function loadExamDatesLocal() {

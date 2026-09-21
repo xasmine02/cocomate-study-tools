@@ -86,11 +86,26 @@ v3.1.0: 배포 설치 후 나온 요청 반영. ① **자동 업데이트를 첫
 다루어 추가·제거한다(0개면 자유 연습, 여러 개면 가장 가까운 미래 시험일 기준).
 ⑤ 루틴 웹으로 가는 길을 시작 화면에서 분명히 하고, 서버가 안 떴으면 이유와
 대안을 알린다.
+v3.2.0: 시험장 환경 재현 — ① **우측 상단 타이머**. 시험이 시작되면 실제
+시험장처럼 화면 우측 상단에 테두리 없는 작은 창이 떠서 남은 시간을 크게,
+세트명을 작게 보여 준다. 마우스로 끌어 옮길 수 있고 그 자리를
+`_설정.타이머오버레이위치` 에 저장해 다음 응시 때 복원한다. 시간 경고 색은
+타이머 창이 이미 쓰던 규칙(10분 호박·5분 빨강)을 그대로 쓰고, 제출·중단·시간
+종료 어느 쪽으로 끝나도 반드시 닫힌다. `_설정.타이머오버레이=false` 로 끈다.
+② **다중 모니터 배치**. 모니터가 2대 이상일 때만 [설정]에 칸이 생겨(1대면
+조용히 숨김) 문제지(PDF)·Excel·타이머를 어느 화면에 띄울지 고른다
+(`_설정.문제지모니터`·`엑셀모니터`·`타이머모니터`). 시험을 시작하면 Excel 본
+창(창 클래스 XLMAIN)을 고른 모니터의 작업영역으로 옮겨 최대화하고, 문제지는
+무엇으로 열릴지 알 수 없어 새로 뜬 창을 잠시 지켜보다 옮긴다 — 못 잡으면
+억지로 옮기지 않고 한 줄만 안내한다. 모니터 열거·창 배치는 Windows 에서만
+`ctypes` 로 하고, 실패하면 조용히 배치 없이 예전과 똑같이 진행된다. 좌표
+계산·이름표·설정 읽기/쓰기는 Windows API 와 분리한 순수 함수라 헤드리스로
+검증한다(시험장/모니터타이머테스트.py).
 
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "3.1.0"
+__version__ = "3.2.0"
 
 import argparse
 import hashlib
@@ -231,6 +246,7 @@ def log_error(context, exc=None, path=None):
 UI_FONT = ("Malgun Gothic", 10)
 UI_FONT_BOLD = ("Malgun Gothic", 10, "bold")
 DIGIT_FONT = ("Consolas", 44, "bold")
+OVERLAY_DIGIT_FONT = ("Consolas", 26, "bold")   # 우측 상단 타이머 오버레이
 
 PROBLEM_RE = re.compile(r"^(?P<name>.+)_문제\.(?P<ext>xlsx|xlsm)$", re.IGNORECASE)
 
@@ -1422,6 +1438,616 @@ def clear_hidden_sets(path=None):
     """숨긴 세트 전부 다시 보이게."""
     set_app_setting(HIDDEN_SETS_SETTING, [], path=path)
     return []
+
+
+# ---------------------------------------------------------------------------
+# 타이머 오버레이 · 다중 모니터 배치 (v3.2.0)
+# ---------------------------------------------------------------------------
+# 실제 시험장을 흉내 냅니다. ① 시험이 시작되면 화면 **우측 상단**에 남은 시간이
+# 작게 떠 있고(끌어서 옮길 수 있고 자리를 기억합니다), ② 모니터가 2대 이상이면
+# 문제지(PDF)·Excel·타이머를 어느 화면에 띄울지 고를 수 있습니다.
+#
+# 이 영역은 일부러 두 층으로 나눠 두었습니다.
+#   · 순수 계산 — 모니터 목록 정규화·이름표·좌표 계산·설정 읽기/쓰기.
+#     화면도 Windows도 필요 없어 헤드리스 테스트로 검증합니다
+#     (시험장/모니터타이머테스트.py).
+#   · Windows API — 모니터 열거(EnumDisplayMonitors)·창 찾기(EnumWindows)·
+#     창 배치(SetWindowPos). Windows가 아니거나 호출이 실패하면 **조용히**
+#     아무것도 하지 않습니다. 예외는 절대 밖으로 새지 않고, 배치를 못 해도
+#     시험은 예전과 똑같이 진행됩니다.
+
+TIMER_OVERLAY_SETTING = "타이머오버레이"          # 세트설정 _설정: bool (기본 켜짐)
+TIMER_OVERLAY_POS_SETTING = "타이머오버레이위치"   # 세트설정 _설정: [x, y]
+MONITOR_PDF_SETTING = "문제지모니터"              # 세트설정 _설정: 0부터의 번호
+MONITOR_EXCEL_SETTING = "엑셀모니터"
+MONITOR_TIMER_SETTING = "타이머모니터"
+
+OVERLAY_MARGIN = 16             # 모니터 가장자리에서 띄울 여백(px)
+OVERLAY_SIZE = (190, 96)        # 오버레이 기본 크기(폭, 높이) — 위치 계산용
+OVERLAY_MIN_VISIBLE = 40        # 이만큼은 화면에 걸쳐 있어야 '보이는' 자리
+EXCEL_PLACE_DELAY_MS = 2500     # Excel 창이 뜨기를 기다렸다가 배치
+PDF_PLACE_DELAY_MS = 700        # 문제지 뷰어 창을 지켜보기 시작할 때까지
+                                # (Excel을 띄우는 1초보다 먼저 한 번 본다)
+PLACE_RETRY_MS = 1500           # 창을 못 찾았을 때 다시 볼 간격
+EXCEL_PLACE_TRIES = 6
+PDF_PLACE_TRIES = 8
+
+_H_WORDS = {1: ("",), 2: ("왼쪽", "오른쪽"), 3: ("왼쪽", "가운데", "오른쪽")}
+_V_WORDS = {1: ("",), 2: ("위", "아래"), 3: ("위", "가운데", "아래")}
+
+
+# --- 순수 계산: 모니터 목록 ------------------------------------------------
+
+
+def _rect_tuple(value, default=None):
+    """(left, top, right, bottom) 정수 튜플로. 숫자 4개가 아니거나 폭/높이가
+    0 이하면 default."""
+    try:
+        left, top, right, bottom = (int(v) for v in value)
+    except Exception:
+        return default
+    if right <= left or bottom <= top:
+        return default
+    return (left, top, right, bottom)
+
+
+def rect_size(rect):
+    """(폭, 높이)."""
+    left, top, right, bottom = rect
+    return (right - left, bottom - top)
+
+
+def monitor_position_words(mons):
+    """모니터를 사람 말로 부르는 낱말 목록 ('왼쪽'·'가운데'·'오른쪽'·'위'…).
+
+    가로로 늘어놓았으면 왼쪽/오른쪽, 세로로 쌓았으면 위/아래로 부르고,
+    4대 이상이면 '왼쪽에서 3번째'처럼 셉니다. 반환 길이는 입력과 같습니다.
+    """
+    rects = [m.get("rect") for m in mons or []]
+    if not rects or any(r is None for r in rects):
+        return ["" for _ in rects]
+    lefts = sorted({r[0] for r in rects})
+    tops = sorted({r[1] for r in rects})
+    vertical = len(lefts) == 1 and len(tops) > 1
+    keys = tops if vertical else lefts
+    words = _V_WORDS if vertical else _H_WORDS
+    tail = "위에서 %d번째" if vertical else "왼쪽에서 %d번째"
+    out = []
+    for r in rects:
+        i = keys.index(r[1] if vertical else r[0])
+        out.append(words[len(keys)][i] if len(keys) in words
+                   else tail % (i + 1))
+    return out
+
+
+def monitor_label(m):
+    """'모니터 1 (주 모니터, 1920×1080, 왼쪽)' 처럼 알아볼 수 있는 이름표."""
+    bits = []
+    if m.get("primary"):
+        bits.append("주 모니터")
+    bits.append(f"{m.get('width')}×{m.get('height')}")
+    if m.get("position"):
+        bits.append(m["position"])
+    return f"모니터 {int(m.get('index') or 0) + 1} (" + ", ".join(bits) + ")"
+
+
+def normalize_monitors(raw):
+    """모니터 열거 결과를 화면 표시·좌표 계산용으로 정리 (순수 함수).
+
+    raw 항목: {"rect": (l,t,r,b), "work": (l,t,r,b), "primary": bool}
+    — rect 가 없거나 이상한 항목은 버리고, work 가 없으면 rect 로 채웁니다.
+    반환: 왼→오(세로 배치는 위→아래) 순으로 정렬된
+        [{"index", "primary", "rect", "work", "width", "height",
+          "position", "label"}]  (index 는 0부터, 이름표의 번호는 1부터)
+    주 모니터 표식이 하나도 없으면 첫 번째를 주 모니터로 봅니다.
+    """
+    mons = []
+    for item in raw or []:
+        if not isinstance(item, dict):
+            continue
+        rect = _rect_tuple(item.get("rect"))
+        if rect is None:
+            continue
+        mons.append({"rect": rect,
+                     "work": _rect_tuple(item.get("work"), rect),
+                     "primary": bool(item.get("primary"))})
+    mons.sort(key=lambda m: (m["rect"][0], m["rect"][1]))
+    if mons and not any(m["primary"] for m in mons):
+        mons[0]["primary"] = True
+    words = monitor_position_words(mons)
+    for i, m in enumerate(mons):
+        m["index"] = i
+        m["width"], m["height"] = rect_size(m["rect"])
+        m["position"] = words[i]
+        m["label"] = monitor_label(m)
+    return mons
+
+
+def primary_monitor(mons):
+    """주 모니터 (표식이 없으면 첫 번째, 목록이 비었으면 None)."""
+    for m in mons or []:
+        if m.get("primary"):
+            return m
+    return (list(mons) or [None])[0]
+
+
+def pick_monitor(mons, index):
+    """번호로 모니터 고르기. 없는 번호·이상한 값이면 주 모니터, 목록이 비었으면
+    None (부르는 쪽이 '배치하지 않음'으로 봅니다)."""
+    mons = list(mons or [])
+    if not mons:
+        return None
+    try:
+        i = int(index)
+    except (TypeError, ValueError):
+        return primary_monitor(mons)
+    return mons[i] if 0 <= i < len(mons) else primary_monitor(mons)
+
+
+def monitor_ui_visible(mons):
+    """모니터 설정 UI를 보여 줄까 — 2대 이상일 때만 (1대면 조용히 숨김)."""
+    return len(mons or []) >= 2
+
+
+def default_monitor_choices(mons):
+    """기본 배치: Excel 은 주 모니터, 문제지는 남는 모니터, 타이머는 Excel 쪽.
+
+    (실제 시험장처럼 '작업하는 화면' 에 남은 시간이 같이 보이게.)
+    모니터가 0·1대면 셋 다 같은 번호입니다.
+    """
+    mons = list(mons or [])
+    if not mons:
+        return {"pdf": 0, "excel": 0, "timer": 0}
+    excel = int((primary_monitor(mons) or {}).get("index") or 0)
+    other = next((int(m["index"]) for m in mons
+                  if int(m["index"]) != excel), excel)
+    return {"pdf": other, "excel": excel, "timer": excel}
+
+
+# --- 순수 계산: 오버레이 좌표 ----------------------------------------------
+
+
+def overlay_top_right(rect, size=OVERLAY_SIZE, margin=OVERLAY_MARGIN):
+    """작업영역 `rect` 의 **우측 상단** 좌표 (x, y) — 실제 시험장 표시 자리."""
+    left, top, right, _bottom = rect
+    width, _height = size
+    return (max(int(left), int(right) - int(width) - int(margin)),
+            max(int(top), int(top) + int(margin)))
+
+
+def point_on_any_monitor(x, y, mons, size=OVERLAY_SIZE,
+                         need=OVERLAY_MIN_VISIBLE):
+    """(x, y)에 놓은 size 크기 창이 어느 모니터에든 need px 이상 걸치는가.
+
+    모니터를 뺐을 때 저장된 자리가 화면 밖이 되는 경우를 걸러냅니다.
+    """
+    width, height = size
+    for m in mons or []:
+        rect = m.get("rect") or m.get("work")
+        if not rect:
+            continue
+        left, top, right, bottom = rect
+        if (min(x + width, right) - max(x, left) >= need
+                and min(y + height, bottom) - max(y, top) >= need):
+            return True
+    return False
+
+
+def overlay_position(mons, index=None, size=OVERLAY_SIZE, saved=None,
+                     margin=OVERLAY_MARGIN):
+    """타이머 오버레이를 띄울 좌표 (x, y).
+
+    저장된 자리(saved)가 있고 지금 모니터 구성에서 보이면 그 자리를, 아니면
+    고른 모니터(index)의 작업영역 **우측 상단**을 씁니다. 모니터를 하나도
+    알아내지 못했고 저장된 자리도 없으면 None (부르는 쪽이 tkinter 가 아는
+    화면 크기로 대신 계산합니다).
+    """
+    mons = list(mons or [])
+    if saved is not None:
+        try:
+            sx, sy = int(saved[0]), int(saved[1])
+        except Exception:
+            sx = sy = None
+        if sx is not None and (not mons or point_on_any_monitor(
+                sx, sy, mons, size=size)):
+            return (sx, sy)
+    m = pick_monitor(mons, index)
+    if m is None:
+        return None
+    return overlay_top_right(m.get("work") or m.get("rect"), size, margin)
+
+
+def overlay_position_for_screen(screen_w, screen_h, size=OVERLAY_SIZE,
+                                saved=None, margin=OVERLAY_MARGIN):
+    """모니터 열거를 못 했을 때(비 Windows 등) tkinter 가 아는 화면 크기로."""
+    rect = (0, 0, int(screen_w), int(screen_h))
+    return overlay_position([{"rect": rect, "work": rect, "primary": True,
+                              "index": 0}], 0, size, saved, margin)
+
+
+def clamp_overlay_position(x, y, mons, size=OVERLAY_SIZE,
+                           need=OVERLAY_MIN_VISIBLE):
+    """끌어다 놓은 자리가 화면 밖이면 가장 가까운 모니터 안으로 되돌림."""
+    x, y = int(x), int(y)
+    mons = list(mons or [])
+    if not mons or point_on_any_monitor(x, y, mons, size=size, need=need):
+        return (x, y)
+    width, height = size
+    cx, cy = x + width / 2.0, y + height / 2.0
+
+    def _dist(m):
+        left, top, right, bottom = m["rect"]
+        return ((left + right) / 2.0 - cx) ** 2 + \
+               ((top + bottom) / 2.0 - cy) ** 2
+
+    near = min(mons, key=_dist)
+    left, top, right, bottom = near.get("work") or near["rect"]
+    return (max(int(left), min(x, int(right) - int(width))),
+            max(int(top), min(y, int(bottom) - int(height))))
+
+
+def window_rect_for_monitor(m, margin=0):
+    """창을 올려 놓을 (x, y, 폭, 높이) — 모니터 **작업영역**(작업 표시줄 제외).
+    모니터가 없으면 None."""
+    if not m:
+        return None
+    rect = m.get("work") or m.get("rect")
+    if not rect:
+        return None
+    left, top, right, bottom = rect
+    return (int(left) + margin, int(top) + margin,
+            max(1, int(right) - int(left) - 2 * margin),
+            max(1, int(bottom) - int(top) - 2 * margin))
+
+
+def pick_new_windows(before, after):
+    """창 목록 두 스냅숏을 견줘 새로 생긴 창만 (after 순서 유지)."""
+    seen = set(before or ())
+    return [h for h in (after or ()) if h not in seen]
+
+
+# --- 순수 계산: 설정 읽기/쓰기 ---------------------------------------------
+
+
+def timer_overlay_enabled(cfg=None, path=None):
+    """우측 상단 타이머 오버레이를 쓸지 (설정이 없으면 켜짐)."""
+    if cfg is not None:
+        v = _cfg_section(cfg, "_설정").get(TIMER_OVERLAY_SETTING, True)
+    else:
+        v = get_app_setting(TIMER_OVERLAY_SETTING, True, path=path)
+    return True if v is None else bool(v)
+
+
+def set_timer_overlay_enabled(on, path=None):
+    """오버레이 켜기/끄기. 반환: 저장한 값."""
+    on = bool(on)
+    set_app_setting(TIMER_OVERLAY_SETTING, on, path=path)
+    return on
+
+
+def saved_overlay_pos(cfg=None, path=None):
+    """끌어다 놓은 타이머 자리 (x, y). 없거나 깨졌으면 None."""
+    if cfg is not None:
+        v = _cfg_section(cfg, "_설정").get(TIMER_OVERLAY_POS_SETTING)
+    else:
+        v = get_app_setting(TIMER_OVERLAY_POS_SETTING, None, path=path)
+    if isinstance(v, dict):
+        v = [v.get("x"), v.get("y")]
+    try:
+        x, y = (int(a) for a in v)
+    except Exception:
+        return None
+    return (x, y)
+
+
+def save_overlay_pos(x, y, path=None):
+    """타이머 자리 기억. x 나 y 가 None 이면 기억해 둔 자리를 지웁니다
+    (다음 응시 때 다시 우측 상단)."""
+    if x is None or y is None:
+        set_app_setting(TIMER_OVERLAY_POS_SETTING, None, path=path)
+        return None
+    try:
+        pos = [int(x), int(y)]
+    except (TypeError, ValueError):
+        return None
+    set_app_setting(TIMER_OVERLAY_POS_SETTING, pos, path=path)
+    return (pos[0], pos[1])
+
+
+_MONITOR_SETTINGS = (("pdf", MONITOR_PDF_SETTING),
+                     ("excel", MONITOR_EXCEL_SETTING),
+                     ("timer", MONITOR_TIMER_SETTING))
+
+
+def monitor_assignment(cfg=None, path=None):
+    """설정에 저장된 모니터 배치 {"pdf","excel","timer"} (안 골랐으면 None)."""
+    sec = _cfg_section(cfg, "_설정") if cfg is not None else \
+        _cfg_section(load_set_config(path or SET_CONFIG_PATH), "_설정")
+    out = {}
+    for key, name in _MONITOR_SETTINGS:
+        try:
+            out[key] = int(sec.get(name))
+        except (TypeError, ValueError):
+            out[key] = None
+    return out
+
+
+def save_monitor_assignment(pdf=None, excel=None, timer=None, path=None):
+    """모니터 배치 저장 (값을 주지 않은 항목은 그대로 둠). 반환: 저장된 배치."""
+    p = path or SET_CONFIG_PATH
+    cfg = load_set_config(p)
+    sec = cfg.setdefault("_설정", {})
+    for value, (_key, name) in zip((pdf, excel, timer), _MONITOR_SETTINGS):
+        if value is None:
+            continue
+        try:
+            sec[name] = int(value)
+        except (TypeError, ValueError):
+            continue
+    save_set_config(cfg, p)
+    return monitor_assignment(cfg=cfg)
+
+
+def clear_monitor_assignment(path=None):
+    """모니터 배치를 지워 기본값으로 되돌림. 반환: 비워진 배치."""
+    p = path or SET_CONFIG_PATH
+    cfg = load_set_config(p)
+    sec = cfg.setdefault("_설정", {})
+    for _key, name in _MONITOR_SETTINGS:
+        sec.pop(name, None)
+    save_set_config(cfg, p)
+    return monitor_assignment(cfg=cfg)
+
+
+def resolve_monitor_assignment(mons, cfg=None, path=None):
+    """저장값 + 기본값 → 실제로 쓸 모니터 번호 {"pdf","excel","timer"}.
+
+    저장된 번호가 지금 연결된 모니터 수를 벗어나면(모니터를 뺐다면) 조용히
+    기본값으로 내려갑니다.
+    """
+    mons = list(mons or [])
+    out = dict(default_monitor_choices(mons))
+    saved = monitor_assignment(cfg=cfg, path=path)
+    for key in out:
+        v = saved.get(key)
+        if v is not None and (0 <= v < len(mons) if mons else v == 0):
+            out[key] = v
+    return out
+
+
+# --- Windows API 층 (없거나 실패하면 조용히 아무것도 안 함) -----------------
+#
+# 여기서부터는 ctypes 로 user32 를 부릅니다. Windows 가 아니거나 호출이 실패
+# 하면 빈 목록 / False 를 돌려주고, 예외는 밖으로 내보내지 않습니다.
+
+SW_MAXIMIZE = 3
+SW_RESTORE = 9
+SWP_NOZORDER = 0x0004
+SWP_NOACTIVATE = 0x0010
+SWP_SHOWWINDOW = 0x0040
+GW_OWNER = 4
+MONITORINFOF_PRIMARY = 1
+EXCEL_WINDOW_CLASS = "XLMAIN"        # Excel 본 창의 창 클래스
+
+
+def monitors_supported():
+    """모니터 열거·창 배치를 시도해 볼 수 있는 환경인가 (Windows + ctypes).
+
+    아니면 이 기능은 통째로 꺼지고, 시험은 배치 없이 그대로 진행됩니다.
+    """
+    if sys.platform != "win32":
+        return False
+    try:
+        import ctypes                                     # noqa: F401
+        return hasattr(ctypes, "windll")
+    except Exception:
+        return False
+
+
+def enum_monitors_raw():
+    """user32.EnumDisplayMonitors + GetMonitorInfoW 로 모니터 정보 수집.
+
+    반환: [{"rect","work","primary"}] — Windows 밖이거나 실패하면 [].
+    (DPI 인식은 일부러 건드리지 않습니다. tkinter 와 같은 좌표계를 써야
+    geometry() 로 계산한 자리와 실제 자리가 어긋나지 않습니다.)
+    """
+    if not monitors_supported():
+        return []
+    try:
+        import ctypes
+
+        class _RECT(ctypes.Structure):
+            _fields_ = [("left", ctypes.c_long), ("top", ctypes.c_long),
+                        ("right", ctypes.c_long), ("bottom", ctypes.c_long)]
+
+        class _MONITORINFO(ctypes.Structure):
+            _fields_ = [("cbSize", ctypes.c_ulong), ("rcMonitor", _RECT),
+                        ("rcWork", _RECT), ("dwFlags", ctypes.c_ulong)]
+
+        user32 = ctypes.windll.user32
+        found = []
+        proc = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p,
+                                  ctypes.c_void_p, ctypes.POINTER(_RECT),
+                                  ctypes.c_void_p)
+
+        def _on_monitor(hmon, _hdc, _lprc, _data):
+            try:
+                info = _MONITORINFO()
+                info.cbSize = ctypes.sizeof(_MONITORINFO)
+                if user32.GetMonitorInfoW(hmon, ctypes.byref(info)):
+                    found.append({
+                        "rect": (info.rcMonitor.left, info.rcMonitor.top,
+                                 info.rcMonitor.right, info.rcMonitor.bottom),
+                        "work": (info.rcWork.left, info.rcWork.top,
+                                 info.rcWork.right, info.rcWork.bottom),
+                        "primary": bool(info.dwFlags & MONITORINFOF_PRIMARY)})
+            except Exception:
+                pass
+            return 1
+
+        user32.EnumDisplayMonitors(None, None, proc(_on_monitor), 0)
+        return found
+    except Exception as e:
+        log_error("모니터 열거", e)
+        return []
+
+
+def list_monitors():
+    """연결된 모니터 목록(정규화). Windows 밖·실패면 빈 목록."""
+    try:
+        return normalize_monitors(enum_monitors_raw())
+    except Exception as e:
+        log_error("모니터 목록", e)
+        return []
+
+
+def _window_class(user32, hwnd):
+    import ctypes
+    buf = ctypes.create_unicode_buffer(256)
+    user32.GetClassNameW(hwnd, buf, 256)
+    return buf.value
+
+
+def _window_title(user32, hwnd):
+    import ctypes
+    n = int(user32.GetWindowTextLengthW(hwnd) or 0)
+    if n <= 0:
+        return ""
+    buf = ctypes.create_unicode_buffer(n + 1)
+    user32.GetWindowTextW(hwnd, buf, n + 1)
+    return buf.value
+
+
+def top_level_windows(visible_only=True):
+    """지금 떠 있는 최상위 창 핸들 목록. Windows 밖·실패면 []."""
+    if not monitors_supported():
+        return []
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        out = []
+        proc = ctypes.WINFUNCTYPE(ctypes.c_int, ctypes.c_void_p,
+                                  ctypes.c_void_p)
+
+        def _on_window(hwnd, _data):
+            try:
+                if not visible_only or user32.IsWindowVisible(hwnd):
+                    out.append(int(hwnd))
+            except Exception:
+                pass
+            return 1
+
+        user32.EnumWindows(proc(_on_window), 0)
+        return out
+    except Exception as e:
+        log_error("창 열거", e)
+        return []
+
+
+def excel_windows(pid=None, strict=False):
+    """Excel 본 창(창 클래스 XLMAIN) 핸들 목록 — 맨 앞 창부터.
+
+    Excel 인스턴스가 여럿일 수 있어 **프로세스 ID 대조**를 먼저 봅니다.
+    strict=True 면 그 프로세스의 창만(없으면 빈 목록), 아니면 대조에 걸리는
+    창이 없을 때 클래스가 맞는 창 전체를 돌려줍니다. Windows 밖·실패면 [].
+    """
+    if not monitors_supported():
+        return []
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        mine, others = [], []
+        for hwnd in top_level_windows():
+            try:
+                if _window_class(user32, hwnd) != EXCEL_WINDOW_CLASS:
+                    continue
+                wpid = ctypes.c_ulong(0)
+                user32.GetWindowThreadProcessId(hwnd, ctypes.byref(wpid))
+                if pid is not None and int(wpid.value) == int(pid):
+                    mine.append(hwnd)
+                else:
+                    others.append(hwnd)
+            except Exception:
+                continue
+        return mine if strict else (mine or others)
+    except Exception as e:
+        log_error("Excel 창 찾기", e)
+        return []
+
+
+def move_window_to_monitor(hwnd, mon, maximize=True):
+    """창 하나를 모니터 작업영역으로 옮기고(가능하면 최대화). 성공 여부."""
+    rect = window_rect_for_monitor(mon)
+    if not hwnd or rect is None or not monitors_supported():
+        return False
+    x, y, w, h = rect
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        user32.ShowWindow(hwnd, SW_RESTORE)      # 최대화/최소화를 먼저 풀고
+        user32.SetWindowPos(hwnd, None, int(x), int(y), int(w), int(h),
+                            SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW)
+        if maximize:
+            user32.ShowWindow(hwnd, SW_MAXIMIZE)   # 그 모니터에서 최대화
+        return True
+    except Exception as e:
+        log_error("창 배치", e)
+        return False
+
+
+def place_excel_on_monitor(mon, pid=None, maximize=True):
+    """이번에 띄운 Excel 창을 고른 모니터로. (옮긴 창 수, 설명).
+
+    우리가 직접 실행한 Excel 프로세스의 창이 있으면 그것만 옮깁니다. 이미 떠
+    있던 Excel 에 파일을 넘긴 경우에는 프로세스를 알 수 없으므로 **맨 앞 창
+    하나만** 옮깁니다 — 사용자가 따로 열어 둔 다른 통합 문서까지 끌고 다니지
+    않기 위해서입니다. 실패해도 예외 없이 (0, 사유).
+    """
+    if mon is None:
+        return 0, "모니터 정보 없음"
+    wins, note = (excel_windows(pid, strict=True) if pid is not None else [],
+                  "프로세스 대조")
+    if not wins:
+        wins, note = excel_windows()[:1], "맨 앞 Excel 창"
+    if not wins:
+        return 0, f"Excel 창({EXCEL_WINDOW_CLASS})을 찾지 못함"
+    moved = sum(1 for h in wins if move_window_to_monitor(h, mon, maximize))
+    return moved, (f"Excel 창 {moved}개 배치({note})" if moved
+                   else "창 배치 실패")
+
+
+def place_new_window_on_monitor(mon, before, maximize=True,
+                                skip_classes=(EXCEL_WINDOW_CLASS,)):
+    """**무엇이 뜰지 모르는** 창(문제지 뷰어)을 고른 모니터로.
+
+    문제지는 Edge·Acrobat·Chrome 등 무엇으로 열릴지 알 수 없어, 열기 직전에
+    찍어 둔 창 목록(before)과 지금을 견줘 새로 생긴 창 가운데 제목이 있고
+    주인 창이 없는 첫 창을 옮깁니다. 못 잡으면 (0, 사유) — 억지로 옮기지
+    않고 부르는 쪽이 사용자에게 한 줄 안내만 남깁니다.
+    """
+    if mon is None:
+        return 0, "모니터 정보 없음"
+    if not monitors_supported():
+        return 0, "Windows 아님"
+    try:
+        import ctypes
+        user32 = ctypes.windll.user32
+        for hwnd in pick_new_windows(before, top_level_windows()):
+            try:
+                if _window_class(user32, hwnd) in (skip_classes or ()):
+                    continue
+                if not _window_title(user32, hwnd).strip():
+                    continue
+                if user32.GetWindow(hwnd, GW_OWNER):   # 대화상자는 건너뜀
+                    continue
+            except Exception:
+                continue
+            if move_window_to_monitor(hwnd, mon, maximize):
+                return 1, "새 창 1개 배치"
+        return 0, "새로 뜬 창을 찾지 못함"
+    except Exception as e:
+        log_error("문제지 창 배치", e)
+        return 0, f"배치 실패({e})"
 
 
 # --- Excel 신뢰 위치 등록 (매크로 차단 배너 해결) ---
@@ -6717,6 +7343,178 @@ if HAS_TK:
                      bg=BG, fg=SUB, font=("Malgun Gothic", 9)).pack()
 
 
+    class TimerOverlay(tk.Toplevel):
+        """실제 시험장처럼 화면 **우측 상단**에 항상 떠 있는 작은 타이머.
+
+        테두리 없는(overrideredirect) 항상 위 창이라 문제지·Excel 위에 얹혀
+        남은 시간만 크게 보여 줍니다. 가리는 자리에 걸리면 마우스로 끌어서
+        옮길 수 있고, 옮긴 자리는 `_설정.타이머오버레이위치` 에 저장해 다음
+        응시 때 그 자리에 다시 띄웁니다.
+
+        시간 경고(색·문구)는 여기서 다시 정하지 않고 타이머 창이 이미 쓰는
+        규칙(TimerWindow._color / ALERTS)을 그대로 넘겨받아 보여 줍니다.
+        """
+
+        _live = []          # 떠 있는 오버레이 (유령 창 방지용 목록)
+
+        def __init__(self, master, head="", monitor_index=None,
+                     monitors=None, saved=None):
+            super().__init__(master)
+            self._drag = None
+            self._moved = False
+            self.monitors = list(monitors or [])
+            try:
+                self.withdraw()          # 자리를 잡기 전에는 보이지 않게
+            except Exception:
+                pass
+            for setup in (lambda: self.overrideredirect(True),
+                          lambda: self.attributes("-topmost", True),
+                          lambda: self.title(f"{APP_TITLE} - 남은 시간")):
+                try:
+                    setup()
+                except Exception:
+                    pass
+            self.configure(bg=INK, highlightthickness=1,
+                           highlightbackground="#3A5F49")
+            body = tk.Frame(self, bg=INK, padx=14, pady=8)
+            body.pack(fill="both", expand=True)
+            self.head_lbl = tk.Label(body, text=head, bg=INK, fg="#A7C8B2",
+                                     font=("Malgun Gothic", 8))
+            self.head_lbl.pack()
+            self.time_lbl = tk.Label(body, text="--:--", bg=INK, fg="#7BD59A",
+                                     font=OVERLAY_DIGIT_FONT)
+            self.time_lbl.pack()
+            self.note_lbl = tk.Label(body, text="남은 시간", bg=INK,
+                                     fg="#8FA69A", font=("Malgun Gothic", 8))
+            self.note_lbl.pack()
+            for w in (self, body, self.head_lbl, self.time_lbl, self.note_lbl):
+                w.bind("<ButtonPress-1>", self._grab)
+                w.bind("<B1-Motion>", self._drag_to)
+                w.bind("<ButtonRelease-1>", self._drop)
+            self.place_self(monitor_index, saved)
+            for show in (self.deiconify, self.lift,
+                         lambda: self.attributes("-topmost", True)):
+                try:                 # 창을 띄우고 '항상 위'를 한 번 더 굳힌다
+                    show()            # (overrideredirect 뒤 풀리는 창 관리자 대비)
+                except Exception:
+                    pass
+            TimerOverlay._live.append(self)
+
+        # --- 자리 잡기 ---
+        def _size(self):
+            """지금 크기 (아직 그려지기 전이면 기본 크기로 어림)."""
+            w = h = 0
+            try:
+                self.update_idletasks()
+                w, h = self.winfo_reqwidth(), self.winfo_reqheight()
+            except Exception:
+                pass
+            return (max(int(w), OVERLAY_SIZE[0]), max(int(h), OVERLAY_SIZE[1]))
+
+        def place_self(self, monitor_index=None, saved=None):
+            """우측 상단(또는 저장된 자리)에 배치. 반환 (x, y) 또는 None."""
+            size = self._size()
+            pos = None
+            try:
+                if self.monitors:
+                    pos = overlay_position(self.monitors, monitor_index,
+                                           size=size, saved=saved)
+                else:              # 모니터를 못 읽는 환경 — tk가 아는 화면으로
+                    pos = overlay_position_for_screen(
+                        self.winfo_screenwidth(), self.winfo_screenheight(),
+                        size=size, saved=saved)
+            except Exception as e:
+                log_error("타이머 오버레이 위치 계산", e)
+            if pos is None:
+                return None
+            try:
+                self.geometry(f"+{int(pos[0])}+{int(pos[1])}")
+            except Exception:
+                return None
+            return (int(pos[0]), int(pos[1]))
+
+        # --- 끌어서 옮기기 ---
+        def _grab(self, event):
+            try:
+                self._drag = (event.x_root - self.winfo_x(),
+                              event.y_root - self.winfo_y())
+            except Exception:
+                self._drag = None
+            return "break"
+
+        def _drag_to(self, event):
+            if not self._drag:
+                return None
+            self._moved = True
+            try:
+                self.geometry(f"+{int(event.x_root - self._drag[0])}"
+                              f"+{int(event.y_root - self._drag[1])}")
+            except Exception:
+                pass
+            return "break"
+
+        def _drop(self, event=None):
+            """손을 뗀 자리를 화면 안으로 다듬어 설정에 저장."""
+            self._drag = None
+            if not self._moved:
+                return None
+            self._moved = False
+            try:
+                pos = clamp_overlay_position(self.winfo_x(), self.winfo_y(),
+                                             self.monitors, size=self._size())
+                self.geometry(f"+{pos[0]}+{pos[1]}")
+                save_overlay_pos(pos[0], pos[1])
+                return pos
+            except Exception as e:
+                log_error("타이머 오버레이 위치 저장", e)
+            return None
+
+        # --- 표시 ---
+        def update_time(self, text, color=None, note=None):
+            """타이머 창이 1초마다 넘겨 주는 남은 시간·색·문구를 그대로 반영."""
+            try:
+                self.time_lbl.configure(text=text,
+                                        **({"fg": color} if color else {}))
+                if note is not None:
+                    self.note_lbl.configure(text=note)
+            except Exception:
+                pass
+            return text
+
+        # --- 정리 (유령 창 방지) ---
+        def close(self):
+            """닫기 — 시험이 끝나는 모든 경로에서 불립니다."""
+            try:
+                TimerOverlay._live.remove(self)
+            except ValueError:
+                pass
+            except Exception:
+                pass
+            try:
+                if self.winfo_exists():
+                    self.destroy()
+            except Exception:
+                pass
+            return True
+
+        @classmethod
+        def close_all(cls):
+            """떠 있는 오버레이를 전부 닫는다. 반환: 닫은 개수.
+
+            타이머 창을 거치지 않고 시험이 끝난 경우(오류·강제 종료)에도
+            빈 타이머만 남지 않도록 시작 화면 쪽에서 한 번 더 부릅니다.
+            """
+            gone = 0
+            for ov in list(cls._live):
+                try:
+                    ov.close()
+                    gone += 1
+                except Exception:
+                    pass
+            cls._live = []
+            return gone
+
+
     class TimerWindow(tk.Toplevel):
         """항상 위 소형 타이머 창."""
 
@@ -6784,7 +7582,73 @@ if HAS_TK:
                 relief="flat", bg="#2C4A38", fg="white",
                 activebackground="#3A5F49", command=self.reopen_file)
             self.reopen_btn.pack(side="left", padx=5)
+            self.overlay = None
+            self._open_overlay(head)
             self._tick()
+
+        # --- 우측 상단 타이머 오버레이 (v3.2.0) ---
+        def _open_overlay(self, head):
+            """실제 시험장처럼 우측 상단에 남은 시간을 띄운다.
+
+            `_설정.타이머오버레이` 로 끌 수 있고, 모니터가 여러 대면
+            `_설정.타이머모니터` 에서 고른 화면에 띄웁니다. 오버레이를 만들지
+            못해도(창 관리자 제약·모니터 열거 실패 등) 타이머 창은 그대로
+            돌아갑니다.
+            """
+            self.overlay = None
+            try:
+                if not timer_overlay_enabled():
+                    return None
+                # 시험 시작 때 이미 정한 배치가 있으면 그대로 쓴다(다시 열거 X)
+                layout = (self.exam or {}).get("monitor_layout") or {}
+                mons = layout.get("monitors") or list_monitors()
+                index = layout.get("timer")
+                if index is None:
+                    index = resolve_monitor_assignment(mons).get("timer")
+                self.overlay = TimerOverlay(
+                    self, head=head, monitor_index=index, monitors=mons,
+                    saved=saved_overlay_pos())
+                self._sync_overlay()
+            except Exception as e:
+                log_error("타이머 오버레이", e)
+                self.overlay = None
+            return self.overlay
+
+        def _sync_overlay(self):
+            """오버레이에 지금 남은 시간·색·상태를 옮긴다 (색 규칙은 _color)."""
+            ov = getattr(self, "overlay", None)
+            if ov is None:
+                return None
+            try:
+                if not ov.winfo_exists():
+                    self.overlay = None
+                    return None
+                if self.finished:
+                    note, color = "시험 시간 종료", "#FF8B80"
+                elif self.paused:
+                    note, color = "일시정지 (연습)", "#8FA69A"
+                else:
+                    note, color = "남은 시간", self._color()
+                return ov.update_time(self._fmt(), color, note)
+            except Exception:
+                return None
+
+        def close_overlay(self):
+            """오버레이 정리. 시험이 끝나는 모든 경로(제출·중단·시간 종료·
+            창 닫기)가 destroy()를 지나므로 유령 창이 남지 않습니다."""
+            ov = getattr(self, "overlay", None)
+            self.overlay = None
+            if ov is None:
+                return False
+            try:
+                ov.close()
+            except Exception:
+                pass
+            return True
+
+        def destroy(self):
+            self.close_overlay()
+            return super().destroy()
 
         def reopen_file(self):
             """풀이 파일을 Excel로 다시 열기 (창이 사라졌을 때 언제든)."""
@@ -6806,6 +7670,7 @@ if HAS_TK:
                 return
             if not self.paused:
                 self.time_lbl.configure(text=self._fmt(), fg=self._color())
+                self._sync_overlay()
                 for mark in self.ALERTS:
                     if self.remaining == mark and mark not in self._alerted:
                         self._alerted.add(mark)
@@ -6839,12 +7704,14 @@ if HAS_TK:
                     text="시험 진행 중 (연습 모드)" if self.practice
                     else "시험 진행 중")
                 self.time_lbl.configure(fg=self._color())
+            self._sync_overlay()
 
         def _time_up(self):
             self.finished = True
             self.remaining = 0
             self.time_lbl.configure(text="00:00", fg="#FF8B80")
             self.status_lbl.configure(text="시험 시간 종료")
+            self._sync_overlay()
             beep(self)
             beep(self)
             self.submit(time_up=True)
@@ -6880,10 +7747,17 @@ if HAS_TK:
                 return
             elapsed = self.elapsed_seconds()
             self.status_lbl.configure(text="채점 중입니다...")
+            ov = getattr(self, "overlay", None)
+            if ov is not None:
+                try:
+                    ov.update_time(self._fmt(), "#A7C8B2", "채점 중")
+                except Exception:
+                    pass
             self.app.start_grading(self.exam, elapsed, self.practice,
                                    on_done=self._grading_done)
 
         def _grading_done(self):
+            self.close_overlay()          # 채점이 끝나면 우측 상단 표시부터
             try:
                 self.destroy()
             except Exception:
@@ -7514,21 +8388,35 @@ if HAS_TK:
 
 
     class SettingsDialog(tk.Toplevel):
-        """[설정] — 스캔 폴더 · 세트 숨기기 · 자동 업데이트 · 루틴 자동 열기.
+        """[설정] — 스캔 폴더 · 세트 숨기기 · 모니터 배치 · 타이머 · 자동 업데이트.
 
         v3.1.0에서 생겼다. 세트를 찾을 폴더를 GUI 에서 고르고(설정에 저장되어
         다음 실행에도 유지), 인식된 세트를 개별로 숨길 수 있다. 숨김은 파일도
         기록도 지우지 않고 목록·일정·점수대 보드에서만 뺀다.
+        v3.2.0: 모니터가 **2대 이상일 때만** 모니터 배치 칸이 생기고(1대면
+        조용히 숨김), 우측 상단 타이머 표시를 켜고 끌 수 있다.
         """
+
+        MONITOR_ROWS = (("pdf", "문제지(PDF)를 띄울 화면"),
+                        ("excel", "Excel(풀이 파일)을 띄울 화면"),
+                        ("timer", "타이머를 띄울 화면"))
 
         def __init__(self, app):
             super().__init__(app)
             self.app = app
             self.rows = []                # 목록 순서대로의 세트 dict
+            self.mon_vars = {}            # 모니터 배치 콤보 상자 (2대 이상일 때)
+            self.mon_msg = None
+            self.overlay_msg = None
+            try:
+                self.monitors = list_monitors()
+            except Exception as e:
+                log_error("설정 창 모니터 목록", e)
+                self.monitors = []
             self.title(f"{APP_TITLE} - 설정")
             self.configure(bg=BG)
-            self.geometry("640x600")
-            self.minsize(520, 460)
+            self.geometry(f"660x{self._window_height()}")
+            self.minsize(540, 460)
             frm = tk.Frame(self, bg=BG, padx=16, pady=12)
             frm.pack(fill="both", expand=True)
 
@@ -7597,9 +8485,19 @@ if HAS_TK:
                                      font=("Malgun Gothic", 9))
             self.hide_msg.pack(side="left", padx=8)
 
+            # --- 모니터 배치 (모니터가 2대 이상일 때만 보임) ---
+            if monitor_ui_visible(self.monitors):
+                self._build_monitor_section(frm)
+
             # --- 기타 토글 ---
             tf = tk.Frame(frm, bg=BG)
             tf.pack(fill="x")
+            self.overlay_var = tk.BooleanVar(value=timer_overlay_enabled())
+            tk.Checkbutton(tf, text="시험 중 화면 우측 상단에 남은 시간 표시 "
+                                    "(끌어서 옮길 수 있음)",
+                           variable=self.overlay_var, bg=BG, fg=INK,
+                           activebackground=BG, font=UI_FONT,
+                           command=self._toggle_overlay).pack(anchor="w")
             self.auto_update_var = tk.BooleanVar(value=auto_update_enabled())
             tk.Checkbutton(tf, text="자동 업데이트 (실행할 때마다 새 버전 적용)",
                            variable=self.auto_update_var, bg=BG, fg=INK,
@@ -7611,10 +8509,18 @@ if HAS_TK:
                            variable=self.auto_open_var, bg=BG, fg=INK,
                            activebackground=BG, font=UI_FONT,
                            command=self._toggle_auto_open).pack(anchor="w")
+            of = tk.Frame(frm, bg=BG)
+            of.pack(fill="x", pady=(2, 0))
+            tk.Button(of, text="타이머 위치 초기화", font=UI_FONT,
+                      relief="groove", padx=12, pady=2,
+                      command=self.reset_overlay_pos).pack(side="left")
+            self.overlay_msg = tk.Label(of, text="", bg=BG, fg=SUB,
+                                        font=("Malgun Gothic", 9))
+            self.overlay_msg.pack(side="left", padx=8)
             tk.Label(frm, text="자동 업데이트를 꺼도 [업데이트 확인]으로 언제든 "
                                "직접 받을 수 있습니다.",
                      bg=BG, fg=SUB, font=("Malgun Gothic", 9),
-                     wraplength=580, justify="left").pack(anchor="w",
+                     wraplength=600, justify="left").pack(anchor="w",
                                                           pady=(2, 8))
             tk.Button(frm, text="닫기", font=UI_FONT, relief="groove",
                       padx=16, pady=4, command=self.destroy).pack(anchor="e")
@@ -7624,6 +8530,111 @@ if HAS_TK:
                 self.transient(app)
             except Exception:
                 pass
+
+        # --- 모니터 배치 (v3.2.0) ---
+        def _window_height(self):
+            """설정 창 높이 — 모니터 칸이 붙으면 더 높게, 화면보다는 낮게."""
+            h = 760 if monitor_ui_visible(self.monitors) else 620
+            try:
+                h = min(h, max(460, int(self.winfo_screenheight()) - 80))
+            except Exception:
+                pass
+            return int(h)
+
+        def _build_monitor_section(self, frm):
+            """문제지·Excel·타이머를 어느 화면에 띄울지 고르는 칸.
+
+            모니터가 1대면 아예 만들지 않습니다(고를 것이 없으므로).
+            """
+            tk.Label(frm, text="모니터 배치", bg=BG, fg=INK,
+                     font=UI_FONT_BOLD).pack(anchor="w")
+            tk.Label(frm, text="실제 시험장처럼 한 화면에는 문제지, 다른 화면에는 "
+                               "Excel 을 띄웁니다. [시험 시작] 때 창을 자동으로 "
+                               "옮기며, 문제지 뷰어(Edge·Acrobat·Chrome 등)는 "
+                               "프로그램마다 창이 달라 못 옮길 수도 있습니다 "
+                               "— 그럴 때는 안내만 나오고 시험은 그대로 "
+                               "진행됩니다.",
+                     bg=BG, fg=SUB, font=("Malgun Gothic", 9), wraplength=600,
+                     justify="left").pack(anchor="w", pady=(2, 4))
+            cur = resolve_monitor_assignment(self.monitors)
+            labels = [m["label"] for m in self.monitors]
+            grid = tk.Frame(frm, bg=BG)
+            grid.pack(fill="x", pady=(0, 4))
+            for r, (key, text) in enumerate(self.MONITOR_ROWS):
+                tk.Label(grid, text=text, bg=BG, fg=INK, font=UI_FONT,
+                         anchor="w", width=22).grid(row=r, column=0,
+                                                    sticky="w", pady=2)
+                i = cur.get(key) or 0
+                var = tk.StringVar(value=labels[i] if 0 <= i < len(labels)
+                                   else labels[0])
+                self.mon_vars[key] = var
+                box = ttk.Combobox(grid, textvariable=var, values=labels,
+                                   state="readonly", font=UI_FONT, width=36)
+                box.grid(row=r, column=1, sticky="we", padx=(6, 0), pady=2)
+                box.bind("<<ComboboxSelected>>",
+                         lambda _e: self.apply_monitors())
+            grid.columnconfigure(1, weight=1)
+            mb = tk.Frame(frm, bg=BG)
+            mb.pack(fill="x", pady=(0, 10))
+            tk.Button(mb, text="기본값으로", font=UI_FONT, relief="groove",
+                      padx=12, pady=3,
+                      command=self.reset_monitors).pack(side="left")
+            self.mon_msg = tk.Label(
+                mb, text=f"모니터 {len(self.monitors)}대 인식됨", bg=BG, fg=SUB,
+                font=("Malgun Gothic", 9))
+            self.mon_msg.pack(side="left", padx=8)
+
+        def _monitor_choice(self, key):
+            """콤보 상자에서 고른 모니터 번호 (못 고르면 None)."""
+            var = self.mon_vars.get(key)
+            if var is None:
+                return None
+            label = var.get()
+            for m in self.monitors:
+                if m.get("label") == label:
+                    return int(m["index"])
+            return None
+
+        def apply_monitors(self):
+            """고른 배치를 설정에 저장. 반환: 저장된 {"pdf","excel","timer"}."""
+            saved = save_monitor_assignment(
+                **{k: self._monitor_choice(k) for k, _t in self.MONITOR_ROWS})
+            startup_log(f"모니터 배치 저장: 문제지={saved.get('pdf')} · "
+                        f"Excel={saved.get('excel')} · "
+                        f"타이머={saved.get('timer')}")
+            if self.mon_msg is not None:
+                self.mon_msg.configure(text="다음 [시험 시작]부터 적용됩니다")
+            return saved
+
+        def reset_monitors(self):
+            """배치를 기본값(Excel=주 모니터, 문제지=남는 화면)으로 되돌림."""
+            clear_monitor_assignment()
+            cur = resolve_monitor_assignment(self.monitors)
+            for key, _t in self.MONITOR_ROWS:
+                var = self.mon_vars.get(key)
+                i = cur.get(key) or 0
+                if var is not None and 0 <= i < len(self.monitors):
+                    var.set(self.monitors[i]["label"])
+            if self.mon_msg is not None:
+                self.mon_msg.configure(text="기본값으로 되돌렸습니다")
+            return cur
+
+        # --- 우측 상단 타이머 (v3.2.0) ---
+        def _toggle_overlay(self):
+            on = set_timer_overlay_enabled(self.overlay_var.get())
+            startup_log(f"우측 상단 타이머 {'켜짐' if on else '꺼짐'} "
+                        f"(세트설정 _설정.{TIMER_OVERLAY_SETTING})")
+            if self.overlay_msg is not None:
+                self.overlay_msg.configure(
+                    text="" if on else "타이머 창에서만 시간을 봅니다")
+            return on
+
+        def reset_overlay_pos(self):
+            """끌어다 놓은 자리를 잊고 다시 우측 상단에서 시작."""
+            save_overlay_pos(None, None)
+            if self.overlay_msg is not None:
+                self.overlay_msg.configure(text="다음 응시부터 우측 상단")
+            return None
 
         # --- 스캔 폴더 ---
         def refresh_root_label(self):
@@ -8636,7 +9647,8 @@ if HAS_TK:
                 log_error("첫 실행 안내", e)
 
         def open_settings(self):
-            """[설정] — 스캔 폴더 · 세트 숨기기 · 자동 업데이트 · 루틴 자동 열기."""
+            """[설정] — 스캔 폴더 · 세트 숨기기 · 모니터 배치(2대 이상) ·
+            우측 상단 타이머 · 자동 업데이트 · 루틴 자동 열기."""
             win = getattr(self, "settings_win", None)
             if win is not None and win.winfo_exists():
                 win.lift()
@@ -10119,15 +11131,107 @@ if HAS_TK:
             self.exam_running = True
             routine_touch()                    # 루틴 페이지: 시험 진행 중 표시
             self.start_btn.configure(state="disabled", text="진행 중")
+            # 모니터가 2대 이상이면 문제지·Excel을 고른 화면에 띄운다(v3.2.0)
+            layout = self._plan_monitor_layout(exam)
             # 문제지 PDF를 먼저 열고 → 잠시 후 Excel (Excel 창이 맨 앞에 오게)
             delay = 0
             if s.get("pdf"):
+                before = top_level_windows() if layout.get("pdf") else []
                 ok_pdf, err_pdf = open_file(s["pdf"])
                 startup_log(f"PDF 실행: {'성공' if ok_pdf else '실패 ' + err_pdf}"
                             f" · {s['pdf']}")
                 delay = EXCEL_OPEN_DELAY_MS
+                if ok_pdf and layout.get("pdf"):
+                    self.after(PDF_PLACE_DELAY_MS,
+                               lambda: self._place_pdf_window(exam, before, 0))
             self.after(delay, lambda: self._launch_workbook(exam))
             TimerWindow(self, exam)
+
+        # ---------------- 다중 모니터 배치 (v3.2.0) ----------------
+
+        def _plan_monitor_layout(self, exam=None):
+            """이번 응시에 쓸 모니터 배치를 정한다.
+
+            모니터가 1대이거나 열거를 못 하면(Windows 밖·API 실패) 빈 dict —
+            그러면 창을 하나도 옮기지 않고 예전과 똑같이 진행됩니다.
+            """
+            layout = {}
+            try:
+                mons = list_monitors()
+                if monitor_ui_visible(mons):
+                    picks = resolve_monitor_assignment(mons)
+                    layout = {"monitors": mons,
+                              "pdf": pick_monitor(mons, picks.get("pdf")),
+                              "excel": pick_monitor(mons, picks.get("excel")),
+                              "timer": picks.get("timer")}
+                    startup_log(
+                        "모니터 배치: 문제지="
+                        f"{(layout['pdf'] or {}).get('label')} · Excel="
+                        f"{(layout['excel'] or {}).get('label')}")
+            except Exception as e:
+                log_error("모니터 배치 계산", e)
+                layout = {}
+            if exam is not None:
+                exam["monitor_layout"] = layout
+            return layout
+
+        def _place_excel_window(self, exam, tries=0):
+            """Excel 본 창(XLMAIN)을 고른 모니터로 옮기고 최대화.
+
+            바로 못 찾으면(아직 뜨는 중) 몇 번 더 보고, 끝내 못 찾으면 시작
+            로그에만 남기고 조용히 넘어갑니다.
+            """
+            if exam.get("closed"):
+                return False
+            mon = (exam.get("monitor_layout") or {}).get("excel")
+            if mon is None:
+                return False
+            try:
+                moved, why = place_excel_on_monitor(
+                    mon, getattr(exam.get("excel_proc"), "pid", None))
+            except Exception as e:
+                log_error("Excel 창 배치", e)
+                return False
+            if moved:
+                startup_log(f"Excel 창 배치: {mon.get('label')}")
+                return True
+            if tries + 1 < EXCEL_PLACE_TRIES:
+                self.after(PLACE_RETRY_MS,
+                           lambda: self._place_excel_window(exam, tries + 1))
+                return False
+            startup_log(f"Excel 창 배치 실패: {why}")
+            return False
+
+        def _place_pdf_window(self, exam, before, tries=0):
+            """문제지 뷰어 창을 고른 모니터로.
+
+            무엇으로 열릴지(Edge·Acrobat·Chrome…) 알 수 없어 새로 뜬 창을
+            잠시 지켜봅니다. 끝내 못 잡으면 **억지로 옮기지 않고** 한 줄만
+            안내합니다 — 시험은 그대로 진행됩니다.
+            """
+            if exam.get("closed"):
+                return False
+            mon = (exam.get("monitor_layout") or {}).get("pdf")
+            if mon is None:
+                return False
+            try:
+                moved, why = place_new_window_on_monitor(mon, before)
+            except Exception as e:
+                log_error("문제지 창 배치", e)
+                return False
+            if moved:
+                startup_log(f"문제지 창 배치: {mon.get('label')}")
+                return True
+            if tries + 1 < PDF_PLACE_TRIES:
+                self.after(PLACE_RETRY_MS,
+                           lambda: self._place_pdf_window(exam, before,
+                                                          tries + 1))
+                return False
+            startup_log(f"문제지 창 배치 실패: {why}")
+            self.show_toast(
+                f"문제지 창은 자동으로 옮기지 못했습니다 — 창을 직접 "
+                f"{mon.get('label')} 쪽으로 끌어다 놓으세요.", seconds=8)
+            return False
 
         def _launch_workbook(self, exam, prefer_excel=True, verify=True,
                              source="시험 시작"):
@@ -10151,6 +11255,9 @@ if HAS_TK:
             if verify:
                 self.after(EXCEL_CHECK_DELAY_MS,
                            lambda: self._verify_excel(exam, 0))
+            if (exam.get("monitor_layout") or {}).get("excel"):
+                self.after(EXCEL_PLACE_DELAY_MS,
+                           lambda: self._place_excel_window(exam, 0))
             return True, method, err
 
         def _verify_excel(self, exam, tries):
@@ -10205,6 +11312,10 @@ if HAS_TK:
             if exam is not None:
                 exam["closed"] = True
             self._current_exam = None
+            try:                       # 우측 상단 타이머가 남지 않도록 한 번 더
+                TimerOverlay.close_all()
+            except Exception:
+                pass
             w = self._excel_warn
             if w is not None and w.winfo_exists():
                 try:
@@ -10642,6 +11753,31 @@ def run_smoke():
     app.update()
     assert timer.time_lbl.cget("text") == "40:00"
     assert app.listbox is not None
+    # v3.2.0: 우측 상단 타이머 오버레이 (설정으로 켜고 끌 수 있음)
+    _ov_before = timer_overlay_enabled()
+    if _ov_before and timer.overlay is not None:
+        app.update_idletasks()
+        app.update()
+        ov = timer.overlay
+        assert ov.winfo_exists() and ov.time_lbl.cget("text") == "40:00"
+        assert ov.head_lbl.cget("text") == "스모크테스트"
+        _mons = list_monitors()
+        _want = (overlay_position(_mons, resolve_monitor_assignment(
+            _mons).get("timer"), size=ov._size(), saved=saved_overlay_pos())
+            if _mons else overlay_position_for_screen(
+                ov.winfo_screenwidth(), ov.winfo_screenheight(),
+                size=ov._size(), saved=saved_overlay_pos()))
+        assert (ov.winfo_x(), ov.winfo_y()) == _want, \
+            f"오버레이 자리 {(ov.winfo_x(), ov.winfo_y())} != {_want}"
+        assert ov.update_time("05:00", "#FF8B80", "남은 시간") == "05:00"
+        timer.close_overlay()
+        app.update_idletasks()
+        app.update()
+        assert timer.overlay is None and not ov.winfo_exists()
+        assert TimerOverlay.close_all() == 0        # 남은 유령 창 없음
+        timer._open_overlay("스모크테스트")           # 다시 열어 두고 이어서
+        app.update_idletasks()
+        app.update()
     # 오답노트 패널 스모크
     items = [{"sheet": "계산작업", "label": "계산 문제 1", "lost": 8,
               "cells": [{"coord": "J3", "got": "#VALUE!", "expected": "본선",
@@ -11195,11 +12331,36 @@ def run_smoke():
     assert app.routine_action("show", None, None, None, None) == (True, None)
     assert app.routine_action("open_pdf", {"name": "x", "pdf": None}, None,
                               "x", None)[0] is False
+    # v3.2.0: 설정 창 — 모니터가 2대 이상일 때만 모니터 배치 칸이 보인다
+    _pos0, _pick0, _ov0 = (saved_overlay_pos(), monitor_assignment(),
+                           timer_overlay_enabled())
+    _sd = SettingsDialog(app)
+    app.update_idletasks()
+    app.update()
+    _mons2 = _sd.monitors
+    assert bool(_sd.mon_vars) is monitor_ui_visible(_mons2), \
+        f"모니터 {len(_mons2)}대인데 배치 칸 {'있음' if _sd.mon_vars else '없음'}"
+    if _sd.mon_vars:
+        assert set(_sd.mon_vars) == {"pdf", "excel", "timer"}
+        assert _sd.apply_monitors() == {k: _sd._monitor_choice(k)
+                                        for k in ("pdf", "excel", "timer")}
+        assert _sd.reset_monitors() == resolve_monitor_assignment(_mons2)
+    _sd.overlay_var.set(not _ov0)
+    assert _sd._toggle_overlay() is (not _ov0) \
+        and timer_overlay_enabled() is (not _ov0)
+    _sd.overlay_var.set(_ov0)
+    assert _sd._toggle_overlay() is _ov0
+    assert _sd.reset_overlay_pos() is None and saved_overlay_pos() is None
+    _sd.destroy()
+    save_overlay_pos(*(_pos0 or (None, None)))          # 스모크 전 상태로 복구
+    save_monitor_assignment(**_pick0)
     timer.finished = True
     timer.destroy()
+    assert timer.overlay is None and TimerOverlay.close_all() == 0
     app.destroy()
     assert not app.routine.running if app.routine else True
-    print("SMOKE OK: 창 생성/위젯 렌더/타이머/오답노트 패널/단계 가이드(세트 "
+    print("SMOKE OK: 창 생성/위젯 렌더/타이머(+우측 상단 오버레이)/설정 창"
+          "(모니터 배치)/오답노트 패널/단계 가이드(세트 "
           "자동 선택·바꾸기·미발견 직접 선택)/오류 대화상자·로그/진단 창/"
           "시작 로그 창/Excel 확인 안내 창/PDF 회차 경고/안내 띠·자동 업데이트 "
           "토글/루틴 연동 서버(상태·쓰기·페이지·퀴즈 버튼·결과 문구)/"

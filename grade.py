@@ -13,6 +13,29 @@
 의존성: Python 3.8+ / openpyxl (표준 라이브러리 외 유일한 의존성)
 
 변경 이력:
+    2.2.0  **채점기는 1차 의견, 최종 판정은 사용자** — 리포트에 면책 문구와
+           자가 채점을 넣었다. 이 채점기는 이의제기 41건 중 25건(61%)이
+           오탐이었던 이력이 있다. 배포판에는 이의를 제기해 전달할 곳이
+           없으니, 틀렸다고 본 판정을 **쓰는 사람이 직접 뒤집게** 했다.
+           - 면책: 점수 바로 아래에 "채점기에 오류가 있을 수 있습니다.
+             참고용으로 봐 주세요." + 실제 시험 채점과 다를 수 있다는 한 줄.
+             콘솔 출력에도 같은 문구 한 줄.
+           - 자가 채점: 오답노트 카드마다 [내가 보기엔 맞음] 토글. 켜면 그
+             항목의 감점이 취소되고 점수가 즉시 다시 계산된다. 점수는
+             '채점기 N점 (1차)' 와 '내가 매긴 점수 M점 (최종)' 를 나란히
+             표기하고, [점수 복사]·[전체 되돌리기] 를 둔다.
+           - '확인 필요'(v2.0.8 보류) 항목은 **자가 채점과 별개**로 표기한다.
+             보류 = 채점기가 판단하지 못한 항목(기본은 점수에서 뺌),
+             자가 채점 = 사용자가 채점기의 판정을 뒤집은 항목. 보류 항목에는
+             [맞음]/[틀림]/[채점 제외로 두기] 를 둬 직접 판정하면 그 배점이
+             분모로 돌아온다.
+           - 선택은 localStorage 에 리포트별로 저장한다
+             (`kocoSelfGrade:<리포트 식별자>` — 식별자는 응시 시각 기반
+             attempt_report_id, 없으면 풀이 파일 이름 해시). 리포트마다 키가
+             갈려 다른 회차의 선택이 섞이지 않는다.
+           - --json 에 self_grading(식별자·저장소 키·1차 점수·재계산 식·
+             카드/보류 id 목록)을 **추가**한다. 기존 키는 그대로 — 시험장이
+             읽는 total·wrong_items·review_* 는 채점기의 1차 판정이다.
     2.1.0  리포트에서 **이의제기 기능을 들어냈다**(오픈 소스 전환).
            카드별 [이의제기] 버튼·입력란, 상단 고정 바(건수 + [이의제기
            복사하기]), 복사 폴백 모달, "이의제기 안내" 카드, 관련 JS
@@ -192,9 +215,10 @@
     2.0.0  리포트 이의제기 기능(카드별 [이의제기] + 복사 텍스트) 및 학습 로그
 """
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"
 
 import argparse
+import hashlib
 import html as html_mod
 import io
 import json
@@ -7374,6 +7398,9 @@ def print_console(results, score100, global_notes, paths, partial=False):
             print(f" {score100}점 · 확인 필요 {len(holds)}건")
         print(f" 합격선 {PASS_LINE}점 기준: {verdict}")
     print(line)
+    print(f" ※ {SELF_GRADE_DISCLAIMER}")
+    print("   틀렸다고 본 항목은 HTML 리포트에서 직접 판정을 바꿀 수 "
+          "있습니다 (최종 판정은 사용자).")
     if holds:
         print()
         print(" [확인 필요] 판정하지 못해 점수에서 뺀 항목")
@@ -7570,12 +7597,350 @@ def _history_points(history, set_name, current_score):
     return pts
 
 
-def _wrong_card_html(card, idx=None):
+# ---------------------------------------------------------------------------
+# 자가 채점 (v2.2.0) — 채점기는 1차 의견, 최종 판정은 사용자
+#
+# 이 채점기는 틀릴 수 있다(이의제기 41건 중 25건이 오탐이었다). 배포판에는
+# 이의를 제기해 전달할 곳이 없으니, 리포트에서 쓰는 사람이 직접 판정을
+# 뒤집게 한다. 뒤집은 선택은 리포트별 localStorage 키에 저장한다.
+#
+# '확인 필요'(v2.0.8 보류)와는 다른 개념이다:
+#   확인 필요 = 채점기가 **판단하지 못한** 항목 (기본값: 점수에서 뺌)
+#   자가 채점 = 사용자가 채점기의 **판정을 뒤집은** 항목
+# 리포트에서도 두 가지를 섞지 않고 따로 적는다.
+# ---------------------------------------------------------------------------
+
+SELF_GRADE_KEY_PREFIX = "kocoSelfGrade:"
+
+SELF_GRADE_DISCLAIMER = "채점기에 오류가 있을 수 있습니다. 참고용으로 봐 주세요."
+
+SELF_GRADE_DISCLAIMER_SUB = (
+    "실제 시험 채점과 다를 수 있습니다. 채점기가 틀렸다고 본 항목은 아래 "
+    "오답노트에서 직접 판정을 바꿀 수 있고, 점수는 바로 다시 계산됩니다."
+)
+
+
+def report_storage_id(student_path):
+    """리포트별 저장소 키에 쓸 식별자.
+
+    응시 시각(`풀이_<세트>_20260915_1226.xlsm`)이 있으면 그것을 쓴다 —
+    기록(`기록.json`)의 id 와 같은 값이라 나중에 점수를 기록에 옮길 때
+    어느 응시인지 가리킬 수 있다. 시각이 없으면 풀이 파일 이름 해시를
+    쓴다(채점 시각을 쓰면 같은 리포트를 다시 만들 때마다 키가 갈려
+    저장한 선택이 날아간다).
+    """
+    rid = attempt_report_id(student_path)
+    if rid:
+        return rid
+    base = os.path.basename(str(student_path or "")) or "report"
+    return "f" + hashlib.md5(base.encode("utf-8")).hexdigest()[:12]
+
+
+def self_grade_key(student_path):
+    """리포트별 localStorage 키 — 리포트가 다르면 키도 다르다."""
+    return SELF_GRADE_KEY_PREFIX + report_storage_id(student_path)
+
+
+def self_grade_card_id(card, idx):
+    """오답 카드 1장의 자가 채점 식별자 (같은 리포트 안에서 안정)."""
+    raw = "%d|%s|%s|%s" % (idx, card.get("sheet", ""), card.get("label", ""),
+                           card.get("kind", ""))
+    return "c%d-%s" % (idx, hashlib.md5(raw.encode("utf-8")).hexdigest()[:8])
+
+
+def self_grade_hold_id(hold, idx):
+    """'확인 필요' 1건의 자가 채점 식별자."""
+    raw = "%d|%s|%s" % (idx, hold.get("sheet", ""), hold.get("label", ""))
+    return "h%d-%s" % (idx, hashlib.md5(raw.encode("utf-8")).hexdigest()[:8])
+
+
+def self_grade_payload(results, score100, paths, partial=False):
+    """리포트 JS(와 --json)가 쓰는 자가 채점 데이터."""
+    cards = [c for r in results for c in r.wrong]
+    holds = hold_items(results)
+    alloc_total = round(sum(r.alloc for r in results), 2)
+    held_total = hold_total(results)
+    earned_total = round(sum(r.earned for r in results), 2)
+    return {
+        "reportId": report_storage_id(paths[2]),
+        "storageKey": self_grade_key(paths[2]),
+        "setName": derive_set_name(paths[0]),
+        "baseScore": score100,
+        "partial": bool(partial),
+        "maxTotal": (int(round(alloc_total)) if partial else 100),
+        "earned": earned_total,
+        "gradable": round(max(0.0, alloc_total - held_total), 2),
+        "allocTotal": alloc_total,
+        "heldTotal": held_total,
+        "cards": [
+            {"id": self_grade_card_id(c, i), "sheet": c.get("sheet"),
+             "label": c.get("label"), "lost": round(float(c.get("lost") or 0), 2)}
+            for i, c in enumerate(cards)
+        ],
+        "holds": [
+            {"id": self_grade_hold_id(h, i), "sheet": h.get("sheet"),
+             "label": h.get("label"),
+             "points": round(float(h.get("points") or 0), 2)}
+            for i, h in enumerate(holds)
+        ],
+    }
+
+
+def js_json(obj):
+    """HTML <script> 안에 넣어도 안전한 JSON 리터럴."""
+    return (json.dumps(obj, ensure_ascii=False)
+            .replace("<", "\\u003c").replace(">", "\\u003e")
+            .replace("&", "\\u0026").replace("\u2028", "\\u2028")
+            .replace("\u2029", "\\u2029"))
+
+
+_SELF_GRADE_JS = r"""(function () {
+  "use strict";
+  var D = window.KOCO_SELF_GRADE_DATA;
+  if (!D) { return; }
+  var KEY = D.storageKey;
+  var state = { cards: {}, holds: {} };
+
+  function byId(id) {
+    try { return document.getElementById(id); } catch (e) { return null; }
+  }
+  function qsa(sel, root) {
+    try { return (root || document).querySelectorAll(sel) || []; }
+    catch (e) { return []; }
+  }
+  function qs(root, sel) {
+    try { return root && root.querySelector ? root.querySelector(sel) : null; }
+    catch (e) { return null; }
+  }
+  function num(v) { var n = parseFloat(v); return isFinite(n) ? n : 0; }
+  function pt(n) { return (Math.round(n * 100) / 100) + ""; }
+
+  // 파이썬 round() 와 같은 자리맞춤(은행가 반올림) — 1차 점수와 어긋나지 않게
+  function roundHalfEven(x) {
+    var f = Math.floor(x), d = x - f;
+    if (d > 0.5) { return f + 1; }
+    if (d < 0.5) { return f; }
+    return (f % 2 === 0) ? f : f + 1;
+  }
+
+  // 순수 계산 — DOM 없이도 돌아간다(단위 테스트용)
+  function selfScore(data, st) {
+    var earned = data.earned, gradable = data.gradable;
+    var flips = 0, resolved = 0, i, c, h, v;
+    for (i = 0; i < data.cards.length; i++) {
+      c = data.cards[i];
+      if (st.cards[c.id]) { earned += c.lost; flips++; }
+    }
+    for (i = 0; i < data.holds.length; i++) {
+      h = data.holds[i];
+      v = st.holds[h.id];
+      if (v === "right") { earned += h.points; gradable += h.points; resolved++; }
+      else if (v === "wrong") { gradable += h.points; resolved++; }
+    }
+    var score;
+    if (!flips && !resolved) {
+      score = data.baseScore;           // 손대지 않았으면 1차 점수 그대로
+    } else if (data.partial) {
+      score = roundHalfEven(earned);
+    } else if (gradable > 0) {
+      score = roundHalfEven(earned / gradable * 100);
+    } else {
+      score = 0;
+    }
+    if (score < 0) { score = 0; }
+    if (score > data.maxTotal) { score = data.maxTotal; }
+    return { score: score, earned: earned, gradable: gradable,
+             flips: flips, resolved: resolved, changed: flips + resolved };
+  }
+
+  function load() {
+    try {
+      var raw = window.localStorage.getItem(KEY);
+      if (!raw) { return; }
+      var obj = JSON.parse(raw);
+      if (!obj || typeof obj !== "object") { return; }
+      var k;
+      if (obj.cards && typeof obj.cards === "object") {
+        for (k in obj.cards) {
+          if (obj.cards[k] === true) { state.cards[k] = true; }
+        }
+      }
+      if (obj.holds && typeof obj.holds === "object") {
+        for (k in obj.holds) {
+          if (obj.holds[k] === "right" || obj.holds[k] === "wrong") {
+            state.holds[k] = obj.holds[k];
+          }
+        }
+      }
+    } catch (e) { /* 저장소를 못 쓰는 환경 — 화면은 그대로 돈다 */ }
+  }
+
+  function save() {
+    try {
+      var r = selfScore(D, state);
+      window.localStorage.setItem(KEY, JSON.stringify({
+        v: 1, reportId: D.reportId, set: D.setName,
+        cards: state.cards, holds: state.holds,
+        autoScore: D.baseScore, myScore: r.score,
+        savedAt: new Date().toISOString()
+      }));
+    } catch (e) { /* 저장 실패는 조용히 넘어간다 */ }
+  }
+
+  function flash(msg) {
+    var el = byId("sg-status");
+    if (el) { el.textContent = msg; }
+  }
+
+  function render() {
+    var r = selfScore(D, state), i, el, id, on, btn, st, lost;
+    var mine = byId("sg-mine");
+    if (mine) { mine.textContent = String(r.score); }
+    var auto = byId("sg-auto");
+    if (auto) { auto.textContent = String(D.baseScore); }
+    var diff = byId("sg-diff");
+    if (diff) {
+      if (r.changed) {
+        var d = r.score - D.baseScore;
+        diff.textContent = "내가 바꾼 판정 " + r.changed + "건 · 채점기 대비 "
+          + (d > 0 ? "+" : "") + d + "점";
+        diff.removeAttribute("hidden");
+      } else {
+        diff.setAttribute("hidden", "");
+        diff.textContent = "";
+      }
+    }
+    var reset = byId("sg-reset");
+    if (reset) {
+      if (r.changed) { reset.removeAttribute("hidden"); }
+      else { reset.setAttribute("hidden", ""); }
+    }
+    var cards = qsa("[data-sg-card]");
+    for (i = 0; i < cards.length; i++) {
+      el = cards[i];
+      id = el.getAttribute("data-sg-card");
+      lost = num(el.getAttribute("data-sg-lost"));
+      on = state.cards[id] === true;
+      el.setAttribute("data-sg-on", on ? "1" : "0");
+      btn = qs(el, ".sg-toggle");
+      if (btn) {
+        btn.setAttribute("aria-pressed", on ? "true" : "false");
+        btn.textContent = on ? "채점기 판정으로 되돌리기" : "내가 보기엔 맞음";
+      }
+      st = qs(el, ".sg-state");
+      if (st) {
+        st.textContent = on
+          ? ("내 최종 판정: 맞음 — 감점 " + pt(lost) + "점을 되돌렸습니다")
+          : ("채점기 1차 판정: 틀림" + (lost ? " (-" + pt(lost) + "점)" : ""));
+      }
+    }
+    var holds = qsa("[data-sg-hold]");
+    for (i = 0; i < holds.length; i++) {
+      el = holds[i];
+      id = el.getAttribute("data-sg-hold");
+      lost = num(el.getAttribute("data-sg-points"));
+      var v = state.holds[id] || "";
+      el.setAttribute("data-sg-verdict", v);
+      var opts = qsa(".sg-hold-btn", el);
+      for (var j = 0; j < opts.length; j++) {
+        var want = opts[j].getAttribute("data-sg-hold-val") || "";
+        opts[j].setAttribute("aria-pressed", want === v ? "true" : "false");
+      }
+      st = qs(el, ".sg-hold-state");
+      if (st) {
+        st.textContent = v === "right"
+          ? ("내 최종 판정: 맞음 — " + pt(lost) + "점을 득점으로 넣었습니다")
+          : v === "wrong"
+            ? ("내 최종 판정: 틀림 — " + pt(lost) + "점을 감점으로 넣었습니다")
+            : "채점기가 판단하지 못한 항목 — 지금은 점수에서 뺀 상태입니다";
+      }
+    }
+  }
+
+  function setCard(id, on) {
+    if (on) { state.cards[id] = true; } else { delete state.cards[id]; }
+    render(); save();
+  }
+  function setHold(id, v) {
+    if (v === "right" || v === "wrong") { state.holds[id] = v; }
+    else { delete state.holds[id]; }
+    render(); save();
+  }
+  function resetAll() {
+    state.cards = {}; state.holds = {};
+    try { window.localStorage.removeItem(KEY); } catch (e) { }
+    render();
+    flash("채점기의 1차 판정으로 모두 되돌렸습니다.");
+  }
+
+  function copyScore() {
+    var r = selfScore(D, state);
+    var txt = String(r.score);
+    function ok() { flash("최종 점수 " + txt + "점을 복사했습니다."); }
+    function fallback() {
+      var inp = byId("sg-copy-src");
+      if (inp) {
+        inp.removeAttribute("hidden");
+        inp.value = txt;
+        try { inp.focus(); inp.select(); } catch (e) { }
+        flash("자동 복사가 막혀 있습니다 — 칸에 있는 " + txt
+              + " 을 Ctrl+C 로 복사하세요.");
+      } else {
+        flash("자동 복사가 막혀 있습니다 — 최종 점수는 " + txt + "점입니다.");
+      }
+    }
+    try {
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(ok, fallback);
+      } else { fallback(); }
+    } catch (e) { fallback(); }
+  }
+
+  function onClick(ev) {
+    var t = ev.target;
+    while (t && t !== document.body) {
+      if (t.classList && t.classList.contains("sg-toggle")) {
+        var card = t.closest ? t.closest("[data-sg-card]") : null;
+        if (card) {
+          var cid = card.getAttribute("data-sg-card");
+          setCard(cid, state.cards[cid] !== true);
+        }
+        return;
+      }
+      if (t.classList && t.classList.contains("sg-hold-btn")) {
+        var box = t.closest ? t.closest("[data-sg-hold]") : null;
+        if (box) {
+          setHold(box.getAttribute("data-sg-hold"),
+                  t.getAttribute("data-sg-hold-val") || "");
+        }
+        return;
+      }
+      if (t.id === "sg-reset") { resetAll(); return; }
+      if (t.id === "sg-copy") { copyScore(); return; }
+      t = t.parentNode;
+    }
+  }
+
+  load();
+  render();
+  try { document.addEventListener("click", onClick); } catch (e) { }
+
+  window.kocoSelfGrade = {
+    data: D, state: state, score: selfScore, roundHalfEven: roundHalfEven,
+    setCard: setCard, setHold: setHold, reset: resetAll, render: render
+  };
+})();"""
+
+
+def _wrong_card_html(card, idx=None, sg_id=None):
     """오답노트 카드 1장.
 
     v2.1.0: 이의제기 경로를 없앴습니다(오픈 소스로 전환 — 채점이 틀린 것
     같으면 저장소에서 직접 고치거나 이슈/PR 로 알려 주세요). idx 인자는
-    호출부 호환을 위해 남겨 두고 쓰지 않습니다."""
+    호출부 호환을 위해 남겨 두고 쓰지 않습니다.
+
+    v2.2.0: sg_id 를 주면 카드 아래에 자가 채점 토글([내가 보기엔 맞음])을
+    답니다 — 채점기의 판정은 1차 의견이고 최종 판정은 사용자 몫입니다."""
     cat = card.get("category")
     cat_chip = (f'<span class="chip">{esc(CAT_INFO.get(cat, {}).get("이름", cat))}'
                 f'</span>') if cat else ""
@@ -7644,6 +8009,23 @@ def _wrong_card_html(card, idx=None):
                     "</div>" + "".join(solve) + "</div>")
     if card.get("hint"):
         body.append(f'<p class="hint">방법: {esc(card["hint"])}</p>')
+    if sg_id and lost:
+        # 자가 채점: 채점기 1차 판정을 사용자가 뒤집는 자리.
+        # 되돌릴 감점이 없는 카드(설명용 0점 카드)에는 토글을 달지 않는다 —
+        # 눌러도 점수가 그대로라 사용자를 헷갈리게 한다.
+        body.append(
+            '<div class="sg-row">'
+            '<button type="button" class="sg-toggle" aria-pressed="false">'
+            '내가 보기엔 맞음</button>'
+            f'<span class="sg-state">채점기 1차 판정: 틀림'
+            + (f' (-{lost:g}점)' if lost else "")
+            + "</span></div>")
+        return (f'<div class="wc" data-sg-card="{esc(sg_id)}" '
+                f'data-sg-lost="{lost:g}" data-sg-on="0">'
+                f'{head}{"".join(body)}</div>')
+    if sg_id:
+        body.append('<div class="sg-row"><span class="sg-state">'
+                    "이 카드에는 되돌릴 감점이 없습니다 (설명용)</span></div>")
     return f'<div class="wc">{head}{"".join(body)}</div>'
 
 
@@ -7696,12 +8078,19 @@ def write_html(path, results, score100, global_notes, paths,
                           '<div class="scroll">' + _svg_trend(pts)
                           + "</div></div>")
 
-    # 오답노트
+    # 오답노트 — 각 카드에 자가 채점 토글(채점기 1차 판정 뒤집기)을 단다
+    sg_card_ids = [self_grade_card_id(c, i) for i, c in enumerate(all_cards)]
     if all_cards:
         wrong_html = ('<div class="card"><h2>오답노트</h2>'
                       '<p class="lead">틀린 항목마다 내 답과 정답을 비교하고, '
                       '정답 수식의 풀이를 단계별로 설명합니다.</p>'
-                      + "".join(_wrong_card_html(c, i)
+                      '<p class="lead sg-lead">아래는 <strong>채점기가 '
+                      "'틀림'으로 본 1차 판정</strong>입니다. 문제지와 내 답을 "
+                      '다시 보고 <strong>내가 보기엔 맞다</strong>면 항목마다 '
+                      '[내가 보기엔 맞음]을 눌러 판정을 뒤집으세요 — 그 항목의 '
+                      '감점이 취소되고 위의 최종 점수가 바로 다시 '
+                      '계산됩니다.</p>'
+                      + "".join(_wrong_card_html(c, i, sg_id=sg_card_ids[i])
                                 for i, c in enumerate(all_cards))
                       + "</div>")
     elif any(getattr(r, "holds", None) for r in results):
@@ -7754,15 +8143,28 @@ def write_html(path, results, score100, global_notes, paths,
     gradable_total = max(0.0, alloc_total - held_total)
     review_html = ""
     score_note = ""
+    sg_hold_ids = [self_grade_hold_id(h, i) for i, h in enumerate(holds)]
     if holds:
         rows = "".join(
-            '<div class="review-item">'
+            f'<div class="review-item" data-sg-hold="{esc(sg_hold_ids[i])}" '
+            f'data-sg-points="{h["points"]:g}" data-sg-verdict="">'
             f'<div class="review-head">{esc(h["sheet"])} · '
             f'{esc(h["label"])}'
             f'<span class="review-pts">{h["points"]:g}점 분량 · 점수에서 '
             f'뺌</span></div>'
-            f'<div class="review-why">{esc(h["why"])}</div></div>'
-            for h in holds)
+            f'<div class="review-why">{esc(h["why"])}</div>'
+            '<div class="sg-hold-row">'
+            '<span class="sg-hold-lead">직접 판정:</span>'
+            '<button type="button" class="sg-hold-btn" '
+            'data-sg-hold-val="right" aria-pressed="false">맞음</button>'
+            '<button type="button" class="sg-hold-btn" '
+            'data-sg-hold-val="wrong" aria-pressed="false">틀림</button>'
+            '<button type="button" class="sg-hold-btn" data-sg-hold-val="" '
+            'aria-pressed="true">채점 제외로 두기</button>'
+            '<span class="sg-hold-state">채점기가 판단하지 못한 항목 — '
+            '지금은 점수에서 뺀 상태입니다</span>'
+            "</div></div>"
+            for i, h in enumerate(holds))
         review_html = (
             '<div class="card review-card"><h2>확인 필요 '
             f'{len(holds)}건</h2>'
@@ -7770,6 +8172,13 @@ def write_html(path, results, score100, global_notes, paths,
             '못했습니다. <strong>맞았는지 틀렸는지 모른다</strong>는 뜻이라 '
             '감점도 가점도 하지 않고 만점에서 뺐습니다 — 직접 확인해 '
             '주세요.</p>'
+            '<p class="lead sg-lead">이 항목들은 오답노트의 <strong>자가 '
+            '채점과는 다른 칸</strong>입니다. 오답노트의 자가 채점은 '
+            "<strong>채점기가 '틀림'으로 판정한 것을 사용자가 뒤집는</strong> "
+            '것이고, 여기 확인 필요는 <strong>채점기가 아예 판단하지 '
+            '못한</strong> 항목입니다. 직접 [맞음]·[틀림]을 고르면 그 배점이 '
+            '다시 채점 대상으로 들어가고, 그냥 두면 지금처럼 점수에서 '
+            '빠진 채로 남습니다.</p>'
             + rows
             + '<p class="review-calc">점수 계산: 득점 '
             f'{sum(r.earned for r in results):g} ÷ 채점된 배점 '
@@ -7778,6 +8187,36 @@ def write_html(path, results, score100, global_notes, paths,
             "</div>")
         score_note = (f'<div class="review-flag">확인 필요 {len(holds)}건 '
                       f'({held_total:g}점 분량은 채점에서 제외)</div>')
+
+    # --- v2.2.0 면책 문구 · 자가 채점 패널 ---
+    # 채점기는 1차 의견이고 최종 판정은 사용자다. 점수를 두 값으로 나란히
+    # 보여 주고(채점기 / 내가 매긴 점수), 오답노트·확인 필요에서 바꾼
+    # 판정이 여기에 즉시 반영된다.
+    disclaimer_html = (
+        '<div class="disclaimer" role="note">'
+        f"<strong>{esc(SELF_GRADE_DISCLAIMER)}</strong>"
+        f"<span>{esc(SELF_GRADE_DISCLAIMER_SUB)}</span></div>")
+    sg_data = self_grade_payload(results, score100, paths, partial=partial)
+    final_html = (
+        '<div class="sg-final" id="sg-final">'
+        '<div class="sg-scores">'
+        f'<div class="sg-line sg-line-auto">채점기 <strong id="sg-auto">'
+        f'{score100}</strong>점<span class="sg-tag">1차</span></div>'
+        f'<div class="sg-line sg-line-mine">내가 매긴 점수 '
+        f'<strong id="sg-mine">{score100}</strong>점'
+        '<span class="sg-tag sg-tag-final">최종</span></div>'
+        '<div class="sg-diff" id="sg-diff" hidden></div>'
+        '</div>'
+        '<div class="sg-acts">'
+        '<button type="button" class="sg-btn sg-btn-main" id="sg-copy">'
+        '점수 복사</button>'
+        '<button type="button" class="sg-btn" id="sg-reset" hidden>'
+        '전체 되돌리기</button>'
+        '<input type="text" id="sg-copy-src" readonly hidden>'
+        '<div class="sg-status" id="sg-status"></div>'
+        '</div></div>')
+    sg_script = ('<script>window.KOCO_SELF_GRADE_DATA='
+                 + js_json(sg_data) + ";\n" + _SELF_GRADE_JS + "</script>")
 
     gnotes = "".join(f"<li>{esc(n)}</li>" for n in global_notes)
     sheet_notes = []
@@ -7910,6 +8349,66 @@ footer { color:#57705F; font-size:0.78rem; text-align:center;
 .review-flag { display:inline-block; margin-top:8px; padding:3px 12px;
   border:1px solid #E0B96A; border-radius:999px; background:#FFFBF2;
   color:#9A6B10; font-size:0.82rem; }
+/* --- v2.2.0 면책 문구 · 자가 채점 --- */
+.donut-wrap { text-align:center; }
+.donut-cap { font-size:0.78rem; color:#57705F; margin-top:2px; }
+.disclaimer { margin-top:16px; padding:12px 16px; border-radius:10px;
+  background:#FFF7E6; border:1px solid #E0B96A; color:#7A4E07; }
+.disclaimer strong { display:block; font-size:0.96rem; color:#8A5A00; }
+.disclaimer span { display:block; font-size:0.84rem; margin-top:3px;
+  color:#6B5A3A; }
+.sg-final { margin-top:14px; padding:14px 18px; border-radius:12px;
+  border:1px solid #BFDCCB; background:#F4FAF5; display:flex; gap:18px;
+  flex-wrap:wrap; align-items:center; }
+.sg-scores { flex:1; min-width:230px; }
+.sg-line { font-size:0.95rem; color:#57705F; }
+.sg-line strong { font-variant-numeric:tabular-nums; }
+.sg-line-auto strong { font-size:1.15rem; color:#1B3A26; }
+.sg-line-mine { margin-top:2px; color:#0B5D31; }
+.sg-line-mine strong { font-size:1.9rem; color:#107C41; }
+.sg-tag { display:inline-block; margin-left:6px; padding:1px 9px;
+  border-radius:999px; font-size:0.72rem; background:#ECF1ED;
+  color:#57705F; vertical-align:middle; }
+.sg-tag-final { background:#107C41; color:#fff; }
+.sg-diff { margin-top:4px; font-size:0.82rem; color:#B45309;
+  font-weight:700; }
+.sg-acts { display:flex; flex-direction:column; gap:6px; align-items:stretch;
+  min-width:150px; }
+.sg-btn { font:inherit; font-size:0.86rem; padding:7px 14px;
+  border-radius:8px; border:1px solid #BFDCCB; background:#FFFFFF;
+  color:#0B5D31; cursor:pointer; }
+.sg-btn:hover { background:#E3F2E8; }
+.sg-btn-main { background:#107C41; border-color:#107C41; color:#fff;
+  font-weight:700; }
+.sg-btn-main:hover { background:#0B5D31; }
+.sg-status { font-size:0.78rem; color:#57705F; min-height:1.2em; }
+#sg-copy-src { font:inherit; font-size:0.9rem; width:100%; padding:4px 8px;
+  border:1px solid #BFDCCB; border-radius:6px; text-align:center; }
+.sg-lead { border-left:3px solid #BFDCCB; padding-left:10px; }
+.sg-row { display:flex; gap:10px; align-items:center; flex-wrap:wrap;
+  margin-top:10px; padding-top:9px; border-top:1px dashed #E8EFEA; }
+.sg-toggle { font:inherit; font-size:0.82rem; padding:5px 13px;
+  border-radius:999px; border:1px solid #BFDCCB; background:#FFFFFF;
+  color:#0B5D31; cursor:pointer; flex:none; }
+.sg-toggle:hover { background:#E3F2E8; }
+.sg-state { font-size:0.8rem; color:#57705F; }
+.wc[data-sg-on="1"] { border-left-color:#107C41; background:#F7FBF8; }
+.wc[data-sg-on="1"] .wc-lost { color:#57705F; text-decoration:line-through; }
+.wc[data-sg-on="1"] .sg-toggle { background:#107C41; border-color:#107C41;
+  color:#fff; }
+.wc[data-sg-on="1"] .sg-state { color:#0B5D31; font-weight:700; }
+.sg-hold-row { display:flex; gap:8px; align-items:center; flex-wrap:wrap;
+  margin-top:9px; }
+.sg-hold-lead { font-size:0.8rem; color:#9A6B10; font-weight:700; }
+.sg-hold-btn { font:inherit; font-size:0.8rem; padding:4px 12px;
+  border-radius:999px; border:1px solid #E0B96A; background:#FFFFFF;
+  color:#7A4E07; cursor:pointer; }
+.sg-hold-btn:hover { background:#FFF3DC; }
+.sg-hold-btn[aria-pressed="true"] { background:#9A6B10; border-color:#9A6B10;
+  color:#fff; font-weight:700; }
+.sg-hold-state { font-size:0.8rem; color:#7A4E07; }
+.review-item[data-sg-verdict="right"] { border-left-color:#107C41; }
+.review-item[data-sg-verdict="wrong"] { border-left-color:#B3372E; }
 """
     doc = (
         "<!doctype html>\n"
@@ -7921,7 +8420,9 @@ footer { color:#57705F; font-size:0.78rem; text-align:center;
         f"<style>{css}</style></head><body{body_cls}>"
         + '<div class="wrap">\n'
         '<div class="card"><div class="head-flex">'
-        f'<div>{_svg_donut(score100, max_total=max_total, show_pass=not partial)}</div>'
+        f'<div class="donut-wrap">'
+        f'{_svg_donut(score100, max_total=max_total, show_pass=not partial)}'
+        f'<div class="donut-cap">채점기 1차 판정</div></div>'
         '<div class="head-info">'
         + (f"<h1>{esc(set_name)} 부분 연습 리포트</h1>"
            f'<div class="meta">부분 채점: {esc(graded_names)} '
@@ -7935,14 +8436,15 @@ footer { color:#57705F; font-size:0.78rem; text-align:center;
         f"정답 {esc(os.path.basename(paths[1]))}<br>"
         f'<span class="file-solve">풀이 '
         f"<strong>{esc(os.path.basename(paths[2]))}</strong></span></div>"
-        "</div></div>" + warn_html + "</div>\n"
+        "</div></div>" + warn_html + disclaimer_html + final_html + "</div>\n"
         '<div class="card"><h2>영역별 점수</h2><div class="scroll">'
         + _svg_sheet_bars(results) + "</div></div>\n"
         + trend_html + review_html + wrong_html + diag_html + check_html
         + notes_html
         + f"<footer>코코 채점 학습 리포트 · diff 기반 자동 채점 · {now_txt}"
+          f"<br>{esc(SELF_GRADE_DISCLAIMER)} 최종 판정은 사용자가 합니다."
           "</footer>\n</div>"
-        + "</body></html>")
+        + sg_script + "</body></html>")
     with open(path, "w", encoding="utf-8") as f:
         f.write(doc)
 
@@ -7985,6 +8487,20 @@ def write_json(path, results, score100, global_notes, paths, partial=False):
                        "비율 환산합니다 (점수 = 득점 ÷ 채점된 배점 × 100). "
                        "확인 필요는 감점도 가점도 아닙니다."),
         },
+        # --- 자가 채점(v2.2.0) — 추가만. total·wrong_items 등 기존 키는
+        #     채점기의 1차 판정 그대로다(시험장이 읽는다). ---
+        "self_grading": dict(
+            self_grade_payload(results, score100, paths, partial=partial),
+            keyPrefix=SELF_GRADE_KEY_PREFIX,
+            disclaimer=SELF_GRADE_DISCLAIMER,
+            method=("채점기의 판정은 1차 의견입니다. 리포트(HTML)에서 오답 "
+                    "항목의 판정을 뒤집으면 그 감점이 취소되고, '확인 필요' "
+                    "항목을 직접 판정하면 그 배점이 채점 대상으로 돌아옵니다. "
+                    "최종 점수 = (득점 + 되돌린 감점 + 맞음으로 판정한 보류) "
+                    "÷ (채점된 배점 + 직접 판정한 보류) × 100. 사용자의 선택은 "
+                    "브라우저 localStorage 의 리포트별 키에 저장되며 이 JSON "
+                    "에는 들어오지 않습니다 — 여기 값은 모두 1차 판정입니다."),
+        ),
         "generated": datetime.now().isoformat(timespec="seconds"),
         "files": {
             "problem": os.path.abspath(paths[0]),
