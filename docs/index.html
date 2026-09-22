@@ -1,0 +1,129 @@
+<!doctype html>
+<html lang="ko">
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>코코 스터디 툴즈 — 컴활 2급 실기 자동 채점</title>
+<meta name="description" content="엑셀로 푼 답안을 정답 파일과 셀 단위로 비교해 100점 만점으로 채점합니다. 무료·오픈소스.">
+<meta property="og:title" content="코코 스터디 툴즈 — 컴활 2급 실기 자동 채점">
+<meta property="og:description" content="내가 보던 문제지 그대로. 무료·오픈소스.">
+<meta property="og:image" content="report.png">
+<style>
+  :root{
+    --bg:#123021; --panel:#1B4230; --fg:#F2EFE6; --muted:#9DBBA8;
+    --dim:#7FA38C; --mint:#6FD79B; --ink:#0D2418; --amber:#E9B665;
+    --line:rgba(255,255,255,.14);
+  }
+  *{margin:0;padding:0;box-sizing:border-box}
+  html{overflow-x:hidden}
+  body{background:var(--bg);color:var(--fg);
+    font-family:-apple-system,BlinkMacSystemFont,"Apple SD Gothic Neo","Malgun Gothic",
+      "Noto Sans KR",sans-serif;
+    line-height:1.65;-webkit-text-size-adjust:100%;
+    overflow-x:hidden;word-break:keep-all;overflow-wrap:anywhere}
+  .wrap{max-width:640px;margin:0 auto;padding:0 20px 80px}
+  header{padding:56px 0 8px}
+  .eyebrow{font-size:13px;letter-spacing:.24em;color:var(--dim);font-weight:700}
+  h1{margin-top:16px;font-size:clamp(26px,7.4vw,34px);font-weight:800;letter-spacing:-.02em;line-height:1.25}
+  h1 b{color:var(--mint)}
+  .lede{margin-top:16px;font-size:16px;color:var(--muted)}
+  .cta{display:block;margin-top:28px;background:var(--mint);color:var(--ink);
+    text-align:center;text-decoration:none;font-weight:800;font-size:18px;
+    padding:18px;border-radius:14px}
+  .cta small{display:block;font-weight:700;font-size:13px;opacity:.7;margin-top:4px}
+  .note{margin-top:12px;font-size:13px;color:var(--dim);text-align:center}
+  h2{margin-top:52px;font-size:clamp(19px,5.2vw,21px);font-weight:800;letter-spacing:-.01em}
+  h2 span{color:var(--mint)}
+  figure{margin-top:20px}
+  figure img{width:100%;display:block;border:1px solid var(--line);border-radius:12px;
+    background:#fff}
+  figure img.dk{background:#101613}
+  figcaption{margin-top:10px;font-size:14px;color:var(--muted)}
+  ol{margin-top:20px;list-style:none;counter-reset:s}
+  ol li{counter-increment:s;position:relative;padding:18px 0 18px 46px;
+    border-bottom:1px solid var(--line)}
+  ol li:last-child{border-bottom:0}
+  ol li::before{content:counter(s,decimal-leading-zero);position:absolute;left:0;top:18px;
+    font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    color:var(--mint);font-weight:700;font-size:16px}
+  ol li b{display:block;font-size:17px;font-weight:800}
+  ol li p{margin-top:6px;font-size:14px;color:var(--muted)}
+  code{font-family:ui-monospace,SFMono-Regular,Menlo,monospace;
+    background:var(--panel);border:1px solid var(--line);border-radius:6px;
+    padding:2px 7px;font-size:13px;overflow-wrap:anywhere}
+  .warn{color:var(--amber);font-weight:700}
+  .card{margin-top:18px;background:var(--panel);border:1px solid var(--line);
+    border-radius:14px;padding:20px}
+  .card b{display:block;font-size:16px;font-weight:800;margin-bottom:6px}
+  .card p{font-size:14px;color:var(--muted)}
+  .card + .card{margin-top:12px}
+  footer{margin-top:56px;padding-top:24px;border-top:1px solid var(--line);
+    font-size:13px;color:var(--dim)}
+  footer a{color:var(--muted)}
+  a{color:var(--mint)}
+</style>
+<div class="wrap">
+<header>
+  <div class="eyebrow">컴퓨터활용능력 2급 실기</div>
+  <h1>엑셀 파일 넣으면<br><b>100점 만점으로 채점</b>합니다</h1>
+  <p class="lede">내가 푼 파일과 정답 파일을 셀 단위로 비교해 점수를 내고,
+     틀린 곳마다 <b>내 답 → 정답</b>을 보여 줍니다. 무료이고 소스도 전부 공개했습니다.</p>
+  <a class="cta" href="https://github.com/xasmine02/cocomate-study-tools/archive/refs/heads/main.zip">
+    다운로드 (ZIP)<small>Windows · Excel 2021 기준</small></a>
+  <p class="note">설치가 처음이면 아래 4단계를 그대로 따라 하세요</p>
+</header>
+
+<h2>어떤 화면인가</h2>
+<figure><img src="report.png" alt="학습 리포트">
+  <figcaption>제출하면 바로 뜨는 학습 리포트 — 영역별로 어디서 깎였는지 보여 줍니다.</figcaption></figure>
+<figure><img src="wrong.png" alt="오답노트">
+  <figcaption>오답노트 — 내 답과 정답을 나란히 놓고 무엇이 왜 다른지 설명합니다.</figcaption></figure>
+<figure><img src="routine.png" class="dk" alt="루틴 페이지">
+  <figcaption>루틴 페이지 — 시험일만 넣으면 남은 기간에 맞춰 일정이 짜입니다.</figcaption></figure>
+
+<h2>설치 <span>4단계</span></h2>
+<ol>
+  <li><b>파이썬 설치</b>
+    <p><a href="https://www.python.org/downloads/">python.org</a> 에서 받아 설치합니다.
+       설치 첫 화면에서 <span class="warn">Add python.exe to PATH</span> 를 꼭 체크하세요.
+       이거 하나 빼먹으면 나중에 전부 안 됩니다.</p></li>
+  <li><b>ZIP 받아서 압축 풀기</b>
+    <p>위 다운로드 버튼을 누르고, <span class="warn">새 폴더를 하나 만들어</span> 거기에 푸세요.
+       바탕화면에 바로 풀면 프로그램이 바탕화면 전체를 훑어서 느려집니다.</p></li>
+  <li><b>폴더 정리</b>
+    <p>푼 폴더 안에 이미 <code>시험장</code> 과 <code>채점</code> 폴더가 있습니다.
+       <code>시험장.py</code> · <code>코코시험장.pyw</code> · <code>루틴.html</code> 을
+       <code>시험장</code> 안으로, <code>grade.py</code> · <code>코코채점.pyw</code> 를
+       <code>채점</code> 안으로 옮기세요. 나머지는 그대로 둡니다.</p></li>
+  <li><b>라이브러리 설치 후 실행</b>
+    <p>명령 프롬프트를 열고 <code>pip install openpyxl</code> 을 실행합니다.
+       그다음 <code>코코시험장.pyw</code> 를 더블클릭하면 끝입니다.</p></li>
+</ol>
+
+<h2>잘 안 될 때</h2>
+<div class="card"><b>'python'은(는) 내부 또는 외부 명령이 아닙니다</b>
+  <p>1단계에서 PATH 체크를 빼먹은 것입니다. 설치 파일을 다시 실행해
+     Modify → Next → <b>Add Python to environment variables</b> 를 켜세요.
+     또는 <code>py -m pip install openpyxl</code> 로 해 보세요.</p></div>
+<div class="card"><b>더블클릭해도 아무 창이 안 뜬다</b>
+  <p>파이썬 설치 때 tcl/tk 가 빠진 경우입니다. 설치 파일 재실행 →
+     Modify → <b>tcl/tk and IDLE</b> 체크.</p></div>
+<div class="card"><b>채점이 이상한데요</b>
+  <p>리포트에서 그 항목을 눌러 "내가 맞았다"로 뒤집으면 점수가 되돌아옵니다.
+     채점기는 1차 판단이고 최종 판단은 본인입니다. 계속 틀리면
+     <a href="https://github.com/xasmine02/cocomate-study-tools/issues">이슈</a>로
+     알려 주세요.</p></div>
+
+<h2>내가 보던 문제지를 씁니다</h2>
+<p class="lede">따로 등록하는 절차가 없습니다. 폴더에 <code>_문제</code> 파일과
+   <code>_정답</code> 파일을 같은 이름으로 짝지어 넣어 두면 알아서 한 세트로 묶습니다.
+   연습용 모의고사 2회분과 계산작업 드릴 24문항은 기본으로 들어 있습니다.</p>
+
+<footer>
+  <p><b>비공식 개인 제작 도구입니다.</b> 시험 시행처와 아무 관계가 없고 어떤 기관의
+     인증도 받지 않았습니다. 채점기에 오류가 있을 수 있으니 참고용으로 봐 주세요.</p>
+  <p style="margin-top:12px">점수·풀이·기록은 전부 내 컴퓨터에만 저장되고 어디로도 전송되지 않습니다.</p>
+  <p style="margin-top:12px">MIT 라이선스 ·
+     <a href="https://github.com/xasmine02/cocomate-study-tools">소스 보기</a> ·
+     <a href="https://github.com/xasmine02/cocomate-study-tools/blob/main/CONTRIBUTING.md">고쳐 쓰는 법</a></p>
+</footer>
+</div>
