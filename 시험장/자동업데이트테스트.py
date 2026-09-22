@@ -50,6 +50,14 @@ def check(desc, cond, extra=""):
         raise AssertionError(f"{desc} {extra}")
 
 
+def _raises(fn):
+    try:
+        fn()
+    except RuntimeError:
+        return True
+    return False
+
+
 def sha(data):
     return hashlib.sha256(data if isinstance(data, bytes) else data.encode("utf-8")).hexdigest()
 
@@ -663,6 +671,33 @@ if os.path.isfile(pub):
           and all(k.endswith(".json") for k in vj.get("data_files", {}).values())
           and all(k in vj.get("sha256", {}) for k in list(vj.get("set_files", {}).values()) + list(vj.get("data_files", {}).values())),
           str(list(vj.get("set_files", {}).values())))
+
+
+print("8. 경로 키 위조 방어 — version.json 이 시키는 위치에 파일을 쓰므로")
+# 원격 version.json 이 조작되면 설치 폴더 밖에 쓰려 들 수 있다.
+# 어떤 키가 와도 설치 루트를 벗어나지 않거나 거부돼야 한다.
+_pt_base = os.path.join(TMP, "설치", "시험장")
+os.makedirs(_pt_base, exist_ok=True)
+_pt_root = os.path.dirname(_pt_base)
+_evil = ["../../../../../../tmp/PWNED.json",
+         "..\\..\\Windows\\evil.json",
+         "C:\\Windows\\evil.json",
+         "/etc/cron.d/evil",
+         "정정/../../../../PWNED.json",
+         "기대값/..\\..\\evil.json"]
+for _fn in ("_data_target_path", "_update_target_path"):
+    for _k in _evil:
+        try:
+            _p = os.path.abspath(getattr(sj, _fn)(_k, _pt_base))
+            _inside = _p == _pt_root or _p.startswith(_pt_root + os.sep)
+        except RuntimeError:
+            _inside = True          # 거부도 정답
+        check(f"{_fn}: 설치 폴더를 벗어나지 않는다", _inside, _k)
+check("드라이브 문자가 든 키는 거부한다",
+      _raises(lambda: sj._safe_rel_parts("C:\\x.json")))
+check("비어 있는 키는 거부한다", _raises(lambda: sj._safe_rel_parts("../..")))
+check("정상 키는 그대로 통과한다",
+      sj._safe_rel_parts("기대값/a_기대값.json") == ["기대값", "a_기대값.json"])
 
 srv.shutdown()
 shutil.rmtree(TMP, ignore_errors=True)

@@ -105,7 +105,7 @@ v3.2.0: 시험장 환경 재현 — ① **우측 상단 타이머**. 시험이 �
 의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
 """
 
-__version__ = "3.2.0"
+__version__ = "3.2.1"
 
 import argparse
 import hashlib
@@ -4904,15 +4904,46 @@ def version_marker(text):
     return m.group(1) if m else None
 
 
+def _safe_rel_parts(rel_key):
+    """version.json 의 상대 경로 키를 안전한 경로 조각으로 바꾼다.
+
+    자동 업데이트는 원격 version.json 이 시키는 위치에 파일을 씁니다. 그
+    키가 조작되면 설치 폴더 밖에 쓸 수 있으므로 여기서 한 번 걸러 냅니다.
+    슬래시만 구분자로 보면 Windows 에서 역슬래시 경로와 드라이브 문자가
+    그대로 통과하므로, 역슬래시도 구분자로 보고 콜론이 든 조각은 거부합니다.
+    """
+    raw = str(rel_key).replace(chr(92), "/")
+    parts = []
+    for part in raw.split("/"):
+        part = part.strip()
+        if part in ("", ".", ".."):
+            continue
+        if ":" in part or chr(0) in part:   # 드라이브 문자·대체 데이터 스트림
+            raise RuntimeError(f"잘못된 경로 키: {rel_key!r}")
+        parts.append(part)
+    if not parts:
+        raise RuntimeError(f"잘못된 경로 키: {rel_key!r}")
+    return parts
+
+
+def _within(root, path):
+    """path 가 root 안에 있으면 그대로, 밖이면 RuntimeError."""
+    r = os.path.abspath(root)
+    a = os.path.abspath(path)
+    if a != r and not a.startswith(r + os.sep):
+        raise RuntimeError(f"설치 폴더 밖으로 나가는 경로: {path!r}")
+    return a
+
+
 def _update_target_path(rel_key, base_dir=None):
     """저장소 상대 경로('채점/grade.py') -> 내 설치 위치."""
     base_dir = base_dir or BASE_DIR
     root = os.path.dirname(base_dir)
-    parts = [p for p in str(rel_key).split("/") if p not in ("", ".", "..")]
-    cand = os.path.join(root, *parts)
+    parts = _safe_rel_parts(rel_key)
+    cand = _within(root, os.path.join(root, *parts))
     if os.path.isfile(cand):
         return cand
-    flat = os.path.join(base_dir, parts[-1])
+    flat = _within(root, os.path.join(base_dir, parts[-1]))
     if os.path.isfile(flat):
         return flat
     return cand if os.path.isdir(os.path.dirname(cand)) else flat
@@ -4926,13 +4957,11 @@ def _data_target_path(rel_key, base_dir=None):
     따른 기대값 폴더의 상위(시험장/ 구조면 <루트>, 평면 구조면 그 폴더).
     폴더 없는 키('x.json')는 기대값/으로.
     """
-    parts = [p for p in str(rel_key).split("/") if p not in ("", ".", "..")]
-    if not parts:
-        raise RuntimeError(f"잘못된 데이터 경로: {rel_key!r}")
+    parts = _safe_rel_parts(rel_key)
     if len(parts) == 1:
         parts = [EXPECTED_DIR_NAME] + parts
     root = os.path.dirname(expected_values_dir(base_dir))
-    return os.path.join(root, *parts)
+    return _within(root, os.path.join(root, *parts))
 
 
 def _verify_download(repo_rel, data, kind, info, expect_version=None):
