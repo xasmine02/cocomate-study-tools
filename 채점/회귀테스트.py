@@ -1,84 +1,4 @@
 # -*- coding: utf-8 -*-
-"""grade.py 오탐 회귀 스위트 — 실사용 오탐 신고·이의제기의 재현 테스트.
-
-실행: python 회귀테스트.py   (grade.py와 같은 폴더, openpyxl 필요)
-모든 테스트는 합성 워크북만 사용하며 외부 파일에 의존하지 않습니다.
-
-다만 합성 = openpyxl 이 쓰는 마크업만 쓴다는 뜻은 아닙니다. openpyxl 은
-단추 캡션에 <br/> 를 붙이지 않고, 열 너비에 5픽셀 여백을 더하지 않고,
-모듈 스트림을 미니 스트림에 넣지 않습니다 — 그래서 '우리가 만든 세계'
-안에서만 참인 검증이 되고 실물에서 터지는 버그를 하나도 못 잡았습니다.
-28장의 픽스처는 **실제 Excel 이 저장하는 마크업 형태**를 본떠 만듭니다
-(저작권 자료의 내용이 아니라 형태만 본뜹니다). 관찰한 형태는
-이의제기_로그.md 의 "Excel 이 실제로 저장하는 형태" 표에 정리돼 있습니다.
-
-수록된 오탐 사례:
-  1. 병합 하위 셀 서식 저장 위치 차이 (앵커 기준 비교)
-  2. 서식 지시 뒤섞임 (지시 단위 공간 클러스터링·범위 표기·속성 비교)
-  3. 인접 셀에 분산 저장된 테두리 (edge 합성 비교)
-  4. 테마 색 vs RGB 저장 차이 (테마 해석 후 색 비교, 셀 스타일명 비교 제거)
-  5. 지시 범위(diff) 밖 셀의 잔여 서식 (감점 금지)
-  6. 자동 조정 행 높이 (기본 제외, key format_checks 명시 시만 채점)
-  7. 고급 필터 조건 열/행 배치 차이 (의미 동치 비교)
-  8. 적대적 감사 케이스 (회귀케이스/ 36건)
-  9. v1.9.0 서식 정밀화: 클러스터 시트 전체 뭉침(행 간격 2행 이상 분리 +
-     5개 초과 시 배점 비례 분할), 정답 빈 셀 글꼴/표시형식 오탐 제외
-     (빈 셀 채우기는 유지), 속성 행 셀/범위 표기, '확인할 위치' 구분자,
-     거의 빈 풀이(일치율 10% 미만) 경고 배너
-  10. v2.1.0 리포트 이의제기 **제거**: 카드별 [이의제기] 버튼/입력란, 상단
-     고정 바(카운트+복사하기), 폴백 모달, 안내 카드, 관련 JS·CSS·저장소
-     키가 리포트에서 사라졌고 오답노트·취약점 진단·해설은 그대로인지
-  11. v2.0.1 이의제기 3건(2024 A형) + 문제지 검증 발견 1건(2024 상시 2회):
-     ① 기본작업-1 정답 셀 표시 형식 기준 같은 값(0.00% → 57.14%) 정답 처리
-     ② 기본작업-3 조건부 서식 셀 단위 실효 규칙 비교(범위·$고정·서식)와
-        정답/내 규칙 나란히 표기 ③ 계산작업 셀 상태(빈 셀/수식만 있음)
-        표기·학생 수식 전문·문제 수/배점·문제 파일 오염 경고
-     ④ 기본작업-2 빈 셀 맞춤 잔여 서식(세로 맞춤) 채점 제외,
-        '선택 영역의 가운데로'는 유지
-  12. v2.0.2 이의제기 5건(2026 상시 복원 1회, 공식 문제지 PDF 기준):
-     ① 세트 기대값 exclude(정답 잔여 서식 F2 맞춤 제외) ② 정의된 이름
-        내 답 실제 정의 표기·영역 수 차이 설명 ③ 셀 값 기준 규칙 연산자
-        표기('셀 값 >= 0.7')와 '비교 연산자 불일치' 진단 ④ 계산작업 자료 셀
-        (정답이 수식 아님) 제외·문제 파일 오염(다른 수식) 경고 ⑤ 차트 축
-        기본/보조 역할 비교, 정답 '자동' 속성 제외, 최소 0 = 자동 0 동치,
-        세트 기대값 chart.axes
-  13. v2.0.3 이의제기 4건(코코 모의고사 1회, 자체 제작 문제지 기준):
-     ① Excel [표준 색] 파랑 = #0070C0 · '병합하고 가운데 맞춤'은 가로 가운데만
-        (정답 파일에 세로 맞춤 잔여 서식이 있으면 오탐이 남는 것까지 재현)
-     ② 표시 형식은 코드가 달라도 그 값의 화면 표시가 같으면 정답
-        (정수 범위 0"개" ↔ G/표준"개"), 리포트는 원문 코드 표기
-     ③ 비교 연산자 좌우 교환 동치(A>=B ↔ B<=A)와 $ 고정 오답 구분,
-        조건부 서식 해설을 이 문제의 범위·기준 열로 생성
-     ④ 매크로: 합성 vbaProject.bin(OLE/CFB + MS-OVBA)에서 매크로 이름·범위·
-        동작을 읽어 실행 결과가 없어도 인정, 단추 앵커/텍스트/연결 매크로와
-        정답/내 답 서식 값 표기, 읽을 수 없으면 '판정 불가: 이유'
-     ⑤ (선택) 모의고사/ 세트가 있으면 정답 파일 자기 채점 100점 확인
-  14. v2.0.4 이의제기 2건(2024 상시 2회, 코코 복원 문제지 기준):
-     ① 계산작업 3번 — 계산값이 없으면 LibreOffice로 재계산해 결과값으로
-        비교(어순만 바꾼 식은 만점), 단 결과가 같아도 참조하는 셀이 다르면
-        오답 유지 + 셀 단위 근거('정답은 D4, 내 답은 C4'), 재계산을 끄면
-        조용히 수식 문자열 비교로 내려가고 그 사실을 리포트에 표기
-     ② 매크로 서식 — 다중 영역 Range("B5:F5,B6:B10") 인식, 두 범위 중
-        한 범위만 적용했을 때 맞은 범위/틀린 범위 함께 표기, 글꼴 색을
-        '파랑(#0070C0)' / '자동(검정)'으로 정밀 표기, 같은 매크로가 있으나
-        범위만 다르면 '적용 범위가 지시와 다릅니다', 도형(육각형)의
-        텍스트·연결 매크로·도형 종류 대조
-  15. v2.0.8 모르면 감점 금지 (UNKNOWN 보류):
-     ① 추출 실패를 '없음'과 구분하는 UNKNOWN 센티널 — cfb_streams,
-        vba_module_sources/vba_units, form_controls, drawing_shapes,
-        chart_features, cf_rules_detail, defined_names_for_sheet,
-        fmt_signature/merge_maps/cell_raw_m, sheet_xml/sheet_rel_targets
-     ② 채점부는 UNKNOWN 을 만나면 감점하지 않고 '확인 필요'로 보류하고
-        그 배점을 만점에서 뺀다 (감점도 가점도 아님)
-     ③ 리포트: 총점 옆 '확인 필요 N건', 본문 [확인 필요] 섹션(무엇을 왜),
-        점수 계산식 명시, JSON 에 review_* 추가(기존 키 유지)
-     ④ 실제 Excel 마크업 픽스처: VML(<br/> 줄바꿈, <x:Anchor> 들여쓰기,
-        [0]! 접두 매크로, <v:shapetype> 선행), 시트 <controls>(mc:
-        AlternateContent + <xdr:col> 접두사 + controlPr macro), rels 의
-        '../' 상대 경로, drawing 의 hidden 단추 그림자, 미니 스트림
-        vbaProject.bin, 5픽셀 여백이 붙은 열 너비, 예약 이름(_xlnm./_xleta.)
-     ⑤ 미탐 방지: 읽을 수 있는데 틀린 답은 여전히 감점
-"""
 
 import importlib.util
 import os
@@ -98,23 +18,19 @@ TMP = tempfile.mkdtemp()
 THIN = Side(style="thin")
 BOX = Border(left=THIN, right=THIN, top=THIN, bottom=THIN)
 
-
 def wb_new(sheet):
     wb = openpyxl.Workbook()
     wb.active.title = sheet
     return wb
-
 
 def save(wb, name):
     p = os.path.join(TMP, name)
     wb.save(p)
     return p
 
-
 def grade(prob, ans, stu, key=None):
     res, score, notes, _ = g.run_grading(prob, ans, stu, g.normalize_key(key or {}))
     return res[0], score, notes
-
 
 def check(no, desc, cond, extra=""):
     status = "OK" if cond else "FAIL"
@@ -122,11 +38,8 @@ def check(no, desc, cond, extra=""):
     if not cond:
         raise AssertionError(f"오탐 회귀 {no} 실패: {desc} {extra}")
 
-
-# ---------------------------------------------------------------------------
 print("1. 병합 하위 셀 서식 저장 위치 차이")
 F16 = Font(name="굴림체", size=16, bold=True, italic=True, underline="double")
-
 
 def wb_merge_case(merged, font_cells):
     wb = wb_new("기본작업-2")
@@ -141,7 +54,6 @@ def wb_merge_case(merged, font_cells):
         ws.merge_cells("B2:G2")
     return wb
 
-
 p1 = save(wb_merge_case(False, []), "1문제.xlsx")
 a1 = save(wb_merge_case(True, ["B2", "C2", "D2", "E2", "F2", "G2"]), "1정답.xlsx")
 s1 = save(wb_merge_case(True, ["B2"]), "1학생.xlsx")
@@ -154,9 +66,7 @@ check(1, "병합만 안 한 학생: 병합만 지적(글꼴 오탐 없음)",
       r.earned < r.alloc and "병합" in props1b and "글꼴" not in props1b,
       props1b[:120])
 
-# ---------------------------------------------------------------------------
 print("2. 서식 지시 뒤섞임 (클러스터 분리 + 범위 표기 + 속성 비교)")
-
 
 def wb_cluster_case(apply_cd, apply_h):
     wb = wb_new("기본작업-2")
@@ -177,10 +87,9 @@ def wb_cluster_case(apply_cd, apply_h):
             ws.cell(r, 8).number_format = 'm/d(aaa)'
     return wb
 
-
 p2 = save(wb_cluster_case(False, False), "2문제.xlsx")
 a2 = save(wb_cluster_case(True, True), "2정답.xlsx")
-s2 = save(wb_cluster_case(False, True), "2학생.xlsx")  # H 지시만 수행
+s2 = save(wb_cluster_case(False, True), "2학생.xlsx")
 r, _, _ = grade(p2, a2, s2)
 fmt_cards = [c for c in r.wrong if c["kind"] == "format"]
 check(2, "실패 카드 1장(C/D 지시)만 생성", len(fmt_cards) == 1,
@@ -198,9 +107,7 @@ s2b = save(wb_cluster_case(True, True), "2학생b.xlsx")
 r, score, _ = grade(p2, a2, s2b)
 check(2, "전부 수행하면 만점", r.earned == r.alloc, str(r.details))
 
-# ---------------------------------------------------------------------------
 print("3. 인접 셀 분산 저장 테두리 (edge 합성)")
-
 
 def wb_border_case(mode):
     wb = wb_new("기본작업-2")
@@ -213,15 +120,13 @@ def wb_border_case(mode):
     for r in range(4, 12):
         for c in range(2, 9):
             if mode == "scatter" and (r, c) in ((5, 7), (5, 8)):
-                continue  # G5/H5 자체 저장 없음 - 이웃에 의존
+                continue
             ws.cell(r, c).border = BOX
     if mode == "scatter":
-        # 이웃 선언으로 G5/H5의 모든 선 커버
-        ws.cell(5, 8).border = Border(left=THIN, right=THIN)  # H5: G5|H5 선 + 표 오른쪽
+        ws.cell(5, 8).border = Border(left=THIN, right=THIN)
     if mode == "hole":
-        ws.cell(11, 8).border = Border(left=THIN, right=THIN, top=THIN)  # H11 아래 없음
+        ws.cell(11, 8).border = Border(left=THIN, right=THIN, top=THIN)
     return wb
-
 
 p3 = save(wb_border_case("none"), "3문제.xlsx")
 a3 = save(wb_border_case("full"), "3정답.xlsx")
@@ -237,9 +142,7 @@ check(3, "실제 빠진 선(H11 아래쪽)만 정확히 감점",
       and "H11 아래쪽 선 없음" in str(border_cards[0]["props"]),
       str(border_cards[0]["props"])[:150] if border_cards else str(r.details))
 
-# ---------------------------------------------------------------------------
 print("4. 테마 색 vs RGB 저장 차이 + 셀 스타일명 비교 제거")
-
 
 def wb_color_case(mode, accent4_rgb="FFC000"):
     wb = wb_new("기본작업-2")
@@ -264,15 +167,12 @@ def wb_color_case(mode, accent4_rgb="FFC000"):
                 wb.add_named_style(ns)
             cell.style = "머리글st"
         elif mode == "wrongcolor":
-            cell.fill = PatternFill("solid", fgColor="FF00B050")  # 초록
+            cell.fill = PatternFill("solid", fgColor="FF00B050")
             cell.font = Font(color="FFFFFFFF", bold=True)
     return wb
 
-
 p4 = save(wb_color_case("none"), "4문제.xlsx")
 a4 = save(wb_color_case("theme"), "4정답.xlsx")
-# 정답 파일이 실제로 쓰는 테마 팔레트에서 accent4/배경1 RGB를 얻어
-# "같은 색을 RGB로 저장한 학생" 파일을 만든다 (저장 방식만 다른 동일 색)
 _a4wb = openpyxl.load_workbook(a4)
 _pal = g._theme_palette(_a4wb)
 ACCENT4 = _pal[7]
@@ -286,7 +186,6 @@ r, _, _ = grade(p4, a4, s4w)
 props = str([c.get("props") for c in r.wrong])
 check(4, "실제 다른 색(초록)은 감점 + 색 이름 표기",
       r.earned < r.alloc and "초록" in props, props[:150])
-# 테마 tint 환산 수동 대조 2케이스
 pal_probe = ["FFC000"]
 check(4, "tint 환산: accent4 25% 어둡게 ≈ #BF8F00",
       g._quant_hex(g._apply_tint("FFC000", -0.25)) == g._quant_hex("BF8F00"),
@@ -294,9 +193,7 @@ check(4, "tint 환산: accent4 25% 어둡게 ≈ #BF8F00",
 check(4, "tint 환산: 흰색(배경1) tint 0 = FFFFFF",
       g._apply_tint("FFFFFF", 0.0) == "FFFFFF")
 
-# ---------------------------------------------------------------------------
 print("5. 지시 범위(diff) 밖 잔여 서식 감점 금지")
-
 
 def wb_outside_case(role):
     wb = wb_new("기본작업-2")
@@ -305,11 +202,10 @@ def wb_outside_case(role):
     for r in range(6, 12):
         ws.cell(r, 8).value = 45000 + r
     if role in ("ans", "stu"):
-        ws["B2"].font = Font(bold=True, size=14)   # 유일한 지시
+        ws["B2"].font = Font(bold=True, size=14)
     if role == "stu":
-        ws["H5"].number_format = "mm-dd-yy"        # 지시 밖 잔여 서식
+        ws["H5"].number_format = "mm-dd-yy"
     return wb
-
 
 p5 = save(wb_outside_case("prob"), "5문제.xlsx")
 a5 = save(wb_outside_case("ans"), "5정답.xlsx")
@@ -319,9 +215,7 @@ check(5, "diff 밖 H5 잔여 서식은 감점/카드 없음",
       r.earned == r.alloc and not any("H5" in str(c) for c in r.wrong),
       str(r.details))
 
-# ---------------------------------------------------------------------------
 print("6. 자동 조정 행 높이 (기본 제외, key 명시 시만 채점)")
-
 
 def wb_rowh_case(h4):
     wb = wb_new("기본작업-2")
@@ -332,7 +226,6 @@ def wb_rowh_case(h4):
     if h4 is not None:
         ws.row_dimensions[4].height = h4
     return wb
-
 
 p6 = save(wb_rowh_case(None), "6문제.xlsx")
 a6 = save(wb_rowh_case(33.75), "6정답.xlsx")
@@ -376,12 +269,10 @@ check(6, "key 열너비 미달만 감점('A열' 표기), 행높이 ±0.5 허용"
       any("A열" in d for d in r.details)
       and not any("[행 높이]" in d for d in r.details), str(r.details))
 
-# ---------------------------------------------------------------------------
 print("7. 고급 필터 조건/결과 의미 동치")
 
 DATA = [("이름", "성별", "나이"), ("kate", "여성", 24), ("brad", "남성", 31),
         ("ann", "여성", 29), ("mark", "남성", 27), ("sarah", "여성", 35)]
-
 
 def wb_filter_case(cond_layout, result_rows=None, cond2=None):
     wb = wb_new("기본작업-3")
@@ -401,7 +292,6 @@ def wb_filter_case(cond_layout, result_rows=None, cond2=None):
                 ws.cell(20 + i, 2 + j).value = v
     return wb
 
-
 RESULT = [("이름", "나이"), ("kate", 24), ("ann", 29), ("sarah", 35)]
 COND_A = [(16, 2, "성별"), (16, 3, "이름"), (17, 2, "<>남성"), (17, 3, "*a*")]
 COND_SWAP = [(16, 2, "이름"), (16, 3, "성별"), (17, 2, "*a*"), (17, 3, "<>남성")]
@@ -417,14 +307,12 @@ r, _, _ = grade(p7, a7, s7w)
 det = " ".join(r.details)
 check(7, "진짜 오답은 (필드,조건) 짝 메시지로 감점",
       r.earned < r.alloc and "성별" in det and "<>남성" in det, det[:150])
-# OR 두 행 조건: 행 순서 스왑
 COND_OR = [(16, 2, "성별"), (16, 3, "나이"), (17, 2, "<>남성"), (18, 3, ">=30")]
 COND_OR_SWAP = [(16, 2, "성별"), (16, 3, "나이"), (17, 3, ">=30"), (18, 2, "<>남성")]
 a7o = save(wb_filter_case(COND_OR, RESULT), "7정답_or.xlsx")
 s7o = save(wb_filter_case(COND_OR_SWAP, RESULT), "7학생_or.xlsx")
 r, _, _ = grade(p7, a7o, s7o)
 check(7, "OR 조건 행 순서 스왑 -> 통과", r.earned == r.alloc, str(r.details))
-# 결과 표 행 순서 스왑 (집합 동치 + 무감점 노트)
 RESULT_SWAP = [RESULT[0], RESULT[2], RESULT[1], RESULT[3]]
 s7r = save(wb_filter_case(COND_A, RESULT_SWAP), "7학생_rows.xlsx")
 r, _, _ = grade(p7, a7, s7r)
@@ -435,9 +323,6 @@ check(7, "결과 행 순서 스왑 -> 통과 + 무감점 노트",
 print()
 print("오탐 회귀 스위트 7건 전부 통과")
 
-# ---------------------------------------------------------------------------
-# 8. 적대적 감사 케이스 (회귀케이스/ 36건) — v1.5.0에서 병합
-# ---------------------------------------------------------------------------
 print("8. 적대적 감사 케이스 (회귀케이스/)")
 import subprocess
 
@@ -482,7 +367,7 @@ else:
                 res, _sc, _n, _ = g.run_grading(
                     os.path.join(d, "문제.xlsx"), os.path.join(d, "정답.xlsx"),
                     os.path.join(d, "학생.xlsx"),
-                    g.normalize_key(meta.get("key") or {}))   # 세트 기대값 케이스
+                    g.normalize_key(meta.get("key") or {}))
                 lost = [r2 for r2 in res if r2.earned < r2.alloc]
             actual = "deduction" if lost else "no_deduction"
             if actual != meta["correct_behavior"]:
@@ -496,19 +381,13 @@ else:
         raise AssertionError(f"감사 케이스 {len(mismatch)}건 불일치")
     print(f"  감사 케이스 {total}건 전부 correct_behavior 일치")
 
-# ---------------------------------------------------------------------------
-# 9. v1.9.0 서식 채점 정밀화 (실사용 오탐 2건 + 리포트 경고 배너)
-# ---------------------------------------------------------------------------
 print("9. v1.9.0 서식 정밀화 (클러스터 행 간격·빈 셀 글꼴·경고 배너)")
 
 F_TITLE = Font(name="굴림체", size=16, bold=True)
 CC = Alignment(horizontal="centerContinuous")
 GOLD = PatternFill("solid", fgColor="FFFFC000")
 
-
 def wb_v19(title_font_cols=(), cc=False, numfmt=False, fill=False):
-    """2행 제목 + 4~11행 표. 지시: 제목 글꼴/선택 영역의 가운데로,
-    D열 표시형식, F열(값이 빈 셀) 채우기."""
     wb = wb_new("기본작업-2")
     ws = wb.active
     ws["B2"] = "코코 상사 급여 현황"
@@ -525,22 +404,18 @@ def wb_v19(title_font_cols=(), cc=False, numfmt=False, fill=False):
             ws.cell(r, 4).number_format = "#,##0"
     if fill:
         for r in range(4, 12):
-            ws.cell(r, 6).fill = GOLD  # F4:F11 - 값 없는 빈 셀 채우기
+            ws.cell(r, 6).fill = GOLD
     return wb
-
 
 ALLC = tuple(range(2, 9))
 p9 = save(wb_v19(), "9문제.xlsx")
-# 정답 제작자는 B2 제목 지시 글꼴을 B2:H2 전체에 걸었음 (빈 셀 포함)
 a9 = save(wb_v19(ALLC, cc=True, numfmt=True, fill=True), "9정답.xlsx")
 
-# (a) 지시대로 B2에만 글꼴 + 전체 centerContinuous 적용한 학생 -> 감점 0
 s9a = save(wb_v19((2,), cc=True, numfmt=True, fill=True), "9학생a.xlsx")
 r, _, _ = grade(p9, a9, s9a)
 check(9, "정답 B2:H2 글꼴, 학생 B2만 글꼴(빈 셀 글꼴 오탐 없음) 만점",
       r.earned == r.alloc and not r.wrong, str(r.details))
 
-# (b) 제목 지시만 빠뜨린 학생 -> 2행 클러스터만 감점 (표와 절대 병합 금지)
 s9b = save(wb_v19((), cc=False, numfmt=True, fill=True), "9학생b.xlsx")
 r, _, _ = grade(p9, a9, s9b)
 fmt9 = [c for c in r.wrong if c["kind"] == "format"]
@@ -555,7 +430,6 @@ names9 = [p["name"] for p in fmt9[0]["props"]]
 check(9, "속성 행에 해당 셀/범위 표기: 글꼴(B2)·가로 맞춤(B2:H2)",
       "글꼴(B2)" in names9 and "가로 맞춤(B2:H2)" in names9, str(names9))
 
-# 두 지시 모두 실패 -> 클러스터 2개로 분리(행 간격 2행), 뒤섞임 없음
 r, _, _ = grade(p9, a9, p9)
 fmt9c = [c for c in r.wrong if c["kind"] == "format"]
 check(9, "2행 제목·4~11행 표는 별도 클러스터(카드 2장)", len(fmt9c) == 2,
@@ -574,28 +448,25 @@ check(9, "(c) 값이 빈 F4:F11 채우기 실누락은 여전히 감점",
 html_card = g._wrong_card_html(table_card)
 check(9, "'확인할 위치' 나열에 ', ' 구분자",
       "</span>, <span" in html_card, html_card[:200])
-# 빈 셀 채우기'만' 빠뜨린 학생도 감점되는지 단독 확인
 s9c = save(wb_v19(ALLC, cc=True, numfmt=True, fill=False), "9학생c.xlsx")
 r, _, _ = grade(p9, a9, s9c)
 check(9, "(c) 채우기만 빠뜨린 학생: 빈 셀이어도 감점",
       r.earned < r.alloc and "채우기(F4:F11)" in str(r.wrong),
       f"earned={r.earned}/{r.alloc}")
 
-# 5개 초과 클러스터: 무리하게 합치지 않고 배점 비례 분할 (합계 유지)
 def wb_many(bold_rows):
     wb = wb_new("기본작업-2")
     ws = wb.active
-    for i, row in enumerate(range(2, 21, 3)):  # 2,5,8,...,20행 (간격 3행)
+    for i, row in enumerate(range(2, 21, 3)):
         ws.cell(row, 2).value = f"항목{i}"
         if row in bold_rows:
             ws.cell(row, 2).font = Font(bold=True)
     return wb
 
-
-ROWS7 = list(range(2, 21, 3))  # 7개 지시
+ROWS7 = list(range(2, 21, 3))
 p9m = save(wb_many(()), "9문제m.xlsx")
 a9m = save(wb_many(ROWS7), "9정답m.xlsx")
-s9m = save(wb_many(ROWS7[:4]), "9학생m.xlsx")  # 4개만 수행
+s9m = save(wb_many(ROWS7[:4]), "9학생m.xlsx")
 r, _, _ = grade(p9m, a9m, s9m)
 check(9, "7개 지시 강제 병합 없음: 실패 카드 3장 + 비례 분할(10*4/7=6점)",
       len([c for c in r.wrong if c["kind"] == "format"]) == 3
@@ -604,7 +475,6 @@ r, _, _ = grade(p9m, a9m, save(wb_many(ROWS7), "9학생m2.xlsx"))
 check(9, "7개 지시 전부 수행 시 합계 10점 유지", r.earned == r.alloc,
       f"earned={r.earned}")
 
-# (d) 거의 빈 풀이(채점 대상 diff 셀 일치율 10% 미만) -> 헤더 경고 배너
 BANNER = "풀이가 거의 비어 있습니다"
 res9, sc9, notes9, _ = g.run_grading(p7, a7, p7, g.normalize_key({}))
 out9 = os.path.join(TMP, "9배너.html")
@@ -620,17 +490,11 @@ with open(out9n, encoding="utf-8") as f:
     html9n = f.read()
 check(9, "정상 풀이 -> 경고 배너 없음", BANNER not in html9n)
 
-# ---------------------------------------------------------------------------
-# 10. v2.1.0 리포트에서 이의제기 기능 제거 (오픈 소스 전환)
-#     — 없앤 것은 "이의를 제기해 전달하는 경로"뿐이다. 오답노트·취약점 진단·
-#       해설은 그대로 남아야 한다.
-# ---------------------------------------------------------------------------
 print("10. v2.1.0 리포트 이의제기 기능 제거 (오답노트·진단·해설은 유지)")
 import json as json_mod
 import re as re_mod
 import shutil
 
-# 오답 카드 2장이 나오는 혼합 리포트 (섹션 9의 p9/a9 재사용, 학생=문제)
 res10, sc10, notes10, _ = g.run_grading(p9, a9, p9, g.normalize_key({}))
 out10 = os.path.join(TMP, "10리포트.html")
 g.write_html(out10, res10, sc10, notes10, (p9, a9, p9))
@@ -667,8 +531,6 @@ check(10, "모듈에서 이의제기 헬퍼가 사라졌다",
 check(10, "남긴 기능: 오답노트 · 취약점 진단 · 영역별 점수",
       "오답노트" in html10 and "취약점 진단" in html10
       and "영역별 점수" in html10)
-# 카드 내용(내 답 ↔ 정답 비교)은 그대로 — 이의제기 텍스트가 담던 정보가
-# 리포트 화면에는 남아 있어야 사용자가 직접 판단하고 고칠 수 있다.
 card10 = g._wrong_card_html({
     "sheet": "계산작업", "label": "계산 문제 1", "lost": 8,
     "cells": [{"coord": "J3", "got": "#VALUE!", "expected": "본선",
@@ -682,7 +544,6 @@ check(10, "카드에 내 답/정답 비교와 해설이 그대로 있다(제거�
 check(10, "리포트 본문에도 오답 카드가 실린다(위치 칩 또는 비교 박스)",
       html10.count('class="wc-top"') == n_cards10
       and ("wc-chips" in html10 or 'class="box mine"' in html10))
-# 만점 리포트도 정상
 res10p, sc10p, notes10p, _ = g.run_grading(p9, a9, a9, g.normalize_key({}))
 out10p = os.path.join(TMP, "10만점.html")
 g.write_html(out10p, res10p, sc10p, notes10p, (p9, a9, a9))
@@ -694,18 +555,13 @@ check(10, "만점 리포트도 이의제기 흔적 없이 정상 생성",
 check(10, "<body> 에 has-appeal 클래스가 붙지 않는다(상단 여백 보정 제거)",
       "<body>" in html10 and "<body>" in html10p, html10[:0])
 
-# ---------------------------------------------------------------------------
-# 11. v2.0.1 이의제기 3건(2024 A형) + 문제지 검증 발견 1건(2024 상시 2회)
-# ---------------------------------------------------------------------------
 print("11. v2.0.1 이의제기 반영 (표시 형식 값·조건부 서식 실효 규칙·셀 상태 표기·"
       "빈 셀 맞춤)")
 import re as re11
 import zipfile as zip11
 from openpyxl.formatting.rule import FormulaRule
 
-
 def inject_cache11(path, coord, value):
-    """수식 셀에 캐시값 <v>를 주입 (Excel 저장 파일 흉내, 단일 시트 전제)."""
     part = "xl/worksheets/sheet1.xml"
     zin = zip11.ZipFile(path)
     items = [(n, zin.read(n)) for n in zin.namelist()]
@@ -720,17 +576,14 @@ def inject_cache11(path, coord, value):
                 data = x.encode("utf-8")
             zout.writestr(n, data)
 
-
-# --- ① 기본작업-1: 정답 셀 표시 형식 기준 같은 값 -> 정답 ---------------------
 def wb_b1(values=None, fmt="0.00%"):
     wb = wb_new("기본작업-1")
     ws = wb.active
     for r in range(4, 7):
-        ws.cell(r, 6).number_format = fmt      # 문제 파일에 미리 적용된 형식
+        ws.cell(r, 6).number_format = fmt
     for k, v in (values or {}).items():
         ws[k] = v
     return wb
-
 
 ANS_B1 = {"A3": "학과코드", "B3": "학과명", "C3": "전체 학생수",
           "E3": "정원/전임(겸임)", "A4": "KA-45267", "C4": 140,
@@ -764,12 +617,9 @@ check(11, "리포트 카드: 셀 위치 · 정답 · 내 답(빈 셀 상태)이 
       ">C3<" in card11 and "전체 학생수" in card11
       and g.STATE_BLANK in card11, card11[:200])
 
-# --- ② 기본작업-3: 조건부 서식 셀 단위 실효 규칙 비교 -----------------------
 RED = Font(color="FFFF0000")
 
-
 def wb_cf(rules=()):
-    """A3:H3 머리글 + 학번(A4:A18) 표. rules: [(범위, 수식, 글꼴)]"""
     wb = wb_new("기본작업-3")
     ws = wb.active
     for c, h in enumerate(("학번", "이름", "중간", "중간(40)", "기말", "기말(40)",
@@ -782,7 +632,6 @@ def wb_cf(rules=()):
     for rng, f, font in rules:
         ws.conditional_formatting.add(rng, FormulaRule(formula=[f], font=font))
     return wb
-
 
 p12 = save(wb_cf(), "12문제.xlsx")
 a12 = save(wb_cf([("A4:H18", 'LEFT($A4,4)="2019"', RED)]), "12정답.xlsx")
@@ -840,10 +689,8 @@ check(12, "리포트 카드에 규칙 3속성(범위·수식·서식)이 모두 
       and "적용 범위" in card12 and "수식" in card12 and "적용 서식" in card12,
       str(sorted(props12)))
 
-# --- ③ 계산작업: 셀 상태 표기, 문제 수·배점, 문제 파일 오염 ------------------
 CALC_COLS = {"D": "A{r}*2", "F": "A{r}+B{r}", "H": "MAX(A{r},B{r})",
              "J": "A{r}-B{r}", "L": "A{r}*B{r}"}
-
 
 def wb_calc11(cols=CALC_COLS, blank=(), override=None):
     wb = wb_new("계산작업")
@@ -857,7 +704,6 @@ def wb_calc11(cols=CALC_COLS, blank=(), override=None):
             ws[f"{col}{r}"] = "=" + (override or {}).get(col, f).format(r=r)
     return wb
 
-
 def cache_calc11(path, cols=CALC_COLS, skip=()):
     vals = {"D": lambda a, b: a * 2, "F": lambda a, b: a + b,
             "H": lambda a, b: max(a, b), "J": lambda a, b: a - b,
@@ -866,7 +712,6 @@ def cache_calc11(path, cols=CALC_COLS, skip=()):
         for col in cols:
             if col not in skip:
                 inject_cache11(path, f"{col}{r}", vals[col](r * 10, r * 3))
-
 
 p13 = save(wb_calc11(cols={}), "13문제.xlsx")
 a13 = save(wb_calc11(), "13정답.xlsx")
@@ -885,7 +730,6 @@ check(13, "카드에 '인식된 문제 5개 중 1번 (문제당 8점)' 표기",
       c13.get("note", "")[:120])
 s13b = save(wb_calc11(override={"D": "2*A{r}"}), "13학생b.xlsx")
 cache_calc11(s13b, skip=("D",))
-# v2.0.4 전(재계산 없음) 경로: 계산값이 없으면 수식 문자열로만 비교 -> 감점
 _re_on = g.RECALC_ENABLED
 g.RECALC_ENABLED = False
 try:
@@ -915,7 +759,6 @@ cache_calc11(s13ok)
 r, _, _ = grade(p13, a13, s13ok)
 check(13, "같은 수식(=2*A3)에 계산값이 있으면 값 기준 정답 -> 40/40",
       r.earned == r.alloc, str(r.details))
-# 문제 파일 오염: 문제 파일에 정답 수식(F/H/J/L)이 이미 들어 있음
 p13x = save(wb_calc11(blank=("D",)), "13문제오염.xlsx")
 cache_calc11(p13x, skip=("D",))
 r, _, _ = grade(p13x, a13, s13a)
@@ -927,10 +770,8 @@ check(13, "오염된 문제 파일 -> 문제 1개로 인식(-40) + 오염 경고
       and "표준 5문제와 달라" in c13x.get("note", ""),
       " | ".join(r.notes)[:200])
 
-# --- ④ 기본작업-2: 빈 셀 맞춤 잔여 서식 제외 (2024 상시 2회 K4:K9) -------------
 VC = Alignment(vertical="center")
 HC = Alignment(horizontal="center", vertical="center")
-
 
 def wb_b2_align(table_align=None, blank_k=None, title_cc_cols=()):
     wb = wb_new("기본작업-2")
@@ -943,11 +784,10 @@ def wb_b2_align(table_align=None, blank_k=None, title_cc_cols=()):
                 ws.cell(r, c).alignment = table_align
     if blank_k is not None:
         for r in range(4, 7):
-            ws.cell(r, 11).alignment = blank_k   # K4:K6 값 없는 빈 셀
+            ws.cell(r, 11).alignment = blank_k
     for c in title_cc_cols:
         ws.cell(2, c).alignment = Alignment(horizontal="centerContinuous")
     return wb
-
 
 p14 = save(wb_b2_align(), "14문제.xlsx")
 a14 = save(wb_b2_align(HC, blank_k=VC), "14정답.xlsx")
@@ -965,17 +805,12 @@ r, _, _ = grade(p14, a14c, s14c)
 check(14, "'선택 영역의 가운데로'는 빈 셀(C2:F2)도 화면에 보이므로 감점 유지",
       r.earned < r.alloc and "C2:F2" in str(r.wrong), str(r.details)[:160])
 
-# ---------------------------------------------------------------------------
-# 12. v2.0.2 이의제기 5건 (2026 상시 복원 1회 — 공식 문제지 PDF 기준)
-# ---------------------------------------------------------------------------
 print("12. v2.0.2 이의제기 반영 (기대값 exclude/chart · 정의된 이름 표기 · cellIs "
       "연산자 · 계산작업 자료 셀/오염 · 차트 축 역할 비교)")
 from openpyxl.chart import BarChart, LineChart, Reference
 from openpyxl.formatting.rule import CellIsRule
 from openpyxl.workbook.defined_name import DefinedName
 
-
-# --- ① 기본작업-2: 정답 파일 잔여 서식(F2 가운데)을 세트 기대값 exclude로 제외 ---
 def wb_b2x(f2_center=False, table=True):
     wb = wb_new("기본작업-2")
     ws = wb.active
@@ -989,7 +824,6 @@ def wb_b2x(f2_center=False, table=True):
     if f2_center:
         ws["F2"].alignment = Alignment(horizontal="center")
     return wb
-
 
 p15 = save(wb_b2x(table=False), "15문제.xlsx")
 a15 = save(wb_b2x(f2_center=True), "15정답.xlsx")
@@ -1014,8 +848,6 @@ check(15, "normalize_key: 문자열 항목·kinds 생략 허용, chart 섹션 �
       == {"기본작업-2": [{"range": "F2", "kinds": None, "why": None}]}
       and "차트작업" in g.normalize_key({"chart": {"차트작업": {}}})["chart"])
 
-
-# --- ② 기본작업-2: 정의된 이름 — 내 답에 실제 정의 표기 + 영역 수 차이 설명 ---
 def wb_names(ref=None):
     wb = wb_new("기본작업-2")
     ws = wb.active
@@ -1025,7 +857,6 @@ def wb_names(ref=None):
     if ref:
         wb.defined_names["주문상품"] = DefinedName("주문상품", attr_text=ref)
     return wb
-
 
 REF16 = "'기본작업-2'!$A$4:$A$10,'기본작업-2'!$C$4:$C$10"
 p16 = save(wb_names(), "16문제.xlsx")
@@ -1053,13 +884,10 @@ r, _, _ = grade(p16, a16, s16c)
 check(16, "두 영역 모두 정의(A4:A10,C4:C10) -> 만점", r.earned == r.alloc,
       str(r.details))
 
-
-# --- ③ 기본작업-3: 셀 값 기준 규칙 연산자 표기·판정 ('70% 이상' = >=) ---
 E_VALS = [0.15, 0.23, 0.45, 0.63, 0.66, 0.69, 0.78, 0.81]
 BLUE = PatternFill("solid", fgColor="FF0070C0")
 YELLOW = PatternFill("solid", fgColor="FFFFFF00")
 WHITE_B = Font(bold=True, color="FFFFFFFF")
-
 
 def wb_cf3(op_hi=None, vals=E_VALS):
     wb = wb_new("기본작업-3")
@@ -1075,7 +903,6 @@ def wb_cf3(op_hi=None, vals=E_VALS):
             "E4:E11", CellIsRule(operator="lessThan", formula=["0.3"],
                                  fill=YELLOW, font=Font(bold=True)))
     return wb
-
 
 p17 = save(wb_cf3(), "17문제.xlsx")
 a17 = save(wb_cf3("greaterThanOrEqual"), "17정답.xlsx")
@@ -1119,13 +946,11 @@ s17c = save(wb_cf3("greaterThanOrEqual"), "17학생c.xlsx")
 r, _, _ = grade(p17, a17, s17c)
 check(17, ">= 0.7 그대로 -> 만점", r.earned == r.alloc, str(r.details))
 
-
-# --- ④ 계산작업: 정답이 수식이 아닌 셀(자료 차이)은 문제로 묶지 않음 + 오염(다른 수식) 경고 ---
 wb18 = wb_calc11(cols={})
-wb18.active["M5"] = 0                       # 문제 파일: 자료 셀 0
+wb18.active["M5"] = 0
 p18 = save(wb18, "18문제.xlsx")
 wb18 = wb_calc11()
-wb18.active["M5"] = "미응시"                 # 정답 파일: 자료 셀만 다름 (수식 아님)
+wb18.active["M5"] = "미응시"
 a18 = save(wb18, "18정답.xlsx")
 cache_calc11(a18)
 wb18 = wb_calc11()
@@ -1136,7 +961,7 @@ r, _, _ = grade(p18, a18, s18)
 check(18, "정답 M5 '미응시'(자료 셀) vs 내 답 0 — 수식 5문제 정답이면 40/40 + 자료 셀 제외 노트",
       r.earned == r.alloc and any("정답이 수식이 아닌 셀 M5" in n for n in r.notes)
       and any("5개 그룹으로 인식" in n for n in r.notes), " | ".join(r.notes)[:200])
-p18x = save(wb_calc11(cols={"D": "A{r}*3"}), "18문제오염.xlsx")   # 정답과 다른 수식
+p18x = save(wb_calc11(cols={"D": "A{r}*3"}), "18문제오염.xlsx")
 a18x = save(wb_calc11(), "18정답x.xlsx")
 cache_calc11(a18x)
 s18x = save(wb_calc11(), "18학생x.xlsx")
@@ -1153,10 +978,7 @@ g.write_html(html18, res18, sc18, gn18, (p18x, a18x, s18x))
 check(18, "리포트 상단에 '문제 파일 오염 의심' 배너",
       "문제 파일 오염 의심" in open(html18, encoding="utf-8").read())
 
-
-# --- ⑤ 차트 축: 기본/보조 역할 짝 비교, 정답 '자동' 속성 제외, 최소 0 = 자동 0, 기대값 chart ---
 def wb_combo(primary_max=None, sec=None, narrow=False):
-    """막대(기본 축) + 선택적 꺾은선(보조 축). sec=(최대, 최소, 주 단위)."""
     wb = wb_new("차트작업")
     ws = wb.active
     rows = [("베트남", 22650000, 7000), ("미국", 16800000, 10000),
@@ -1188,7 +1010,6 @@ def wb_combo(primary_max=None, sec=None, narrow=False):
         bar += line
     ws.add_chart(bar, "E5")
     return wb
-
 
 p19 = save(wb_combo(), "19문제.xlsx")
 a19 = save(wb_combo(sec=(12000, 0, 1500)), "19정답.xlsx")
@@ -1231,19 +1052,13 @@ r, _, _ = grade(p19x, a19, s19d, KEY19)
 check(19, "보조 축이 없으면 '(축 없음)' 표기", "(축 없음)" in str(r.details),
       str(r.details)[:160])
 
-# ---------------------------------------------------------------------------
-# 13. v2.0.3 이의제기 반영 (코코 모의고사 1회 — 표준색 파랑·표시 형식 동치·
-#     부등호 어순 동치·매크로 VBA 코드 인정과 표기)
-# ---------------------------------------------------------------------------
 print("13. v2.0.3 이의제기 반영 (표시 형식 동치 · 부등호 어순 · 매크로 VBA 코드)")
 import re
 
-# --- 13-1 표준색 파랑(#0070C0) / '병합하고 가운데 맞춤'은 가로만 ---
 check(20, "Excel [표준 색] 파랑 #0070C0 -> '파랑', [다른 색] #0000FF는 이름 없음",
       "파랑" == g.color_name_ko("0070C0").split("(")[0]
       and g.color_name_ko("0000FF") == "#0000FF",
       f'{g.color_name_ko("0070C0")} / {g.color_name_ko("0000FF")}')
-
 
 def wb_title(color, vertical, nf, values=None, nf_cells=True):
     wb = wb_new("기본작업-2")
@@ -1265,7 +1080,6 @@ def wb_title(color, vertical, nf, values=None, nf_cells=True):
             ws.cell(4 + i, 2).number_format = nf
     return wb
 
-
 p20 = save(wb_title(None, None, None), "20문제.xlsx")
 a20 = save(wb_title("FF0070C0", None, '0"개"'), "20정답.xlsx")
 s20 = save(wb_title("FF0070C0", None, '0"개"'), "20학생.xlsx")
@@ -1280,7 +1094,6 @@ check(20, "정답 파일에 세로 맞춤 잔여 서식이 있으면 감점(정�
                                              for c in r.wrong]),
       str(r.details))
 
-# --- 13-2 표시 형식: 코드는 달라도 화면 표시가 같으면 정답 ---
 check(21, "G/표준 은 General 과 같은 코드로 정규화",
       g._norm_number_format('G/표준"개"') == g._norm_number_format('General"개"'),
       g._norm_number_format('G/표준"개"'))
@@ -1326,7 +1139,6 @@ check(21, '카드에 원문 코드 0"개" / G/표준"개" 표기 (따옴표 없�
 check(21, "형식 코드 해설도 원문 기준 (문자 '개' 붙여 표시)",
       "문자 '개'" in nf_props[0]["expected"], nf_props[0]["expected"])
 
-# --- 13-3 조건부 서식: 부등호 좌우 교환 동치, $ 고정은 여전히 오답 ---
 check(22, "비교 연산자 좌우 교환 동치 (>=↔<=, >↔<, =, <>)",
       g.norm_formula("=$F3>=AVERAGE($F$3:$F$12)")
       == g.norm_formula("=AVERAGE($F$3:$F$12)<=F3")
@@ -1335,7 +1147,6 @@ check(22, "비교 연산자 좌우 교환 동치 (>=↔<=, >↔<, =, <>)",
       g.norm_formula("=$F3>=AVERAGE($F$3:$F$12)"))
 check(22, "좌우 교환이 아닌 차이는 여전히 다른 수식 (A1>B1 vs B1>A1)",
       g.norm_formula("=A1>B1") != g.norm_formula("=B1>A1"))
-
 
 def wb_avg_cf(formula=None, color="FF0070C0"):
     wb = wb_new("기본작업-3")
@@ -1357,7 +1168,6 @@ def wb_avg_cf(formula=None, color="FF0070C0"):
                                  font=Font(bold=True, color=color)))
     return wb
 
-
 p22 = save(wb_avg_cf(), "22문제.xlsx")
 a22 = save(wb_avg_cf("$C3>=AVERAGE($C$3:$C$6)"), "22정답.xlsx")
 s22 = save(wb_avg_cf("AVERAGE($C$3:$C$6)<=$C3"), "22학생.xlsx")
@@ -1376,12 +1186,9 @@ check(22, "해설이 이 문제의 실제 범위·기준 열로 생성 (다른 �
       "A3:C6" in point22 and "$C3" in point22 and "LEFT($A4" not in point22
       and "AVERAGE($C$3:$C$6)" in point22, point22[:220])
 
-# --- 13-4 매크로: VBA 코드 인정 + 근거 표기 ---
 CFB_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
-
 def ovba_container(text):
-    """소스 -> MS-OVBA CompressedContainer (비압축 청크)."""
     import struct
     data = text.encode("cp949")
     out = bytearray(b"\x01")
@@ -1389,7 +1196,6 @@ def ovba_container(text):
         chunk = data[i:i + 4096]
         out += struct.pack("<H", (len(chunk) - 1) | 0x3000) + chunk
     return bytes(out)
-
 
 def _dir_entry(name, etype, start, size, child=0xFFFFFFFF):
     import struct
@@ -1404,17 +1210,7 @@ def _dir_entry(name, etype, start, size, child=0xFFFFFFFF):
     struct.pack_into("<Q", e, 120, size)
     return bytes(e)
 
-
 def build_vba_bin_mini(source, module="Module1", ssz=512, msz=64):
-    """모듈 스트림을 **미니 스트림**에 담은 합성 vbaProject.bin.
-
-    실제 Excel 이 저장한 vbaProject.bin 은 4096바이트(미니 스트림 컷오프)보다
-    작은 스트림을 64바이트 미니 섹터에 담는다 — 매크로 모듈은 대개 그보다
-    작으므로 실물은 거의 항상 이 경로를 탄다. 지금까지 합성 픽스처는 늘
-    일반 FAT 체인만 만들어서 이 경로가 한 번도 검증되지 않았다.
-
-    배치: [헤더] [섹터0=FAT] [섹터1=디렉터리] [섹터2=MiniFAT] [섹터3~=미니 스트림]
-    """
     import struct
     shift = ssz.bit_length() - 1
     mshift = msz.bit_length() - 1
@@ -1424,7 +1220,6 @@ def build_vba_bin_mini(source, module="Module1", ssz=512, msz=64):
     n_mini = len(mini) // msz
     mini_pad = mini + b"\x00" * ((-len(mini)) % ssz)
     n_cont = max(1, len(mini_pad) // ssz)
-    # FAT: 0=FAT 자신, 1=디렉터리, 2=MiniFAT, 3..=미니 스트림 컨테이너
     fat = [0xFFFFFFFD, 0xFFFFFFFE, 0xFFFFFFFE]
     for i in range(n_cont):
         fat.append(0xFFFFFFFE if i == n_cont - 1 else 3 + i + 1)
@@ -1436,7 +1231,7 @@ def build_vba_bin_mini(source, module="Module1", ssz=512, msz=64):
     d = bytearray()
     d += _dir_entry("Root Entry", 5, 3, len(mini), child=1)
     d += _dir_entry("VBA", 1, 0xFFFFFFFE, 0, child=2)
-    d += _dir_entry(module, 2, 0, len(body))      # 미니 섹터 0번부터
+    d += _dir_entry(module, 2, 0, len(body))
     d += b"\x00" * (ssz - len(d))
     h = bytearray(512)
     h[0:8] = CFB_MAGIC
@@ -1444,11 +1239,11 @@ def build_vba_bin_mini(source, module="Module1", ssz=512, msz=64):
     struct.pack_into("<H", h, 28, 0xFFFE)
     struct.pack_into("<H", h, 30, shift)
     struct.pack_into("<H", h, 32, mshift)
-    struct.pack_into("<I", h, 44, 1)        # FAT 섹터 수
-    struct.pack_into("<I", h, 48, 1)        # 디렉터리 첫 섹터
-    struct.pack_into("<I", h, 56, 4096)     # 미니 스트림 컷오프
-    struct.pack_into("<I", h, 60, 2)        # MiniFAT 첫 섹터
-    struct.pack_into("<I", h, 64, 1)        # MiniFAT 섹터 수
+    struct.pack_into("<I", h, 44, 1)
+    struct.pack_into("<I", h, 48, 1)
+    struct.pack_into("<I", h, 56, 4096)
+    struct.pack_into("<I", h, 60, 2)
+    struct.pack_into("<I", h, 64, 1)
     struct.pack_into("<I", h, 68, 0xFFFFFFFE)
     struct.pack_into("<I", h, 76, 0)
     for i in range(1, 109):
@@ -1456,15 +1251,7 @@ def build_vba_bin_mini(source, module="Module1", ssz=512, msz=64):
     head = bytes(h) + b"\x00" * (ssz - 512)
     return head + fat_sector + bytes(d) + minifat_sector + mini_pad
 
-
 def build_vba_bin(source, module="Module1", ssz=512):
-    """모듈 1개를 담은 합성 vbaProject.bin (OLE/CFB).
-
-    ssz: 섹터 크기. 512(CFB v3)와 4096(CFB v4) 모두 만들 수 있다 — 실제
-    Excel이 내보낸 vbaProject.bin 중에 4096바이트 섹터 파일이 있고,
-    채점기가 섹터 시작 위치를 512로 못박아 두면 그런 파일에서 스트림을
-    하나도 읽지 못한다(2.0.6에서 고친 버그).
-    """
     import struct
     shift = ssz.bit_length() - 1
     per = ssz // 4
@@ -1494,10 +1281,8 @@ def build_vba_bin(source, module="Module1", ssz=512):
     struct.pack_into("<I", h, 76, 0)
     for i in range(1, 109):
         struct.pack_into("<I", h, 76 + 4 * i, 0xFFFFFFFF)
-    # 헤더는 항상 512바이트지만 섹터 0은 '한 섹터' 뒤에서 시작한다.
     head = bytes(h) + b"\x00" * (ssz - 512)
     return head + fat_sector + bytes(d) + stream
-
 
 MACRO_SRC = 'Attribute VB_Name = "Module1"\n' + "\n".join([
     "Sub 판매금액()",
@@ -1523,9 +1308,7 @@ VML = """<xml xmlns:v="urn:schemas-microsoft-com:vml"
   <x:ClientData ObjectType="Button"><x:Anchor>{anchor}</x:Anchor>
    <x:FmlaMacro>[0]!{macro}</x:FmlaMacro></x:ClientData></v:shape></xml>"""
 
-
 def to_xlsm(src, out, vba_bin, sheet_part=None, button=None):
-    """합성 xlsx -> xlsm (vbaProject.bin + 양식 컨트롤 단추 VML 주입)."""
     import zipfile
     with zipfile.ZipFile(src) as zin:
         blobs = {n: zin.read(n) for n in zin.namelist()}
@@ -1574,7 +1357,6 @@ def to_xlsm(src, out, vba_bin, sheet_part=None, button=None):
             zout.writestr(n, b)
     return out
 
-
 VBA_BIN = build_vba_bin(MACRO_SRC)
 mods = g.vba_module_sources(VBA_BIN)
 check(23, "vbaProject.bin(OLE/CFB + MS-OVBA)에서 모듈 소스 복원",
@@ -1587,7 +1369,6 @@ check(23, "매크로 이름·대상 범위·동작 추출 (판매금액=값/수�
       and g.vba_covers(vunits, "D5", "value") == "판매금액"
       and g.vba_covers(vunits, "E3", "font") is None,
       str([(u["name"], u["ranges"], sorted(u["kinds"])) for u in vunits]))
-
 
 def wb_macro(done=False):
     wb = wb_new("매크로작업")
@@ -1610,7 +1391,6 @@ def wb_macro(done=False):
             cell.font = Font(name=base.name, size=base.size, bold=True)
     return wb
 
-
 p23 = save(wb_macro(False), "23문제.xlsx")
 a23 = save(wb_macro(True), "23정답.xlsx")
 s23 = save(wb_macro(True), "23학생.xlsx")
@@ -1618,7 +1398,6 @@ r, _, _ = grade(p23, a23, s23)
 check(23, "정답 파일의 '굵게'가 기본 글꼴 이름을 유지하면 실행 결과가 같은 풀이는 만점",
       r.earned == r.alloc, str(r.details))
 
-# 정답 파일이 글꼴 이름을 잃은 상태(수정 전 코코 1회) 재현
 wb_bad = wb_macro(True)
 for c in range(1, 5):
     wb_bad["매크로작업"].cell(3, c).font = Font(bold=True)
@@ -1633,7 +1412,6 @@ check(23, "매크로 서식 카드에 정답/내 답 서식 값을 실제로 표
       and any("pt" in str(c["expected"]) for c in card["cells"]),
       str(card["cells"][:2]) if card else "카드 없음")
 
-# 매크로만 기록하고 실행하지 않은 풀이 (결과 서식/값 없음) + 단추
 s23x = save(wb_macro(False), "23학생코드만.xlsx")
 _bs = g.Book(s23x, "학생")
 _part = _bs.sheet_part["매크로작업"]
@@ -1655,7 +1433,6 @@ check(23, "코드로 인정한 항목을 명시 + 실행까지 하라는 안내"
       any("매크로 코드에 해당 동작이 있어 인정" in n for n in r.notes),
       str(r.notes))
 
-# 코드에도 없는 경우: 감점 유지 + xlsm 안내
 NOOP_SRC = ('Attribute VB_Name = "Module1"\nSub 아무것도()\n'
             '    Range("Z90").Select\nEnd Sub\n'
             + "\n".join(f"' 여백 {i} " + "-" * 40 for i in range(80)))
@@ -1669,7 +1446,6 @@ check(23, "카드 설명에 '코드에 해당 문장이 없다'는 근거 표기
       card is not None and "없었습니다" in str(card.get("note")),
       str(card.get("note")) if card else "카드 없음")
 
-# 서식 값을 읽을 수 없는 경우: '판정 불가: 이유' 표기 (openpyxl 읽기 실패 재현)
 check(23, "읽을 수 없는 서식 시그니처('?')는 값 대신 None -> 판정 불가로 이어짐",
       g._macro_fmt_desc("font", "?") is None
       and g._macro_fmt_desc("fill", None) == "채우기 없음")
@@ -1689,7 +1465,6 @@ try:
 finally:
     g._macro_fmt_desc = _orig_desc
 
-# --- 13-5 (선택) 배포 세트 정답 파일 자기 채점 100점 ---
 SETS = os.path.normpath(os.path.join(BASE, "..", "모의고사"))
 KEYS = os.path.normpath(os.path.join(BASE, "..", "기대값"))
 found = 0
@@ -1712,11 +1487,7 @@ for n in ("1", "2"):
 if not found:
     print("  [24] 모의고사/ 세트 파일 없음 — 건너뜀")
 
-# ---------------------------------------------------------------------------
 print("25. v2.0.4 이의제기 2건 (2024 상시 2회, 코코 복원 문제지 기준)")
-# ① 계산작업 3번 — 부등호 어순 교환은 동치, 둘째 조건의 참조(C열/D열)는 오답.
-#    이 자료에서는 둘째 조건이 C열이어도 결과가 우연히 같다(본선 2명)는 점이 핵심.
-# ② 매크로 서식 — [B5:F5], [B6:B10] 두 범위 중 머리글 행에만 적용한 풀이.
 
 REC25 = [("존 스미스", 9.82, 9.79), ("마리아", 10.15, 10.25),
          ("아흐메드", 10.32, 10.45), ("리 웨이", 10.45, 10.42),
@@ -1730,7 +1501,6 @@ F_SWAP25 = ('=IF(OR(SMALL($C$3:$C$11,2)>=C{r},SMALL($D$3:$D$11,2)>=D{r}),'
             '"본선","")')
 F_BUG25 = ('=IF(OR(SMALL($C$3:$C$11,2)>=C{r},SMALL($D$3:$D$11,2)>=C{r}),'
            '"본선","")')
-
 
 def wb_calc25(formula=None):
     wb = wb_new("계산작업")
@@ -1747,8 +1517,6 @@ def wb_calc25(formula=None):
             ws.cell(A25 + i, 5).value = formula.format(r=A25 + i)
     return wb
 
-
-# 참조 횟수 비교 (단위 테스트)
 check(25, "참조 횟수 비교: 둘째 조건이 C열이면 다른 참조로 인식",
       not g.same_ref_usage(F_ANS25.format(r=4), F_BUG25.format(r=4))
       and g.ref_usage_diff(F_ANS25.format(r=4),
@@ -1805,7 +1573,6 @@ if g.soffice_exe():
 else:
     print("  [25] LibreOffice 없음 — 재계산 경로 테스트 건너뜀")
 
-# ② 매크로 -----------------------------------------------------------------
 DEPT25 = [("소프트웨어 엔지니어", 84, 90, 82), ("시스템 분석가", 87, 95, 78),
           ("전략 개발", 83, 78, 90), ("마케팅", 79, 65, 89),
           ("생산 관리자", 77, 80, 95)]
@@ -1836,7 +1603,6 @@ check(25, 'VBA 다중 영역 Range("B5:F5,B6:B10")를 영역별로 인식',
       and g.vba_covers(u25, "C7", "font") is None,
       str([(x["name"], x["ranges"]) for x in u25]))
 
-
 def wb_macro25(head=False, body=False):
     wb = wb_new("매크로작업")
     ws = wb.active
@@ -1857,7 +1623,6 @@ def wb_macro25(head=False, body=False):
         for i in range(len(DEPT25)):
             ws.cell(6 + i, 2).font = Font(bold=True, color=BLUE25)
     return wb
-
 
 p25m = save(wb_macro25(), "25매크로문제.xlsx")
 a25m = save(wb_macro25(head=True, body=True), "25매크로정답.xlsx")
@@ -1880,7 +1645,6 @@ check(25, "두 범위 모두 적용한 풀이는 만점",
       grade(p25m, a25m, save(wb_macro25(head=True, body=True),
                              "25매크로전부.xlsx"))[0].earned == r.alloc)
 
-# VBA 근거 문구: 같은 서식 매크로가 있는데 범위만 다른 경우
 _bs25 = g.Book(s25m, "학생")
 _part25 = _bs25.sheet_part["매크로작업"]
 s25mv = to_xlsm(s25m, os.path.join(TMP, "25매크로머리글만.xlsm"),
@@ -1904,7 +1668,6 @@ check(25, "다중 영역 매크로 코드가 있으면 실행 결과가 없어�
       any("매크로 코드에 해당 동작이 있어 인정" in n for n in r.notes),
       str(r.notes)[:200])
 
-# 도형(육각형) 텍스트 대조 -------------------------------------------------
 DRAW = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/'
         '2006/spreadsheetDrawing" xmlns:a="http://schemas.openxmlformats.org/'
@@ -1921,9 +1684,7 @@ DRAW = ('<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
         '<a:t>{text}</a:t></a:r></a:p></xdr:txBody></xdr:sp>'
         '<xdr:clientData/></xdr:twoCellAnchor></xdr:wsDr>')
 
-
 def with_shape(src, out, sheet_part, text):
-    """합성 통합 문서에 매크로 연결 도형(육각형) 1개를 넣는다."""
     import zipfile
     with zipfile.ZipFile(src) as zin:
         blobs = {n: zin.read(n) for n in zin.namelist()}
@@ -1958,7 +1719,6 @@ def with_shape(src, out, sheet_part, text):
             zout.writestr(n, b)
     return out
 
-
 a25d = with_shape(a25m, os.path.join(TMP, "25정답도형.xlsx"), _part25, "서식적용")
 _b = g.Book(a25d, "정답")
 check(25, "도형(육각형)의 텍스트·연결 매크로·도형 종류를 읽는다",
@@ -1986,18 +1746,8 @@ check(25, "단추·도형 카드에 정답 개체와 내 개체를 나란히 표
       and "서식전용" in card["props"][0]["got"],
       str(card["props"]) if card else "카드 없음")
 
-# ---------------------------------------------------------------------------
 print("26. v2.0.5 이의제기 3건 (코코 모의고사 2회, 자체 제작 문제지 기준)")
-# ① 기본작업-2 열 너비 — Excel은 [열 너비] 대화상자 값에 좌우 여백 5픽셀을
-#    더해 저장한다(맑은 고딕 11pt: 12 입력 -> 12.625 저장). 정답 파일이 raw 12면
-#    정확히 12를 입력한 풀이가 오답 처리되던 문제.
-# ② 계산작업 3번 — MID 결과는 '문자'라 숫자 머리글과 매칭되지 않아 *1이
-#    필요하고, HLOOKUP의 행 번호는 2여야 한다. 진단이 실제 차이를 짚지 못하고
-#    '$ 절대참조는 …' 일반 문구만 나오던 문제.
-# ③ 계산작업 5번 — 함수 이름 오타(AVRAGE)는 #NAME?, 결과 뒤 &"명" 누락,
-#    조건을 '">"&800000'으로 이어 붙인 것은 '">800000"'과 같은 뜻.
 
-# --- 26-1 저장값 <-> 대화상자 문자 수 환산 (단위) ---
 check(26, "Excel 저장값 계산: 12자 -> 맑은 고딕 12.625 / Calibri 12.7109375",
       g.col_width_stored(12, 8) == 12.625
       and g.col_width_stored(12, 7) == 12.7109375,
@@ -2017,7 +1767,6 @@ check(26, "행 높이는 포인트라 패딩 없음 (28 저장값 = 28)",
       g.row_height_text(28) == "28" and g.row_height_text(None).startswith("지정"),
       g.row_height_text(28))
 
-
 def wb_b2_26(width=None, height=None):
     wb = wb_new("기본작업-2")
     ws = wb.active
@@ -2032,7 +1781,6 @@ def wb_b2_26(width=None, height=None):
     if height is not None:
         ws.row_dimensions[1].height = height
     return wb
-
 
 KEY26 = {"format_checks": {"기본작업-2": [
     {"no": 1, "range": "1행", "check": {"row_height": 28},
@@ -2079,7 +1827,6 @@ check(26, "행 높이가 실제로 다르면(20) 감점 + 정답/내 답 표기"
       and any("행 높이" in d and "28" in d and "20" in d for d in r.details),
       f"{r.earned}/{r.alloc} {r.details}")
 
-# --- 26-2 계산작업 진단: 문자 -> 숫자(*1), HLOOKUP 행 번호 ---
 F_ANS26 = '=HLOOKUP(MID(A{r},2,1)*1,$B$9:$D$10,2,TRUE)'
 F_STU26 = '=HLOOKUP(MID(A{r},2,1),$B$9:$D$10,1,TRUE)'
 dn26 = g.diagnose_formula_diff(F_STU26.format(r=3), F_ANS26.format(r=3))
@@ -2101,7 +1848,6 @@ check(26, "*1 을 제대로 쓴 풀이에는 문자↔숫자 진단이 안 붙�
       str(g.diagnose_formula_diff(
           '=HLOOKUP(MID(A3,2,1)*1,$B$9:$D$10,1,TRUE)', F_ANS26.format(r=3))))
 
-# --- 26-3 계산작업 진단: 함수 이름 오타 · 조건 문자열 · &"명" ---
 F_ANS26B = '=COUNTIFS(D31:D38,">800000",C31:C38,">="&AVERAGE(C31:C38))&"명"'
 F_STU26B = '=COUNTIFS(D31:D38,">"&800000,C31:C38,">="&AVRAGE(C31:C38))'
 dn26b = g.diagnose_formula_diff(F_STU26B, F_ANS26B)
@@ -2125,16 +1871,13 @@ check(26, '&"명" 까지 쓴 풀이에는 누락 진단이 안 붙는다',
           '=COUNTIFS(D31:D38,">"&800000,C31:C38,">="&AVERAGE(C31:C38))&"명"',
           F_ANS26B)))
 
-# --- 26-4 오류 값은 0으로 뭉개지 않고 그대로 보여 준다 ---
 check(26, "Excel 오류 값 인식과 원인 한 줄",
       g.excel_error("#NAME?") == "#NAME?" and g.excel_error("3명") is None
       and g.excel_error(0) is None
       and "함수 이름" in (g.excel_error_note("#NAME?") or ""),
       str(g.excel_error_note("#NAME?"))[:70])
 
-
 def wb_calc26(mode):
-    """mode: 'problem' | 'answer' | 'error'(학생 셀에 #NAME? 결과)"""
     wb = wb_new("계산작업")
     ws = wb.active
     ws["A1"] = "[표5] 코코몰 주문 현황"
@@ -2149,9 +1892,8 @@ def wb_calc26(mode):
         ws["D12"] = F_ANS26B.replace("D31:D38", "C3:C10").replace(
             "C31:C38", "B3:B10")
     elif mode == "error":
-        ws["D12"] = "#NAME?"          # 오타 수식이 남긴 오류 값
+        ws["D12"] = "#NAME?"
     return wb
-
 
 p26c = save(wb_calc26("problem"), "26계산문제.xlsx")
 a26c = save(wb_calc26("answer"), "26계산정답.xlsx")
@@ -2168,19 +1910,9 @@ check(26, "카드 노트에 오류 원인 한 줄",
       and "함수 이름" in (card26c.get("note") or ""),
       str(card26c.get("note"))[-90:] if card26c else "카드 없음")
 
-# ---------------------------------------------------------------------------
 print()
 print("27. v2.0.6 이의제기 3건 (컴활 2급 상시 = 사용자 '상시기출2회' 리포트)")
-# ① 기본작업-1 띄어쓰기 — 복원 문제지가 자료 표를 전부 가운데 정렬로 그려
-#    공백을 사람 눈으로 분간할 수 없던 문제(문제지 쪽 결함, 점수는 정정 데이터로
-#    되돌림). 채점기 쪽 재현 대상은 아니므로 여기서는 다루지 않는다.
-# ② 기본작업-2 — (a) '아래쪽 테두리' 지시가 늘 아래 셀(A2 위쪽)로 표기돼
-#    지시 범위 밖 주소를 인용하던 문제 (b) 정답 파일에만 있는 제작 메모
-#    ('區分+E4:E13')를 셀 값 지시로 보고 감점하던 문제.
-# ③ 매크로작업 — 4096바이트 섹터(CFB v4) vbaProject.bin에서 스트림을 하나도
-#    못 읽어 VBA 기반 판정이 조용히 죽어 있던 문제.
 
-# --- 27-1 CFB v4(4096바이트 섹터) vbaProject.bin 읽기 ---
 SRC27 = 'Attribute VB_Name = "Module1"\n' + "\n".join([
     "Sub 통화()",
     '    Range("E4:E11").Select',
@@ -2217,8 +1949,6 @@ check(27, "구조는 CFB인데 깨졌으면 '구조를 해석하지 못했습니
       "구조를 해석하지" in (g.vba_read_diag(CFB_MAGIC + b"\x00" * 600) or ""),
       str(g.vba_read_diag(CFB_MAGIC + b"\x00" * 600)))
 
-
-# --- 27-1b 단추 캡션: Excel 이 글자 뒤에 붙이는 <br/> 때문에 못 읽던 버그 ---
 VML_BTN = ('<v:shape id="_x0000_s8193" type="#_x0000_t201" o:button="t">'
            '<v:textbox style=\'mso-direction-alt:auto\' o:singleclick="f">'
            '<div style=\'text-align:center\'><font face="\ub9d1\uc740 \uace0\ub515" '
@@ -2244,10 +1974,7 @@ check(27, "&amp; 같은 이스케이프는 원래 글자로",
       g._vml_textbox_text(VML_BTN.format(cap="합계&amp;평균<br/>")) == "합계&평균",
       repr(g._vml_textbox_text(VML_BTN.format(cap="합계&amp;평균<br/>"))))
 
-
-# --- 27-2 매크로 범위가 지시와 다르면 내 VBA 코드의 실제 범위를 인용 ---
 def wb_macro27(applied_cols):
-    """E·F열 통화 서식 매크로. applied_cols: 학생이 실제로 적용한 열."""
     wb = wb_new("매크로작업")
     ws = wb.active
     for j, h in enumerate(("상품명", "단가", "수량", "판매금액")):
@@ -2261,7 +1988,6 @@ def wb_macro27(applied_cols):
         for r in range(4, 12):
             ws.cell(r, c).number_format = '"\u20a9"#,##0_);[Red]\\("\u20a9"#,##0\\)'
     return wb
-
 
 p27 = save(wb_macro27(()), "27문제.xlsx")
 a27 = save(wb_macro27((5, 6)), "27정답.xlsx")
@@ -2286,7 +2012,6 @@ check(27, "리포트가 내 VBA 코드의 실제 범위 [E4:E11]를 인용",
 check(27, "참고 노트에 내 매크로 이름('통화')이 남는다",
       any("통화" in n for n in r27.notes), str(r27.notes)[:160])
 
-# VBA가 깨져 못 읽히면 조용히 넘어가지 않고 사유를 적는다
 S27B = os.path.join(TMP, "27학생_깨진VBA.xlsm")
 to_xlsm(s27, S27B, CFB_MAGIC + b"\x00" * 4096,
         button=("통화", "통화", "1, 0, 12, 0, 3, 0, 14, 0"))
@@ -2297,8 +2022,6 @@ check(27, "VBA를 못 읽으면 'VBA를 읽지 못했습니다' + 사유를 리�
       "VBA를 읽지 못했습니다" in all27b and "구조를 해석하지" in all27b,
       all27b[:160])
 
-
-# --- 27-3 아래쪽 테두리 지시는 지시 범위 안 주소로 표기 ---
 def wb_b2_27(bottom=False, memo=False, stray=False):
     wb = wb_new("기본작업-2")
     ws = wb.active
@@ -2318,7 +2041,6 @@ def wb_b2_27(bottom=False, memo=False, stray=False):
         ws["E2"] = "구분"
     return wb
 
-
 p27b = save(wb_b2_27(), "27b문제.xlsx")
 a27b = save(wb_b2_27(bottom=True), "27b정답.xlsx")
 s27b = save(wb_b2_27(), "27b학생.xlsx")
@@ -2327,7 +2049,6 @@ det27 = str(r27b2.details) + str([c.get("props") for c in r27b2.wrong])
 check(27, "'A1:G1 아래쪽 테두리' 감점을 지시 범위 안 주소(A1)로 표기",
       "A1:G1" in det27 and "A2:G2" not in det27, det27[:200])
 
-# 제작 메모(범위 참조 포함)는 채점 제외, 범위 참조 없는 정답 전용 값은 감점 유지
 a27c = save(wb_b2_27(bottom=True, memo=True), "27c정답.xlsx")
 r27c, _, _ = grade(p27b, a27c, s27b)
 notes27c = " ".join(r27c.notes)
@@ -2342,15 +2063,10 @@ r27d, _, _ = grade(p27b, a27d, s27b)
 check(27, "범위 참조가 없는 정답 전용 값('구분')은 그대로 감점",
       "E2" in str(r27d.details), str(r27d.details)[:150])
 
-
-
-
-# ---------------------------------------------------------------------------
 print()
 print("28. v2.0.8 모르면 감점 금지 — UNKNOWN 보류 · 확인 필요 표기 · "
       "실제 Excel 마크업")
 
-# --- 28-1 UNKNOWN 센티널 자체 ---
 U = g.Unknown("테스트 사유")
 check(28, "Unknown 은 falsy·빈 컨테이너라 기존 소비자 코드가 그대로 돈다",
       (not U) and len(U) == 0 and list(U) == [] and U.get("k") is None
@@ -2365,7 +2081,6 @@ check(28, "unknown_why 가 사유를 그대로 돌려준다",
       and g.unknown_why([], None) == "원인을 특정하지 못했습니다",
       g.unknown_why(U))
 
-# --- 28-2 추출 함수: '없다'와 '못 읽었다'를 가른다 ---
 check(28, "cfb_streams: CFB 가 아니면 Unknown('형식이 아닙니다')",
       g.is_unknown(g.cfb_streams(b"PK\x03\x04" + b"\x00" * 600)),
       g.cfb_streams(b"PK\x03\x04" + b"\x00" * 600).why)
@@ -2384,9 +2099,7 @@ check(28, "fmt_signature: 셀을 못 읽으면 Unknown (예전 '?' 는 '?'끼리
       and g.fmt_signature(None, "font") != g.fmt_signature(None, "font"),
       "")
 
-
 class _BoomWS:
-    """조건부 서식/병합을 읽는 순간 터지는 가짜 시트."""
 
     @property
     def conditional_formatting(self):
@@ -2396,14 +2109,12 @@ class _BoomWS:
     def merged_cells(self):
         raise RuntimeError("깨진 파트")
 
-
 check(28, "cf_rules_detail: 규칙을 읽다 실패하면 부분 목록이 아니라 Unknown",
       g.is_unknown(g.cf_rules_detail(_BoomWS())),
       g.cf_rules_detail(_BoomWS()).why)
 _bm, _ba = g.merge_maps(_BoomWS())
 check(28, "merge_maps: 병합을 못 읽으면 Unknown (서식 비교 기준이 틀어진다)",
       g.is_unknown(_bm) and g.is_unknown(_ba), g.unknown_why(_bm))
-
 
 class _BoomBook:
     label = "가짜"
@@ -2418,13 +2129,10 @@ class _BoomBook:
             def items():
                 raise RuntimeError("깨진 파트")
 
-
 check(28, "defined_names_for_sheet: 이름 정의를 못 읽으면 Unknown",
       g.is_unknown(g.defined_names_for_sheet(_BoomBook(), "기본작업-2")),
       g.defined_names_for_sheet(_BoomBook(), "기본작업-2").why)
 
-
-# --- 28-3 보류가 감점으로 흐르지 않는가 (통합) ---
 def wb_mac28(applied=False):
     wb = wb_new("매크로작업")
     ws = wb.active
@@ -2436,10 +2144,9 @@ def wb_mac28(applied=False):
             ws.cell(3, c).fill = PatternFill("solid", fgColor="FFFF00")
     return wb
 
-
 P28 = save(wb_mac28(), "28문제.xlsx")
 A28 = save(wb_mac28(True), "28정답.xlsx")
-S28 = save(wb_mac28(), "28학생.xlsx")          # 서식 미적용
+S28 = save(wb_mac28(), "28학생.xlsx")
 S28X = to_xlsm(S28, os.path.join(TMP, "28학생_깨진VBA.xlsm"), broken)
 r28, sc28, nt28 = grade(P28, A28, S28X)
 check(28, "매크로 코드를 못 읽으면 결과 불일치를 감점하지 않고 보류한다",
@@ -2451,8 +2158,6 @@ check(28, "보류 사유에 '무엇을 왜' 가 적힌다",
 check(28, "보류분은 만점에서 빠져 점수는 남은 배점 기준으로 환산된다",
       sc28 == 100 and r28.earned == 2, f"{sc28} / earned={r28.earned}")
 
-# 실제 Excel 은 4096바이트 미만 모듈 스트림을 미니 스트림에 담는다 —
-# 매크로 모듈은 거의 다 그보다 작으니 실물은 대부분 이 경로를 탄다.
 MINI_BIN = build_vba_bin_mini('Attribute VB_Name = "Module1"\n'
                               "Sub 아무것도()\nEnd Sub\n")
 check(28, "실제 Excel 배치(미니 스트림, 64바이트 미니 섹터)의 "
@@ -2462,17 +2167,14 @@ check(28, "실제 Excel 배치(미니 스트림, 64바이트 미니 섹터)의 "
           g.vba_module_sources(MINI_BIN)[0][1])] == ["아무것도"],
       str(g.vba_read_diag(MINI_BIN)))
 
-# 같은 학생 파일인데 VBA 가 멀쩡하면 (= 코드에도 그 동작이 없으면) 감점 유지
 S28OK = to_xlsm(S28, os.path.join(TMP, "28학생_정상VBA.xlsm"), MINI_BIN)
 r28b, sc28b, _ = grade(P28, A28, S28OK)
 check(28, "미탐 방지: VBA 를 읽을 수 있으면 서식 미적용은 그대로 감점",
       not r28b.holds and r28b.earned < r28b.alloc and r28b.wrong,
       f"holds={len(r28b.holds)} earned={r28b.earned}/{r28b.alloc}")
 
-
 def inject_rels(src, out, vml_body=None, target="/xl/drawings/vmlDrawing1.vml",
                 sheet_part="xl/worksheets/sheet1.xml"):
-    """시트 rels 에 vmlDrawing 을 선언한다 (vml_body=None 이면 파트를 안 넣는다)."""
     import zipfile
     with zipfile.ZipFile(src) as zin:
         blobs = {n: zin.read(n) for n in zin.namelist()}
@@ -2499,7 +2201,6 @@ def inject_rels(src, out, vml_body=None, target="/xl/drawings/vmlDrawing1.vml",
             zout.writestr(n, b)
     return out
 
-
 A28V = inject_rels(save(wb_mac28(True), "28정답b.xlsx"),
                    os.path.join(TMP, "28정답_vml.xlsx"), "<xml/>")
 S28V = inject_rels(save(wb_mac28(True), "28학생b.xlsx"),
@@ -2510,8 +2211,6 @@ check(28, "rels 가 가리키는 VML 파트를 못 읽으면 '단추 없음 -2�
       and not any("단추" in c["label"] for c in r28c.wrong),
       f"holds={[h['label'] for h in r28c.holds]}")
 
-
-# 조건부 서식 규칙을 못 읽으면 기본작업-3 전체 보류
 def wb_cf28(rule=False):
     wb = wb_new("기본작업-3")
     ws = wb.active
@@ -2524,7 +2223,6 @@ def wb_cf28(rule=False):
             "A3:C8", FormulaRule(formula=["$C3>10"],
                                  font=Font(bold=True)))
     return wb
-
 
 P28C = save(wb_cf28(), "28c문제.xlsx")
 A28C = save(wb_cf28(True), "28c정답.xlsx")
@@ -2542,13 +2240,11 @@ try:
 finally:
     g.cf_rules_detail = _orig_cf
 
-# 미탐 방지: 규칙을 읽을 수 있으면 규칙 없는 학생은 그대로 감점
 r28e, _, _ = grade(P28C, A28C, S28C)
 check(28, "미탐 방지: 규칙을 읽을 수 있으면 조건부 서식 누락은 그대로 감점",
       not r28e.holds and r28e.earned < r28e.alloc,
       f"holds={len(r28e.holds)} earned={r28e.earned}/{r28e.alloc}")
 
-# 채점기가 죽으면 그 시트 전체를 보류 (값 비교 결과만 남겨 감점하지 않는다)
 _orig_b2 = g.GRADERS["기본작업-2"]
 try:
     def _boom(res, ctx):
@@ -2565,8 +2261,6 @@ try:
 finally:
     g.GRADERS["기본작업-2"] = _orig_b2
 
-
-# --- 28-4 확인 필요 표기 (콘솔 / JSON / HTML) ---
 import contextlib as _ctx
 import io as _io
 import json
@@ -2627,11 +2321,6 @@ check(28, "확인 필요가 없으면 섹션도 표기도 없다 (정상 채점 
       and _dOK["scoring"]["gradable_total"] == _dOK["scoring"]["alloc_total"],
       "")
 
-
-# --- 28-5 실제 Excel 이 저장하는 마크업 형태 ---
-# 아래 픽스처는 실제 Excel 이 내보낸 .xlsm 의 *마크업 형태*만 본떠 만든 것이다
-# (내용은 이 테스트용으로 새로 씀). openpyxl 로 만든 합성 워크북은 이 형태를
-# 쓰지 않아, 지금까지 이 경로는 한 번도 검증된 적이 없었다.
 VML_EXCEL = """<xml xmlns:v="urn:schemas-microsoft-com:vml"
  xmlns:o="urn:schemas-microsoft-com:office:office"
  xmlns:x="urn:schemas-microsoft-com:office:excel">
@@ -2678,7 +2367,6 @@ check(28, "실제 Excel VML: <x:Anchor> 값이 줄바꿈+들여쓰기로 시작�
       g._anchor_range(_nums[0], _nums[2], _nums[4], _nums[6]) == "H4:J6",
       g._anchor_range(_nums[0], _nums[2], _nums[4], _nums[6]))
 
-# 시트 XML 의 <controls>: mc:AlternateContent + xdr: 접두사 + controlPr macro
 CONTROLS_EXCEL = (
     '<controls><mc:AlternateContent xmlns:mc="http://schemas.openxmlformats.'
     'org/markup-compatibility/2006"><mc:Choice Requires="x14">'
@@ -2692,12 +2380,10 @@ CONTROLS_EXCEL = (
     "</anchor></controlPr></control></mc:Choice></mc:AlternateContent>"
     "</controls>")
 
-
 def inject_excel_button(src, out, with_vml=True, with_controls=True,
                         rel_target="../drawings/vmlDrawing1.vml",
                         text="평균", macro="평균",
                         sheet_part="xl/worksheets/sheet1.xml"):
-    """실제 Excel 이 쓰는 형태로 양식 컨트롤 단추를 주입한다."""
     import zipfile
     with zipfile.ZipFile(src) as zin:
         blobs = {n: zin.read(n) for n in zin.namelist()}
@@ -2739,7 +2425,6 @@ def inject_excel_button(src, out, with_vml=True, with_controls=True,
             zout.writestr(n, b)
     return out
 
-
 _x1 = inject_excel_button(save(wb_mac28(True), "28x1.xlsx"),
                           os.path.join(TMP, "28단추_실제Excel.xlsx"))
 _b1 = g.Book(_x1, "테스트")
@@ -2750,9 +2435,6 @@ check(28, "실제 Excel 형태(VML+controls, ../ 상대 경로 rels)에서 단�
       and _fc1[0]["text"] == "평균" and _fc1[0]["anchor"] == "H4:J6"
       and _fc1[0]["macro"] == "평균", str(_fc1))
 
-# VML 없이 시트 <controls> 만 있는 경우도 읽어야 한다 (예전엔 앵커 정규식이
-# xdr: 접두사를 못 넘고, 매크로도 controlPr 이 아닌 ctrlProps 에서만 찾아
-# 앵커 '?' + 매크로 '' 로 버려졌다)
 _x2 = inject_excel_button(save(wb_mac28(True), "28x2.xlsx"),
                           os.path.join(TMP, "28단추_controls만.xlsx"),
                           with_vml=False)
@@ -2762,7 +2444,6 @@ check(28, "시트 <controls> 만 있어도 xdr: 접두사 앵커와 controlPr ma
       and _fc2[0]["anchor"] == "H4:J6" and _fc2[0]["macro"] == "평균",
       str(_fc2))
 
-# 실제 Excel 의 drawing1.xml: mc:AlternateContent 로 감싼 hidden 단추 그림자
 DRAWING_EXCEL = (
     '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>'
     '<xdr:wsDr xmlns:xdr="http://schemas.openxmlformats.org/drawingml/2006/'
@@ -2795,7 +2476,6 @@ DRAWING_EXCEL = (
     "</a:p></xdr:txBody></xdr:sp><xdr:clientData/></xdr:twoCellAnchor>"
     "</xdr:wsDr>")
 
-
 def inject_excel_drawing(src, out, sheet_part="xl/worksheets/sheet1.xml"):
     import zipfile
     with zipfile.ZipFile(src) as zin:
@@ -2826,7 +2506,6 @@ def inject_excel_drawing(src, out, sheet_part="xl/worksheets/sheet1.xml"):
             zout.writestr(n, b)
     return out
 
-
 _x3 = inject_excel_drawing(save(wb_mac28(True), "28x3.xlsx"),
                            os.path.join(TMP, "28도형_실제Excel.xlsx"))
 _sh3 = g.Book(_x3, "테스트").drawing_shapes("매크로작업")
@@ -2840,7 +2519,6 @@ _mo3 = g.macro_objects(g.Book(_x3, "테스트"), "매크로작업")
 check(28, "매크로 개체 목록에서 hidden 그림자는 빼고 도형만 센다",
       len(_mo3) == 1 and _mo3[0]["kind"] == "도형", str(_mo3))
 
-# 실제 Excel 이 저장하는 열 너비(문자 수 + 좌우 여백 5픽셀)
 check(28, "실제 Excel 저장 열 너비를 대화상자 문자 수로 되돌린다 "
           "(맑은 고딕 11pt, MDW 8px)",
       all(g.col_width_is(stored, want) for stored, want in
@@ -2850,27 +2528,22 @@ check(28, "실제 Excel 저장 열 너비를 대화상자 문자 수로 되돌�
 check(28, "Calibri 11pt(MDW 7px) 저장값도 같은 문자 수로 읽는다",
       g.col_width_is(12.7109375, 12) and g.col_width_is(8.7109375, 8), "")
 
-# --- 28-6 남은 무음 실패 경로 ---
 class _BoomBorderWS:
-    """테두리를 읽는 순간 터지는 가짜 시트 (edge 맵 경로)."""
 
     merged_cells = type("R", (), {"ranges": []})()
 
     def cell(self, r, c):
         raise RuntimeError("테두리 파트 손상")
 
-
 check(28, "sheet_edge_map: 테두리를 못 읽으면 '선 없음'이 아니라 Unknown "
           "(예전엔 None 으로 뭉개 테두리 감점으로 흘렀다)",
       g.is_unknown(g.sheet_edge_map(_BoomBorderWS(), 3, 3)),
       g.sheet_edge_map(_BoomBorderWS(), 3, 3).why)
 
-
 class _BoomDxf:
     @property
     def font(self):
         raise RuntimeError("dxf 손상")
-
 
 check(28, "_dxf_sig: 조건부 서식의 서식을 못 읽으면 Unknown",
       g.is_unknown(g._dxf_sig(_BoomDxf())), g._dxf_sig(_BoomDxf()).why)
@@ -2881,22 +2554,12 @@ check(28, "채점 제외 범위를 해석 못 하면 조용히 넘기지 않고 
           "(지시가 사라져 그대로 감점되던 경로)",
       any("해석하지 못해" in n for n in _bad_excl[2]), str(_bad_excl[2])[:90])
 
-# 실제 Excel 이 스스로 만드는 예약 이름은 '정의된 이름' 지시가 아니다
 check(28, "자동 필터·최신 함수가 만드는 예약 이름(_xlnm./_xleta.)은 "
           "정의된 이름 채점에서 제외한다",
       g._is_reserved_name("_xlnm._FilterDatabase")
       and g._is_reserved_name("_xleta.MINUTE")
       and not g._is_reserved_name("거래지점"), "")
 
-
-# ---------------------------------------------------------------------------
-# 29. v2.2.0 면책 문구 + 자가 채점 (채점기는 1차 의견, 최종 판정은 사용자)
-#     이 채점기는 이의 신고 41건 중 25건(61%)이 오탐이었다. 배포판에는 그걸
-#     전달할 곳이 없으니, 리포트가 (a) 틀릴 수 있다고 먼저 밝히고 (b) 쓰는
-#     사람이 판정을 직접 뒤집을 수 있어야 한다.
-#     '확인 필요'(v2.0.8 보류 = 채점기가 판단 못 함)와 자가 채점(= 사용자가
-#     판정을 뒤집음)은 개념이 다르므로 리포트에서 따로 적어야 한다.
-# ---------------------------------------------------------------------------
 print("29. v2.2.0 면책 문구 · 자가 채점(채점기 1차 / 사용자 최종)")
 
 import contextlib as _ctx29
@@ -2904,7 +2567,6 @@ import io as _io29
 import re as _re29
 import shutil as _sh29
 import subprocess as _sp29
-
 
 def _mk29(name, alloc, earned, cards=(), holds=()):
     r = g.SheetResult(name, alloc)
@@ -2916,8 +2578,6 @@ def _mk29(name, alloc, earned, cards=(), holds=()):
         g.add_hold(r, _lbl, _why, _pts)
     return r
 
-
-# 배점 100 · 득점 82 · 보류 6 -> 채점된 배점 94, 1차 점수 round(82/94*100)=87
 _res29 = [
     _mk29("기본작업-1", 5, 5),
     _mk29("기본작업-2", 10, 6, cards=[("표시 형식", 4)]),
@@ -2951,7 +2611,6 @@ with open(_H29B, encoding="utf-8") as f:
 with open(_J29, encoding="utf-8") as f:
     _d29 = json.load(f)
 
-# --- (a) 면책 문구 -------------------------------------------------------
 _DISC = "채점기에 오류가 있을 수 있습니다. 참고용으로 봐 주세요."
 check(29, "면책 문구 상수가 요구한 문장 그대로다",
       g.SELF_GRADE_DISCLAIMER == _DISC, g.SELF_GRADE_DISCLAIMER)
@@ -2971,7 +2630,6 @@ with _ctx29.redirect_stdout(_buf29):
     g.print_console(_res29, _sc29, [], (_P29, _A29, _S29))
 check(29, "콘솔 출력에도 면책 문구 한 줄", _DISC in _buf29.getvalue())
 
-# --- (b) 자가 채점 UI · 재계산 JS ---------------------------------------
 _cards29 = [c for r in _res29 for c in r.wrong]
 _scored29 = [c for c in _cards29 if c["lost"]]
 check(29, "감점 있는 오답 카드마다 [내가 보기엔 맞음] 토글이 붙는다",
@@ -3006,7 +2664,6 @@ check(29, "자가 채점 JS 는 저장소를 못 쓰는 환경에서도 죽지 �
       _html29.count("catch (e)") >= 6
       and "localStorage" in _html29)
 
-# --- (c) 리포트별 localStorage 키 ----------------------------------------
 _k29 = g.self_grade_key(_S29)
 _k29b = g.self_grade_key(_S29B)
 check(29, "저장 키는 리포트(응시)마다 갈린다", _k29 != _k29b
@@ -3025,7 +2682,6 @@ check(29, "제거한 이의제기 기능의 kocoAppeal 키 관례는 쓰지 않�
       "kocoAppeal" not in _html29
       and g.SELF_GRADE_KEY_PREFIX == "kocoSelfGrade:")
 
-# --- (d) '확인 필요'(보류)와 자가 채점을 구분해 적는다 -------------------
 check(29, "확인 필요 항목은 자가 채점 카드와 다른 칸(data-sg-hold)에 적는다",
       _html29.count("data-sg-hold=") == 1
       and _html29.count("data-sg-card=") == 2
@@ -3045,7 +2701,6 @@ check(29, "확인 필요의 기본값은 그대로 '점수에서 뺌' (v2.0.8 �
       "확인 필요 1건" in _html29 and "점수에서 뺌" in _html29
       and f"× 100 = <strong>{_sc29}점</strong>" in _html29)
 
-# --- (e) 재계산 산식: 리포트 payload 가 파이썬 채점 결과와 맞는가 --------
 _pay29 = json.loads(_re29.search(
     r"window\.KOCO_SELF_GRADE_DATA=(\{.*?\});\n", _html29, _re29.S).group(1)
     .replace("\\u003c", "<").replace("\\u003e", ">").replace("\\u0026", "&"))
@@ -3055,9 +2710,7 @@ check(29, "리포트 JS 에 넘기는 1차 점수·득점·채점된 배점이 �
       and _pay29["partial"] is False,
       json.dumps({k: _pay29[k] for k in ("baseScore", "earned", "gradable")}))
 
-
 def _recalc29(flip_ids, hold_verdicts):
-    """리포트 JS 와 같은 식으로 다시 매긴 점수 (파이썬 거울)."""
     earned, gradable = _pay29["earned"], _pay29["gradable"]
     for c in _pay29["cards"]:
         if c["id"] in flip_ids:
@@ -3070,7 +2723,6 @@ def _recalc29(flip_ids, hold_verdicts):
         elif v == "wrong":
             gradable += h["points"]
     return min(100, max(0, round(earned / gradable * 100)))
-
 
 _ids29 = [c["id"] for c in _pay29["cards"]]
 _hid29 = [h["id"] for h in _pay29["holds"]]
@@ -3089,7 +2741,6 @@ check(29, "확인 필요를 '틀림'으로 판정하면 분모만 돌아와 점�
 check(29, "아무것도 안 바꾸면 채점기의 1차 점수 그대로",
       _recalc29(set(), {}) == _sc29)
 
-# --- (f) --json: 기존 키 보존 + self_grading 추가 ------------------------
 check(29, "JSON 기존 키는 그대로 (시험장.py 가 읽는다)",
       all(k in _d29 for k in ("total", "pass_line", "passed", "mode",
                               "graded_sheets", "max_total", "generated",
@@ -3114,7 +2765,6 @@ check(29, "JSON 의 자가 채점 항목 id 가 리포트 HTML 의 것과 같다
               {c["id"] for c in _pay29["cards"] if c["lost"]}),
       "")
 
-# --- (g) 만점 리포트 / v2.1.0 제약 유지 ----------------------------------
 _resP29 = [_mk29("기본작업-1", 5, 5), _mk29("계산작업", 95, 95)]
 _HP29 = os.path.join(TMP, "29만점.html")
 g.write_html(_HP29, _resP29, 100, [], (_P29, _A29, _S29))
@@ -3131,7 +2781,6 @@ check(29, "v2.1.0 제약 유지: 이의제기 흔적·execCommand 없음, <body>
       and "execCommand" not in _html29 and "<body>" in _html29
       and "이의제기" not in _htmlP29 and "appeal" not in _htmlP29)
 
-# --- (h) JS 문법 검사 (리포트는 사용자 PC 브라우저에서 도는 코드다) ------
 _js29 = _re29.search(r"<script>(.*?)</script>", _html29, _re29.S).group(1)
 check(29, "리포트 안의 <script> 가 따옴표·이스케이프로 깨지지 않았다",
       _js29.count("</script") == 0 and "\\u003c" not in _js29.split(";\n")[1:2]

@@ -1,18 +1,4 @@
 # -*- coding: utf-8 -*-
-"""시험장.py v2.6.0 자동 재채점(이의제기 반영) 헤드리스 테스트.
-
-  a. 채점기 버전만 오래된 기록 → 자동으로 다시 채점되고 점수가 정정된다
-  b. 정답 파일 해시가 바뀐 기록 → 다시 채점된다
-  c. 채점 근거가 그대로인 기록 → 대상이 아니다(건너뜀, 파일도 안 건드림)
-  d. 풀이 파일이 없어 다시 채점할 수 없는 기록 → 정정 데이터로 대체된다
-  e. 원점수를 정정이력에 보관하고, 같은 정정을 두 번 반영하지 않는다
-  f. 정정된 점수로 레벨·연속 응시·합격 세트·일정 배정·웹 상태가 다시 계산된다
-  g. 손상된 기록.json·정정 파일·이상한 값에도 죽지 않는다
-
-합성 문제/정답/풀이 xlsx + 테스트용 가짜 채점기(stub grade.py)를 써서
-grade.py 의 채점 로직과 무관하게 '재채점 기계'만 검증합니다. 진짜 grade.py 로는
-버전 표식 조회(grader_version)만 확인합니다.
-"""
 import importlib.util
 import json
 import os
@@ -42,10 +28,6 @@ def check(desc, cond, extra=""):
         raise AssertionError(f"{desc} {extra}")
 
 
-# ---------------------------------------------------------------------------
-# 합성 파일 (문제·정답·풀이 xlsx + 가짜 채점기)
-# ---------------------------------------------------------------------------
-
 _MIN_CT = ('<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.'
            'openxmlformats.org/package/2006/content-types"><Default Extension'
            '="rels" ContentType="application/vnd.openxmlformats-package.'
@@ -55,9 +37,6 @@ _MIN_CT = ('<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.'
 
 
 def make_xlsx(path, marker):
-    """합성 xlsx 1개 (openpyxl 이 있으면 진짜 워크북, 없으면 최소 ZIP).
-
-    marker 를 바꾸면 파일 내용(=sha256)이 달라집니다."""
     try:
         from openpyxl import Workbook
         wb = Workbook()
@@ -151,7 +130,6 @@ def score_table(folder, table):
 
 
 class Case:
-    """세트 폴더 하나 + 기록.json + 가짜 채점기로 이루어진 시나리오 작업장."""
 
     def __init__(self, name, grader_ver="2.0.3"):
         self.root = os.path.join(TMP, name)
@@ -284,7 +262,7 @@ rec = base_record(점수=86, 리포트=c.report(total=86), 채점기버전="2.0.
                   정답해시=sj.file_sha256(c.answer))
 c.save([rec])
 check("(b-사전) 바뀐 것이 없으면 대상 아님", c.coord().plan() == [])
-make_xlsx(c.answer, "A2")                     # 이의제기 인정 → 정답 파일 정정
+make_xlsx(c.answer, "A2")
 score_table(c.grade_dir, {sj.file_sha256(c.answer): 94, "_기본": 86})
 plan = c.coord().plan()
 check("(b) 정답 해시가 달라 대상이 되고 사유가 '정답 파일 정정'",
@@ -394,15 +372,13 @@ check("(e) 점수가 같으면 정정이력을 남기지 않음",
 
 print()
 print("6-2. (e2) delta 가산점 — 다시 채점해도 인정한 점수가 유지된다")
-# 문제지 쪽 결함처럼 채점기가 알 수 없는 사유는 total 을 못박지 않고
-# 채점 결과 '위에' 얹는다. 못박아 두면 다음 재채점이 덮어써 인정이 날아간다.
 c = Case("case_e2")
 stu = c.attempt()
 rec = base_record(점수=82, 리포트=c.report(total=82), 채점기버전="2.0.5",
                   풀이경로=stu)
 c.save([rec])
 rid = sj.records_with_ids(c.load())[0][0]
-score_table(c.grade_dir, {"_기본": 87})      # 새 채점기가 매기는 점수
+score_table(c.grade_dir, {"_기본": 87})
 c.write_corrections({"corrections": [
     {"report_id": rid, "set": "합성 세트", "delta": 5,
      "reason": "문제지 결함 — 기본작업-1 공백 표기"}]})
@@ -418,14 +394,13 @@ summary_b = c.coord().run()
 recs = c.load()
 check("(e2) 같은 버전으로 다시 돌려도 92 그대로 (중복 가산 없음)",
       recs[0]["점수"] == 92 and summary_b["changes"] == [], summary_b)
-score_table(c.grade_dir, {"_기본": 90})      # 또 다음 채점기 버전
+score_table(c.grade_dir, {"_기본": 90})
 write_grader(c.grade_dir, "2.0.7")
 summary_c = c.coord().run()
 recs = c.load()
 check("(e2) 채점기가 또 바뀌어도 가산점은 새 결과 위에 다시 얹힌다 (90+5=95)",
       recs[0]["점수"] == 95, summary_c)
 
-# 풀이 파일이 없어 재채점을 못 하는 기록은 정정 데이터가 현재 점수에 더한다
 c2 = Case("case_e3")
 rec2 = base_record(점수=80, 리포트=c2.report(total=80), 채점기버전="1.0.0",
                    풀이경로=os.path.join(c2.set_dir, "없는풀이.xlsm"))
@@ -490,7 +465,7 @@ r2 = {"일시": "2026-09-12 10:00", "세트명": "베타 세트", "점수": 74,
       "소요시간": "39분 00초", "리포트": None, "mode": "시험"}
 c.save([r1, r2])
 today = date(2026, 9, 12)
-EXAM_D = [date(2026, 9, 15)]       # 오늘 = D-3 (시험일은 사용자가 입력하는 값)
+EXAM_D = [date(2026, 9, 15)]
 lv0 = sj.level_info(c.load())
 stk0 = sj.streak_info(c.load(), today, EXAM_D)
 plan0 = sj.build_adaptive_plan(today, c.load(), sets, EXAM_D)
@@ -578,7 +553,7 @@ print()
 print("9. 풀이 파일 찾기 · 진행 표시 · 안내 문구 · 배포")
 c = Case("legacy")
 stu = c.attempt("20260905_2205")
-rec = base_record(리포트=c.report(), 채점기버전="1.0.0")   # 풀이경로 없음(옛 기록)
+rec = base_record(리포트=c.report(), 채점기버전="1.0.0")
 c.save([rec])
 check("풀이경로가 없는 옛 기록도 일시로 풀이_ 사본을 찾아 재채점",
       sj.attempt_file_for(rec, c.set) == stu)
@@ -611,7 +586,6 @@ check("여러 건 안내 문구는 목록 + '클릭하면 자세히'",
           {"name": "A형", "before": 60, "after": 66},
           {"name": "B형", "before": 50, "after": 55}]))
 check("정정 건이 없으면 빈 문구", sj.correction_summary_text([]) == "")
-# 개발 저장소는 <루트>/정정/, 배포본은 스위트와 같은 폴더의 정정/ 이다.
 _skel_cands = [os.path.join(os.path.dirname(BASE), "정정", "점수정정.json"),
                os.path.join(BASE, "정정", "점수정정.json")]
 skel = next((c for c in _skel_cands if os.path.isfile(c)), _skel_cands[0])
@@ -624,7 +598,6 @@ check("정정 항목마다 report_id 와 new_total/delta 중 하나가 있다",
       all(isinstance(it.get("report_id"), str) and it["report_id"].strip()
           and (it.get("new_total") is not None or it.get("delta"))
           for it in skel_data["corrections"]), str(skel_data)[:200])
-# 배포.py 는 제작용 스크립트라 배포본에는 들어가지 않는다. 개발 저장소에서만 검사한다.
 _dep_path = os.path.join(os.path.dirname(BASE), "제작스크립트", "배포.py")
 if os.path.isfile(_dep_path):
     dep_spec = importlib.util.spec_from_file_location("dep", _dep_path)
@@ -652,7 +625,6 @@ check("설치 위치 키가 루트/정정/ 로 풀림",
       sj._data_target_path("정정/점수정정.json", sj.BASE_DIR)
       == os.path.join(os.path.dirname(sj.BASE_DIR), "정정", "점수정정.json"))
 
-# --- 배포물은 우리가 만든 세트만 (저작권) -----------------------------------
 if os.path.isfile(_dep_path):
     check("배포.py: 자체 제작 세트만 통과하는 관문이 있다",
           dep.is_own_set_file("코코모의고사1회_문제.xlsx") is True

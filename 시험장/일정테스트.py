@@ -1,21 +1,4 @@
 # -*- coding: utf-8 -*-
-"""시험장.py 일정 뼈대 헤드리스 테스트 (tkinter 불필요).
-
-실행: python 일정테스트.py   (시험장.py와 같은 폴더)
-  일정은 v3.0.0부터 **사용자가 입력한 시험일 기준 1주(D-7 ~ D-1)**이고, 어떤
-  세트를 푸는지는 **보유 세트**로 정해진다(고정 세트 슬롯 없음). 그래서 이
-  스위트는 "특정 세트가 특정 날짜에 온다"를 더 이상 검사하지 않는다.
-
-  1. 시험일 설정 · 날짜 -> Day 경계 (D-8→0, D-7→1, D-1→7, 시험일→8, 2차→9, 이후→10)
-  2. 자동 세트 선택 규칙 5케이스 (신규 우선/최저점/최근 2일 제외/2세트 상이/기록 없음 폴백)
-  3. 오답 재풀이: 오답 시트 추출 + grade.py --sheets 인자
-  4. 스텝 시퀀스 무결성 (Day 1~7 전부 · 필수 ①② + 선택 ③④⑤)
-  5. 카드 제목/D-day 표기, 진행 저장 키 분리(시험일마다)
-  6. v2.5.0 규칙: 목표 사다리 70→80→90→100 · 연속 응시 (v2.7.0: 응시 제한 폐지)
-  7. v2.6.0 게임형 요소: 티어 이름·게이지·도전 과제 12종·결과 연출
-  8. v2.7.0 점수대 세트 보드: 밴드 경계값·밴드 이동·점수 이력·요약 문구
-  9. v3.0.0 첫 실행 안내: 시험일 미설정 · 자동 업데이트 고지 · 세트 넣는 방법
-"""
 import importlib.util
 import json
 import os
@@ -32,7 +15,6 @@ spec.loader.exec_module(sj)
 TMP = tempfile.mkdtemp()
 N = 0
 
-
 def check(desc, cond, extra=""):
     global N
     N += 1
@@ -41,32 +23,25 @@ def check(desc, cond, extra=""):
     if not cond:
         raise AssertionError(f"{desc} {extra}")
 
-
 def mkset(name, norm=None):
     return {"name": name, "norm": norm or name, "dir": TMP,
             "problem": os.path.join(TMP, name + "_문제.xlsx"),
             "answer": os.path.join(TMP, name + "_정답.xlsx"),
             "key": None, "pdf": None}
 
-
 def rec(name, score, day, mode="시험"):
     return {"일시": f"{day.isoformat()} 10:00", "세트명": name, "점수": score,
             "mode": mode}
 
-
-# 1. 시험일 설정 · 날짜 -> Day 경계 -----------------------------------------
 print("1. 시험일 설정 · 날짜 -> Day 경계")
 D = date
 TD = __import__("datetime").timedelta
-EXAM = D(2026, 11, 19)              # 테스트용 시험일 (코드에 박힌 값이 아님)
+EXAM = D(2026, 11, 19)
 EX = [EXAM]
-EX2 = [EXAM, EXAM + TD(days=1)]     # 2차 시험일까지 넣은 경우
-
+EX2 = [EXAM, EXAM + TD(days=1)]
 
 def dd(n):
-    """시험일로부터 n일 전(D-n) 날짜."""
     return EXAM - TD(days=n)
-
 
 check("코드에 박힌 시험일 상수가 없다 (EXAM_DATES·ROUTINE_START·EXAM_DATE 폐지)",
       not any(hasattr(sj, n) for n in
@@ -130,59 +105,50 @@ check("2차 시험일이 있어도 학습 구간은 1차 기준 하나뿐",
       [(g["seg_start"], g["end"]) for g in sj.study_segments(EX2)]
       == [(dd(7), dd(1))])
 
-# 2. 자동 세트 선택 5케이스 ------------------------------------------------
 print("2. 자동 세트 선택 규칙")
 A, B, C, Dd = (mkset("2024 A형"), mkset("2024 B형"), mkset("코코 1회"),
                mkset("코코 2회"))
 SETS = [A, B, C, Dd]
 today = dd(4)
-# (1) 신규 우선: A/B/C 기록 있고 D 없음 -> D
 R1 = [rec("2024 A형", 55, dd(12)), rec("2024 B형", 62, dd(11)),
       rec("코코 1회", 48, dd(13))]
 p = sj.pick_set_for_retry(SETS, R1, 1, today)
 check("① 신규 세트 우선 (기록 없는 코코 2회)",
       p[0][0] is Dd and "신규" in p[0][1], str(p[0][1]))
-# (2) 최저점: 전부 기록 있음 -> 최고점 최저(코코 1회 48)
 R2 = R1 + [rec("코코 2회", 70, dd(10))]
 p = sj.pick_set_for_retry(SETS, R2, 1, today)
 check("② 최저점 세트 (코코 1회 48점)", p[0][0] is C and "48" in p[0][1],
       str(p[0][1]))
-# 최고점 기준: 코코 1회가 48 -> 80으로 올랐으면 A형(55)이 최저
 R2b = R2 + [rec("코코 1회", 80, dd(9))]
 p = sj.pick_set_for_retry(SETS, R2b, 1, today)
 check("② 최고점 기준 (코코 1회 80 갱신 -> 2024 A형 55)", p[0][0] is A,
       str(p[0][1]))
-# (3) 최근 2일 제외: 최저점 코코 1회를 어제 응시 -> 다음 최저(A형 55)
 R3 = R2 + [rec("코코 1회", 50, dd(5))]
 p = sj.pick_set_for_retry(SETS, R3, 1, today)
 check("③ 최근 2일 내 응시 세트 제외 (코코 1회 어제 -> 2024 A형)",
       p[0][0] is A, str(p[0][1]))
-R3b = R2 + [rec("코코 1회", 50, dd(6))]   # 2일 전 -> 허용
+R3b = R2 + [rec("코코 1회", 50, dd(6))]
 p = sj.pick_set_for_retry(SETS, R3b, 1, today)
 check("③ 2일 전 응시는 허용 (코코 1회 복귀)", p[0][0] is C, str(p[0][1]))
 R3c = [rec(s["name"], 60 + i, dd(5)) for i, s in enumerate(SETS)]
 p = sj.pick_set_for_retry(SETS, R3c, 1, today)
 check("③ 전부 최근이면 최저점 폴백 + 이유 명시",
       p[0][0] is A and "최근 2일" in p[0][1], str(p[0][1]))
-# 부분연습/오답재풀이 기록은 '응시'로 치지 않음
 R3d = R1 + [rec("코코 2회", 30, dd(5), mode="오답재풀이"),
             rec("코코 2회", 30, dd(5), mode="부분연습")]
 p = sj.pick_set_for_retry(SETS, R3d, 1, today)
 check("③ 부분연습·오답재풀이 기록만 있는 세트는 여전히 신규",
       p[0][0] is Dd and "신규" in p[0][1], str(p[0][1]))
-# (4) 2세트 상이
 p = sj.pick_set_for_retry(SETS, R2, 2, today)
 check("④ 2세트 날: 서로 다른 세트 (코코 1회 48, 2024 A형 55)",
       len(p) == 2 and p[0][0] is C and p[1][0] is A
       and p[0][0]["norm"] != p[1][0]["norm"], str([x[1] for x in p]))
 p = sj.pick_set_for_retry(SETS, R1, 2, today)
 check("④ 신규 1개 + 최저점 1개 조합", p[0][0] is Dd and p[1][0] is C)
-# (5) 기록 없음 폴백
 p = sj.pick_set_for_retry(SETS, [], 2, today)
 check("⑤ 기록 없음: 앞에서부터 신규 2개", [x[0] for x in p] == [A, B]
       and all("신규" in x[1] for x in p))
 check("⑤ 세트 없음: 빈 결과", sj.pick_set_for_retry([], R1, 1, today) == [])
-# resolve_day_sets: 자동 슬롯, 저장된 선택 복원 (하루 1세트)
 plan5 = sj.plan_for_day(5, exam=EX)
 check("Day 1~7 은 전부 자동 선택 1슬롯 (고정 세트 없음 · 하루 1세트)",
       all(sj.plan_for_day(n, exam=EX)["세트"] == [sj.AUTO]
@@ -203,7 +169,6 @@ rs4 = sj.resolve_day_sets(plan2x, SETS, [], today)
 check("2슬롯 합성 plan: 없는 세트는 None + 사유",
       rs4[0][0] is A and rs4[1][0] is None and "찾지 못함" in rs4[1][1])
 
-# 3. 오답 재풀이 ----------------------------------------------------------
 print("3. 오답 재풀이 시트 추출 + --sheets 인자")
 items = [{"sheet": "계산작업", "label": "계산 1"}, {"sheet": "기본작업-2 ", "label": "서식"},
          {"sheet": "계산작업", "label": "계산 3"}, {"sheet": "차트작업", "label": "차트"},
@@ -218,7 +183,6 @@ check("--sheets 인자 = '계산작업,기본작업-2,차트작업'",
       cmd[i + 1] == "계산작업,기본작업-2,차트작업" and "--json" in cmd, str(cmd[i:i + 2]))
 check("시트 없으면 --sheets 없음",
       "--sheets" not in sj.build_grade_cmd("g", "p", "a", "s", sheets=[]))
-# 최신 전체 채점 JSON에서 재풀이 payload (partial JSON은 건너뜀)
 setdir = os.path.join(TMP, "세트X")
 os.makedirs(os.path.join(setdir, "채점결과"))
 X = mkset("세트X")
@@ -234,7 +198,7 @@ pp = os.path.join(setdir, "채점결과", "채점결과_세트X_20260905_1100.js
 json.dump(full, open(fp, "w", encoding="utf-8"), ensure_ascii=False)
 json.dump(part, open(pp, "w", encoding="utf-8"), ensure_ascii=False)
 os.utime(fp, (1_700_000_000, 1_700_000_000))
-os.utime(pp, (1_700_000_100, 1_700_000_100))   # partial이 더 최신
+os.utime(pp, (1_700_000_100, 1_700_000_100))
 check("full_only=False -> 최신(partial) JSON",
       sj.find_latest_result_json(X) == pp)
 check("full_only=True -> 전체 응시 JSON", sj.find_latest_result_json(X, full_only=True) == fp)
@@ -256,7 +220,6 @@ check("채점 기록 없으면 missing", kind == "missing")
 check("오답재풀이 사본 이름 규칙",
       os.path.basename(sj._unique_stem(TMP, "오답재풀이_세트X_20260905_1000")).startswith("오답재풀이_세트X_"))
 
-# 4. 스텝 시퀀스 무결성 (Day 1~7) -------------------------------------------
 print("4. 스텝 시퀀스 무결성 (필수 ①② + 선택 ③④⑤)")
 TEMPLATE = ["모의", "채점", "오답노트", "오답재풀이"]
 for no in range(1, sj.ROUTINE_DAYS + 1):
@@ -278,8 +241,6 @@ for no in range(1, sj.ROUTINE_DAYS + 1):
           and tail and steps[-1].get("선택") is True
           and all(s.get("분") for s in steps)
           and all(s["이름"] and s["설명"] for s in steps)
-          # 필수 = 슬롯마다 ①완주 ②채점 뿐, 나머지(오답노트·재풀이·퀴즈·실수
-          # 노트)는 전부 선택
           and req == [len(pre) + 4 * k + j
                       for k in range(n_slots) for j in (0, 1)]
           and all(steps[i].get("형") in ("모의", "채점") for i in req))
@@ -324,7 +285,6 @@ check("시험일/이후/준비: 스텝 없음(준비는 안내 4스텝)",
 check("ROUTINE_STEPS 조회 테이블 = plan_for_day 스텝",
       all(sj.ROUTINE_STEPS[n] == sj.plan_for_day(n)["스텝"]
           for n in sj.PLAN_ORDER))
-# 스텝 실행 매핑
 plan5s = sj.plan_for_day(5, exam=EX)
 kind, payload = sj.resolve_step_action(plan5s["스텝"][0], SETS, slot_sets=[(Dd, "신규 세트라서")])
 check("자동 슬롯 모의 스텝 -> exam(목표 70, 이유 전달)",
@@ -342,7 +302,6 @@ kind, payload = sj.resolve_step_action(step1, [A, mkset("2024년 상시1회 2급
 check("세트 이름이 지정된 스텝: 퍼지 매칭으로 exam",
       kind == "exam" and "상시1회" in payload["set"]["name"])
 
-# 5. 제목/D-day/진행 키 ---------------------------------------------------------
 print("5. 카드 제목·D-day·저장 키")
 t = sj.plan_title(dict(sj.plan_for_day(3, exam=EX), 제목="첫 응시"),
                   today=dd(5), set_names=["2024 A형"], exam=EX)
@@ -383,7 +342,7 @@ check("day 라벨 새 체계 d01~d07 (시험일/이후 None)",
       sj.plan_day_tag(1) == "d01" and sj.plan_day_tag(7) == "d07"
       and sj.plan_day_tag(sj.PLAN_EXAM1) is None)
 cfgp = os.path.join(TMP, "세트설정.json")
-json.dump({"_진행": {"d04": [0, 1, 2]}}, open(cfgp, "w", encoding="utf-8"))  # 구 루틴 진행
+json.dump({"_진행": {"d04": [0, 1, 2]}}, open(cfgp, "w", encoding="utf-8"))
 check("구 루틴 진행(d04)은 새 루틴 d04에 섞이지 않음",
       sj.load_step_progress("d04", cfgp) == set())
 sj.save_step_progress("d04", {0, 1}, cfgp)
@@ -400,7 +359,6 @@ check("자동 선택 저장/복원", sj.load_auto_picks("d08", cfgp) == [{"세�
 summ = sj.records_summary(R3d)
 check("records_summary: 오답재풀이/부분연습 제외", "코코 2회" not in summ and summ["2024 A형"]["best"] == 55)
 
-# 6. v2.5.0 규칙: 목표 사다리 · 연속 응시 (v2.7.0: 하루 1회 제한 폐지) ---------
 print("6. 목표 사다리 · 응시 제한 없음(v2.7.0) · 연속 응시")
 L = sj.level_info
 check("기록 없음 -> 현재 목표 70(tier 70, 달성 없음)",
@@ -428,7 +386,7 @@ check("부분연습·오답재풀이·점수 없는 기록은 레벨에 안 셈"
          rec("A", 95, D(2026, 9, 11), mode="오답재풀이"),
          {"일시": "2026-09-11 10:00", "세트명": "A", "점수": None,
           "mode": "시험"}])["best_total"] is None)
-T = dd(5)                      # 오늘 = D-5
+T = dd(5)
 check("v2.7.0: 하루 1회 잠금 관련 함수·상수가 모두 사라짐 (응시 제한 없음)",
       not any(hasattr(sj, n) for n in
               ("exam_locked_today", "daily_lock_message", "DAILY_LOCK_TITLE",
@@ -473,8 +431,6 @@ check("기록 없음 -> current 0 · best 0",
 check("클리어 안내문: 완주+채점만으로 클리어, 선택 단계 명시",
       "클리어" in sj.STEP_DONE_MESSAGE and "선택" in sj.STEP_DONE_MESSAGE)
 
-
-# 7. v2.6.0 게임형 요소 ------------------------------------------------------
 print()
 print("7. 게임형 요소: 티어 · 게이지 · 도전 과제 · 결과 연출")
 check("티어 이름 70 합격 · 80 숙련 · 90 고득점 · 100 만점 (그 외는 빈 문자열)",
@@ -497,9 +453,7 @@ check("최고점 갱신 문구: '최고 58 → 76 (+18)' (갱신이 아니면 �
                                "best_delta": None}) == ""
       and sj.best_update_text(None) == "")
 
-
 def SHEETS(calc):
-    """계산작업만 실점, 나머지 60점은 무실점인 시트 목록."""
     return [{"name": "기본작업-1", "alloc": 5, "earned": 5},
             {"name": "기본작업-2", "alloc": 10, "earned": 10},
             {"name": "기본작업-3", "alloc": 5, "earned": 5},
@@ -509,9 +463,7 @@ def SHEETS(calc):
             {"name": "매크로작업", "alloc": 10, "earned": 10},
             {"name": "차트작업", "alloc": 10, "earned": 10}]
 
-
 def SR(rid, d, norm, total, calc=None, sec=0, mode="시험"):
-    """규약 records[] 형식 1건 (achievements 판정 입력)."""
     return {"id": rid, "date": d, "time": "10:00", "mode": mode, "total": total,
             "set": {"name": norm, "norm": norm}, "pass_line": 70,
             "passed": total is not None and total >= 70,
@@ -519,10 +471,8 @@ def SR(rid, d, norm, total, calc=None, sec=0, mode="시험"):
             "wrong_items": [], "elapsed": None, "elapsed_sec": sec,
             "report_html": None, "report_json": None}
 
-
 def DONE(recs):
     return [a["id"] for a in sj.achievements(recs) if a["done"]]
-
 
 A0 = sj.achievements([])
 check("도전 과제 12종 · 고정 순서 · 필드(id/name/desc/icon/group/done/when)",
@@ -591,8 +541,6 @@ check("progress_delta: 점수가 낮아도 승급·새 배지는 없고 증감�
       and sj.progress_delta(A4, A4 + [SR("3", "2026-09-05", "c", 60, calc=0)])["tier_up"] == [])
 check("new_achievements: 없으면 빈 목록", sj.new_achievements(A4, A4) == [])
 
-
-# 8. v2.7.0 점수대 세트 보드 -------------------------------------------------
 print()
 print("8. 점수대 밴드 · 세트 보드 · 재응시 점수 갱신")
 check("밴드 정의 6개 · 순서 고정 (미응시 → 미달 → 합격 → 숙련 → 고득점 → 만점)",
@@ -705,8 +653,6 @@ check("보드 밴드와 목표 사다리(level)가 어긋나지 않는다 (최�
       and sj.score_band(100) == "perfect"
       and sj.level_from_best(100)["tier"] == "perfect")
 
-
-# 9. v3.0.0 첫 실행 안내 · 세트 넣는 방법 ------------------------------------
 print()
 print("9. 첫 실행 안내(자동 업데이트 고지) · 세트 넣는 방법")
 NP = os.path.join(TMP, "고지설정.json")
@@ -754,8 +700,6 @@ check("준비 스텝에 시험일 설정·내 문제 파일 넣기가 들어 있
       == ["시험일 설정", "내 문제·정답 파일 넣기"],
       str([x["이름"] for x in sj.PREP_STEPS]))
 
-
-# 10. v3.1.0 자동 업데이트 동의 / 거절 ---------------------------------------
 print()
 print("10. v3.1.0 자동 업데이트 동의 / 거절 (거절하면 꺼지고 프로그램은 정상)")
 CP = os.path.join(TMP, "동의설정.json")
@@ -786,8 +730,6 @@ check("'응답 없음/창 닫음'은 거절과 같은 경로(거짓 값이면 �
       all(sj.apply_update_consent(v, os.path.join(TMP, f"동의{i}.json"))
           is False for i, v in enumerate((None, "", 0, False))))
 
-
-# 11. v3.1.0 시험일 목록 (추가·제거·0개·마이그레이션) --------------------------
 print()
 print("11. v3.1.0 시험일 목록 — 여러 개 추가·개별 제거·0개 허용·옛 설정 이전")
 EP = os.path.join(TMP, "시험일설정.json")
@@ -831,7 +773,6 @@ json.dump({"_설정": {"시험일목록": ["2026-11-19", "엉망", None, 3]}},
 check("깨진 항목은 버리고 성한 것만 쓴다 (프로그램이 죽지 않는다)",
       sj.exam_dates(path=BAD) == [D1])
 
-# 기준 시험일 = 가장 가까운 미래 (지난 시험일은 목록에 남되 기준에서 빠짐)
 T = date(2026, 11, 20)
 check("여러 개 — 기준은 가장 가까운 미래 시험일",
       sj.effective_exams([D1, D2, D3], T) == [D2, D3]
@@ -865,8 +806,6 @@ check("진행도 네임스페이스·루틴 태그도 기준 시험일을 따라
       and sj.routine_tag([D1, D3], T) == D3.isoformat()
       and sj.progress_ns([], T) == "r0" and sj.routine_tag([], T) == "")
 
-
-# 12. v3.1.0 세트 스캔 폴더 설정 ---------------------------------------------
 print()
 print("12. v3.1.0 세트 스캔 폴더 — GUI 에서 바꾸고 설정에 남는다")
 SP = os.path.join(TMP, "스캔설정.json")
@@ -889,8 +828,6 @@ sj.set_app_setting(sj.SCAN_ROOT_SETTING, os.path.join(TMP, "없는폴더"), SP)
 check("저장된 폴더가 사라졌으면 조용히 기본값으로 (죽지 않는다)",
       sj.configured_scan_root(path=SP) == sj.default_scan_root())
 
-
-# 13. v3.1.0 세트 개별 숨기기 -------------------------------------------------
 print()
 print("13. v3.1.0 세트 숨기기 — 목록·일정·보드에서 빠지고 파일·기록은 그대로")
 HP = os.path.join(TMP, "숨김설정.json")

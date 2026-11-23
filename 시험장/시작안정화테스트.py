@@ -1,13 +1,4 @@
 # -*- coding: utf-8 -*-
-"""시험장.py v2.2.1 / 코코시험장.pyw v1.8.0 시작 안정화 헤드리스 테스트.
-
-  1. 기록.json 혼합 픽스처(v1.0~v2.2 + 손상 항목)를 읽어도 절대 죽지 않음
-     — 점수 문자열 정규화, dict 형태 파일, BOM, 깨진 JSON 백업
-  2. 세트설정.json 옛/깨진 스키마 방어 (리스트·문자열·잘못된 타입)
-  3. 시작 로그: 최근 200줄 유지, 오류 로그 한 줄 요약 미러
-  4. 재시작 명령: 래퍼(.pyw) 우선, --smoke 제거, Windows 콘솔 플래그
-  5. 래퍼(코코시험장.pyw) 헬퍼: py_compile 문법 검사, .bak 복구, 시작 로그
-"""
 import importlib.machinery
 import importlib.util
 import json
@@ -26,14 +17,12 @@ TMP = tempfile.mkdtemp(prefix="coco_start_")
 sj.STARTUP_LOG_PATH = os.path.join(TMP, "시작로그.txt")
 sj.ERROR_LOG_PATH = os.path.join(TMP, "오류.log")
 
-
 def check(desc, cond, extra=""):
     global N
     N += 1
     print(f"  [{N:02d}] {desc}: {'OK' if cond else 'FAIL'}" + (f" ({extra})" if extra else ""))
     if not cond:
         raise AssertionError(f"{desc} {extra}")
-
 
 def write_json(name, data, bom=False, raw=None):
     p = os.path.join(TMP, name)
@@ -44,40 +33,32 @@ def write_json(name, data, bom=False, raw=None):
             json.dump(data, f, ensure_ascii=False, indent=2)
     return p
 
-
 def mkset(name):
     return {"name": name, "norm": sj.norm_set_key(name), "dir": TMP,
             "problem": os.path.join(TMP, name + "_문제.xlsx"),
             "answer": os.path.join(TMP, name + "_정답.xlsm"), "key": None, "pdf": None}
-
 
 check("버전 표식", re.fullmatch(r"\d+\.\d+\.\d+", sj.__version__) is not None
       and tuple(int(x) for x in sj.__version__.split(".")) >= (2, 2, 1), sj.__version__)
 
 print("1. 기록.json 혼합 픽스처")
 MIXED = [
-    # v1.0 (3b2a6a2): 일시/세트명/점수/소요시간/리포트 — mode 없음
     {"일시": "2026-08-25 10:00", "세트명": "2024 A형", "점수": 72, "소요시간": "38분 10초", "리포트": None},
     {"일시": "2026-08-25 11:00", "세트명": "2024 A형 (연습)", "점수": None, "소요시간": "5분 00초", "리포트": None},
-    # v1.4 (faecc32): mode 부분연습 + 영역 + 만점
     {"일시": "2026-08-27 10:00", "세트명": "코코모의고사1회", "점수": 18, "소요시간": "14분 02초",
      "리포트": None, "mode": "부분연습", "영역": "계산작업", "만점": 20},
-    # v1.7 (8ca3008): day 추가
     {"일시": "2026-09-03 09:30", "세트명": "2024년 상시1회 2급", "점수": 65, "소요시간": "40분 00초",
      "리포트": "x.html", "mode": "시험", "day": "d01"},
-    # v2.1 (a6984d9): 오답재풀이
     {"일시": "2026-09-03 11:00", "세트명": "2024년 상시1회 2급", "점수": 10, "소요시간": "12분 00초",
      "리포트": None, "mode": "오답재풀이", "영역": "오답재풀이(계산작업)", "만점": 15, "day": "d01"},
-    # v2.2 (fe6ca6b): 루틴 태그
     {"일시": "2026-09-04 10:00", "세트명": "코코모의고사1회", "점수": 81, "소요시간": "39분 00초",
      "리포트": None, "mode": "시험", "day": "d02", "루틴": "2026-09"},
-    # 손상/변형 항목
-    {"일시": "2026-09-04 12:00", "세트명": "2024 B형", "점수": "85", "소요시간": 2280},        # 점수 문자열
-    {"일시": "2026-09-04 13:00", "세트명": "2024 B형", "점수": "채점 실패"},                   # 숫자 아님
-    {"일시": "2026-09-04 14:00", "세트명": "2024 B형", "점수": "77.0점", "만점": "100"},        # 단위 붙은 문자열
-    {"일시": 20260905, "세트명": ["리스트"], "점수": True, "mode": 3},                          # 타입 엉망
-    {"점수": 50},                                                                              # 세트명·일시 없음
-    "문자열 항목", None, 42, ["리스트", "항목"],                                               # dict 아님
+    {"일시": "2026-09-04 12:00", "세트명": "2024 B형", "점수": "85", "소요시간": 2280},
+    {"일시": "2026-09-04 13:00", "세트명": "2024 B형", "점수": "채점 실패"},
+    {"일시": "2026-09-04 14:00", "세트명": "2024 B형", "점수": "77.0점", "만점": "100"},
+    {"일시": 20260905, "세트명": ["리스트"], "점수": True, "mode": 3},
+    {"점수": 50},
+    "문자열 항목", None, 42, ["리스트", "항목"],
 ]
 p = write_json("기록_혼합.json", MIXED)
 recs = sj.load_records(p)
@@ -93,7 +74,7 @@ check("v1.0 기록(mode 없음)은 시험 모드로 집계", sj.records_summary(
 check("set_records/set_exam_records 동작", len(sj.set_records("2024년 상시1회 2급", recs)) == 2
       and len(sj.set_exam_records("2024년 상시1회 2급", recs)) == 1)
 SETS = [mkset(n) for n in ("2024년 상시1회 2급", "코코모의고사1회", "2024 A형", "2024년 상시2회 2급", "2024 B형")]
-EXAM_D = date(2026, 9, 10)        # 9/5 = D-5 (시험일은 사용자가 입력하는 값)
+EXAM_D = date(2026, 9, 10)
 plan = sj.build_adaptive_plan(date(2026, 9, 5), recs, SETS, [EXAM_D])
 check("적응형 일정 계산이 혼합 기록으로도 예외 없음",
       plan["kind"] == "week" and plan["days"])
@@ -104,7 +85,6 @@ check("자동 세트 선택 예외 없음", picks and picks[0][0]["name"], str(p
 by = sj.exam_records_by_set(SETS, recs)
 check("세트별 시험 기록 집계 (날짜 없는 항목 제외)", len(by[sj.norm_set_key("2024 B형")]) == 3
       and all(sj._record_date(r) for rs in by.values() for r in rs))
-# dict 형태 파일
 p2 = write_json("기록_dict.json", {"기록": MIXED[:3]})
 check("{'기록': [...]} 형태", len(sj.load_records(p2)) == 3)
 p3 = write_json("기록_dict2.json", {"2024 A형": {"점수": 60, "일시": "2026-09-01 10:00"},
@@ -196,7 +176,6 @@ if sys.platform != "win32":
 _plat = sys.platform
 try:
     sys.platform = "win32"
-    # (Linux의 posixpath는 백슬래시를 구분자로 보지 않으므로 슬래시 경로로)
     a3, k3 = sj.restart_command(argv=["시험장.py"], executable="C:/Py/pythonw.exe")
     a4, k4 = sj.restart_command(argv=["시험장.py"], executable="C:/Py/python.exe")
 finally:

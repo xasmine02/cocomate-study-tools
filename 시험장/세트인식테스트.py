@@ -1,25 +1,4 @@
 # -*- coding: utf-8 -*-
-"""시험장.py v2.3.1 세트 인식 헤드리스 테스트 (tkinter 불필요).
-
-  1. 파일명 변형 가짜 트리 4종에서 슬롯 해석 (전 토큰/식별 토큰/미발견)
-  2. 혼합 확장자(문제 .xlsx + 정답 .xlsm) 그룹핑
-  3. 슬롯 매핑 저장 → resolve_day_sets 자동 해석
-  4. 진단 텍스트 조립
-  5. 오류 로그 append
-  6. 문제지 PDF 회차·형·연도 검증 (저장된 잘못된 연결 무시, 애매한 퍼지 매칭 금지)
-  7. 기대값 JSON 퍼지 연결 (v2.2.2)
-  8. 루트/기대값 폴더 자동 연결 우선순위 (v2.3.0): 세트 폴더 정확 키 > 기대값 폴더
-     정확 키 > 토큰 유일 일치, 스캔 루트 밖 key_dirs, 직접 선택, 진단 표시
-  9. (v2.3.1) 사용자 PC 진단 트리(2026-09-06) 재현 픽스처 — 슬롯 9개 배정 기대표,
-     PDF·기대값 연결, 무관 PDF 접기, 중복 병합/비병합 두 변형
- 10. (v2.3.1) 중복 세트 병합: 대표 선택(PDF·기대값 붙은 쪽 > 얕은 폴더), 토큰 합집합,
-     세트설정 항목 반영, 진단 표시
- 11. (v2.3.1) PDF·기대값 전역 유일 연결: 동점 미연결+사유, 더 잘 맞는 세트가 있으면
-     제외, 한 세트 두 PDF 동점, 연도만 겹치는 무관 파일, 토큰 1개 비포함 파일
- 12. (v2.3.1) 자동 배포된 루트/모의고사/ 코코 세트가 '코코 1회·2회' 슬롯에 배정
- 13. (v2.3.1) 전역 유일 배정: 확실한 슬롯 우선, 동점 미배정, 직접 선택 매핑 최우선,
-     match_slot ↔ assign_slots 일관성, 식별 규칙 표
-"""
 import importlib.util
 import json
 import os
@@ -32,10 +11,9 @@ spec = importlib.util.spec_from_file_location("sj", os.path.join(BASE, "시험�
 sj = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sj)
 N = 0
-sj.STARTUP_LOG_PATH = os.path.join(tempfile.mkdtemp(), "시작로그.txt")   # 실제 로그 오염 방지
-_ISOLATED_KEY_DIR = os.path.join(tempfile.mkdtemp(), "기대값")            # 실제 루트/기대값 폴더 격리
+sj.STARTUP_LOG_PATH = os.path.join(tempfile.mkdtemp(), "시작로그.txt")
+_ISOLATED_KEY_DIR = os.path.join(tempfile.mkdtemp(), "기대값")
 sj.expected_values_dir = lambda base_dir=None: _ISOLATED_KEY_DIR
-
 
 def check(desc, cond, extra=""):
     global N
@@ -44,16 +22,12 @@ def check(desc, cond, extra=""):
     if not cond:
         raise AssertionError(f"{desc} {extra}")
 
-
 def touch_xlsx(path, content=None):
-    """최소 xlsx(zip) 파일 생성 — 내용은 파일별로 고유(경로 문자열). content를 주면
-    그 내용으로(중복 세트 재현용)."""
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with zipfile.ZipFile(path, "w") as zf:
         zf.writestr("xl/workbook.xml", '<workbook><sheets><sheet name="기본작업-1"/></sheets></workbook>')
         zf.writestr("xl/id.txt", content if content is not None else path)
     return path
-
 
 def make_tree(files):
     root = tempfile.mkdtemp()
@@ -61,20 +35,17 @@ def make_tree(files):
         touch_xlsx(os.path.join(root, rel))
     return root
 
-
 def touch_pdf(p):
     os.makedirs(os.path.dirname(p), exist_ok=True)
     with open(p, "wb") as f:
         f.write(b"%PDF-1.4\n")
     return p
 
-
 def touch_json(p):
     os.makedirs(os.path.dirname(p), exist_ok=True)
     with open(p, "w", encoding="utf-8") as f:
         f.write("{}")
     return p
-
 
 print("1. 파일명 변형 슬롯 해석")
 V1 = make_tree(["세트/2024 A형 문제.xlsx", "세트/2024 A형 정답.xlsm",
@@ -97,7 +68,6 @@ for tag, root in (("V1", V1), ("V2", V2), ("V3", V3), ("V4", V4)):
               s and s["name"] == "A형" and "식별 토큰" in how, how)
     else:
         check("④ A형 파일 없음 → 미발견(후보 없음)", s is None and "후보 없음" in how, how)
-# 연도 충돌 후보는 제외되고(2025 A형), 남은 후보가 유일하면 배정 — v2.3.1
 V5 = make_tree(["a/2025 A형 문제.xlsx", "a/2025 A형 정답.xlsx", "b/복원 A형 문제.xlsx", "b/복원 A형 정답.xlsx"])
 s, how = sj.match_slot(sj.scan_sets(V5, {}), "2024 A형")
 check("2025 A형은 연도 충돌로 제외, 복원 A형만 남아 식별 토큰 일치 (v2.3.1)",
@@ -106,7 +76,6 @@ V5b = make_tree(["a/복원 A형 문제.xlsx", "a/복원 A형 정답.xlsx", "b/�
 s, how = sj.match_slot(sj.scan_sets(V5b, {}), "2024 A형")
 check("동점 복수 후보(복원 A형·기출 A형)는 미발견 + 후보 나열 + 직접 선택 안내",
       s is None and "복수 후보" in how and "복원 A형" in how and "기출 A형" in how and "직접 선택" in how, how)
-# 다른 슬롯: 24 2급 상시 vs 컴활 2급 상시 vs 2024 상시 1회 구분
 V6 = make_tree(["x/24년 2급 상시 문제.xlsx", "x/24년 2급 상시 정답.xlsm",
                 "x/컴활 2급 상시 문제.xlsx", "x/컴활 2급 상시 정답.xlsm",
                 "x/2024년 상시1회 2급 문제.xlsx", "x/2024년 상시1회 2급 정답.xlsm",
@@ -129,9 +98,6 @@ check("식별 규칙 표: 슬롯 9개 모두 핵심 묶음 보유 + 표시 토�
 
 print("2. 2슬롯 plan 해석: 한 슬롯 미발견 + 매핑 대체")
 sets4 = sj.scan_sets(V4, {})
-# 하루 1세트이고 v3.0.0 부터는 일정표에 고정 세트가 없다(엔진이 보유 세트에서
-# 고른다) — 2슬롯 처리 경로는 Day 3 카드에 세트 이름을 직접 넣은 합성 plan 으로
-# 확인한다.
 check("일정표는 하루 1세트 · 고정 세트 없음 (Day 3 = 자동 선택)",
       sj.plan_for_day(3)["세트"] == [sj.AUTO], str(sj.plan_for_day(3)["세트"]))
 plan3 = dict(sj.plan_for_day(3), 세트=["2024 A형", "2024 상시 2회"], 목표들=[70, 70])
@@ -193,8 +159,8 @@ check("두 번째 기록 append (구분선 2개)", open(lp, encoding="utf-8").re
 print("6. 문제지 PDF 회차 검증 (v2.2.1)")
 V8 = make_tree(["기출/2024년 상시1회 2급_문제.xlsm", "기출/2024년 상시1회 2급_정답.xlsm",
                 "기출/2024년 상시2회 2급_문제.xlsm", "기출/2024년 상시2회 2급_정답.xlsm"])
-pdf1 = touch_pdf(os.path.join(V8, "기출", "2024년 상시1회 2급 문제지.pdf"))   # 같은 키 → 1회
-amb = touch_pdf(os.path.join(V8, "기출", "2024 상시 2급 문제지.pdf"))        # 회차 없음 → 1회·2회 동점
+pdf1 = touch_pdf(os.path.join(V8, "기출", "2024년 상시1회 2급 문제지.pdf"))
+amb = touch_pdf(os.path.join(V8, "기출", "2024 상시 2급 문제지.pdf"))
 sets8 = sj.scan_sets(V8, {})
 s1 = next(s for s in sets8 if "상시1회" in s["name"])
 s2 = next(s for s in sets8 if "상시2회" in s["name"])
@@ -215,7 +181,6 @@ check("시작 로그에 '문제지 연결 무시' 기록",
 cfg8c = {s2["norm"]: dict(cfg8[s2["norm"]], **{"pdf_확인됨": True})}
 s2c = next(s for s in sj.scan_sets(V8, cfg8c) if "상시2회" in s["name"])
 check("사용자가 확인한 연결(pdf_확인됨)은 존중", s2c["pdf"] == pdf1 and s2c.get("pdf_확인됨") is True)
-# 저장 전용 세트(스캔에 없는 경로)도 같은 검증
 V8s = make_tree(["딴곳/2026 모의고사 1회_문제.xlsm", "딴곳/2026 모의고사 1회_정답.xlsm"])
 pdf26_2 = touch_pdf(os.path.join(V8s, "딴곳", "2026 모의고사 2회 문제지.pdf"))
 saved_cfg = {"2026모의고사1회": {"name": "2026 모의고사 1회",
@@ -225,7 +190,6 @@ saved_cfg = {"2026모의고사1회": {"name": "2026 모의고사 1회",
 ss = sj.apply_set_config([], saved_cfg)
 check("저장 전용 세트: 회차 충돌 PDF 무시, 잘못된 타입 key 무시",
       len(ss) == 1 and ss[0]["pdf"] is None and ss[0]["key"] is None and ss[0].get("pdf_warning") and ss[0]["saved"])
-# 슬롯 매핑
 m = {"name": s2["name"], "problem": s2["problem"], "answer": s2["answer"], "pdf": pdf1}
 ms = sj.set_from_mapping(m)
 check("슬롯 매핑의 충돌 PDF 무시 (+경고 사유, direct 표시)",
@@ -234,15 +198,14 @@ check("슬롯 매핑 pdf_확인됨 존중", sj.set_from_mapping(dict(m, **{"pdf_
 m2 = {"name": s1["name"], "problem": s1["problem"], "answer": s1["answer"], "pdf": pdf1}
 check("회차 일치 PDF 매핑은 그대로", sj.set_from_mapping(m2)["pdf"] == pdf1)
 check("매핑 pdf 타입 이상(리스트)은 무시하고 세트는 살림",
-      sj.set_from_mapping(dict(m2, pdf=["x"]))["pdf"] == pdf1)   # 같은 키 자동 감지로 1회 PDF
+      sj.set_from_mapping(dict(m2, pdf=["x"]))["pdf"] == pdf1)
 txt8 = sj.scan_diagnosis_text(V8, config=cfg8, sets=sets8b)
 check("진단 텍스트에 무시 사유(⚠) 표시", "⚠" in txt8 and "무시했습니다" in txt8)
 bad_live = dict(s2, pdf=pdf1)
 txt8b = sj.scan_diagnosis_text(V8, config={}, sets=[bad_live])
 check("진단 텍스트: 현재 연결이 충돌이면 '⚠회차불일치'", "⚠회차불일치" in txt8b)
-# 퍼지 매칭 유일성: A형 문제지는 A형에만
 V9 = make_tree(["s/2024 A형 문제.xlsx", "s/2024 A형 정답.xlsm", "s/2024 B형 문제.xlsx", "s/2024 B형 정답.xlsm"])
-touch_pdf(os.path.join(V9, "s", "2024년 A형 기출 문제지.pdf"))     # 키 다름 → 퍼지 매칭
+touch_pdf(os.path.join(V9, "s", "2024년 A형 기출 문제지.pdf"))
 sets9 = sj.scan_sets(V9, {})
 sA = next(s for s in sets9 if "A형" in s["name"])
 sB = next(s for s in sets9 if "B형" in s["name"])
@@ -260,8 +223,8 @@ print("7. 기대값 JSON 퍼지 연결 (v2.2.2)")
 V10 = make_tree(["k/2026 컴활2급실기_상시복원기출문제 1회_문제.xlsm",
                  "k/2026 컴활2급실기_상시복원기출문제 1회_정답.xlsm",
                  "k/2024 상시 2회_문제.xlsx", "k/2024 상시 2회_정답.xlsm"])
-touch_json(os.path.join(V10, "k", "2026_1회_기대값.json"))       # 키 다름 → 토큰(2026·1회)
-touch_json(os.path.join(V10, "k", "2024 상시 2회_기대값.json"))   # 같은 키
+touch_json(os.path.join(V10, "k", "2026_1회_기대값.json"))
+touch_json(os.path.join(V10, "k", "2024 상시 2회_기대값.json"))
 sets10 = sj.scan_sets(V10, {})
 s26 = next(s for s in sets10 if "2026" in s["name"])
 s24 = next(s for s in sets10 if "2024" in s["name"])
@@ -276,7 +239,7 @@ check("2024 상시 2회 직접 선택은 2026 기대값에 연결 안 함(연도
       sj.build_direct_set(s24["problem"], s24["answer"])["key"].endswith("2024 상시 2회_기대값.json"))
 V11 = make_tree(["k/2026 상시 1회_문제.xlsm", "k/2026 상시 1회_정답.xlsm",
                  "k/2026 상시 2회_문제.xlsm", "k/2026 상시 2회_정답.xlsm"])
-touch_json(os.path.join(V11, "k", "2026_기대값.json"))            # 회차 없음 → 애매
+touch_json(os.path.join(V11, "k", "2026_기대값.json"))
 sets11 = sj.scan_sets(V11, {})
 check("회차 없는 기대값은 1회·2회 모두에 맞아 애매 → 연결 안 함 + 동점 사유",
       all(s["key"] is None for s in sets11) and all("2026_기대값.json" in (s.get("key_tie") or "") for s in sets11),
@@ -319,13 +282,11 @@ check("key_link_label: 세트 폴더 정확 키는 파일명만, 그 밖은 '(�
       and sj.key_link_label(by["코코모의고사2회"]) == "코코모의고사2회_기대값.json (자동 연결)"
       and sj.key_link_label(by["2024년 상시2회 2급"]) == "2024상시2회_기대값.json (자동 연결)"
       and sj.key_link_label(by["2024년 상시1회 2급"]) == "없음")
-# 기대값 폴더가 스캔 루트 밖에 있어도(--scan-root 지정) 후보에 포함
 sets12b = sj.scan_sets(os.path.join(V12, "기출"), {}, key_dirs=[KD])
 check("스캔 루트 밖의 key_dirs 기대값도 연결", sets12b[0]["key"] == os.path.join(KD, "코코모의고사2회_기대값.json")
       and sets12b[0]["key_origin"] == "기대값 폴더")
 check("key_dirs 없이(기본 expected_values_dir가 없는 환경) 스캔해도 안전",
       sj.scan_sets(os.path.join(V12, "기출"), {}, key_dirs=[os.path.join(V12, "없는폴더")])[0]["key"] is None)
-# 직접 선택
 d12 = sj.build_direct_set(by["코코모의고사2회"]["problem"], by["코코모의고사2회"]["answer"], key_dirs=[KD])
 check("직접 선택: 기대값 폴더의 정확 키", d12["key"] == os.path.join(KD, "코코모의고사2회_기대값.json")
       and d12["key_origin"] == "기대값 폴더")
@@ -337,12 +298,10 @@ d12c = sj.build_direct_set(by["코코모의고사1회"]["problem"], by["코코�
 check("직접 선택: 세트 폴더 정확 키 우선", d12c["key"].startswith(os.path.join(V12, "모의고사")) and d12c["key_origin"] == "세트 폴더")
 check("직접 선택: 상시 1회는 연결 안 함",
       sj.build_direct_set(by["2024년 상시1회 2급"]["problem"], by["2024년 상시1회 2급"]["answer"], key_dirs=[KD])["key"] is None)
-# 진단 텍스트에 출처 표시
 txt12 = sj.scan_diagnosis_text(V12, config={}, sets=sets12)
 check("진단 텍스트: 기대값 출처 표시", "코코모의고사2회_기대값.json (기대값 폴더)" in txt12
       and "2024상시2회_기대값.json (토큰 일치)" in txt12
       and "| 코코모의고사1회_기대값.json |" in txt12)
-# 저장된 세트설정의 key가 다른 파일이면 '세트설정' 출처
 cfg12 = {by["코코모의고사2회"]["norm"]: {"name": "코코모의고사2회", "problem": by["코코모의고사2회"]["problem"],
                                     "answer": by["코코모의고사2회"]["answer"],
                                     "key": os.path.join(V12, "모의고사", "코코모의고사1회_기대값.json"), "pdf": None}}
@@ -354,14 +313,14 @@ V13 = make_tree(["k/2026 컴활2급실기_상시복원기출문제 1회_문제.x
                  "k/2026 컴활2급실기_상시복원기출문제 1회_정답.xlsm"])
 KD13 = os.path.join(V13, "기대값")
 os.makedirs(KD13)
-touch_json(os.path.join(V13, "k", "2026_1회_기대값.json"))      # 세트 폴더 사본
-touch_json(os.path.join(KD13, "2026_1회_기대값.json"))          # 배포본 (같은 이름)
+touch_json(os.path.join(V13, "k", "2026_1회_기대값.json"))
+touch_json(os.path.join(KD13, "2026_1회_기대값.json"))
 s13 = sj.scan_sets(V13, {}, key_dirs=[KD13])[0]
 check("같은 이름의 기대값이 세트 폴더·기대값 폴더에 모두 있으면 동점이 아니라 세트 폴더 사본 연결",
       s13["key"] == os.path.join(V13, "k", "2026_1회_기대값.json") and s13["key_origin"] == "토큰 일치", str(s13["key"]))
 d13 = sj.build_direct_set(s13["problem"], s13["answer"], key_dirs=[KD13])
 check("직접 선택도 세트 폴더 사본 우선", d13["key"] == os.path.join(V13, "k", "2026_1회_기대값.json"))
-import importlib.util as _ilu          # 격리 전 원본 함수로 검사
+import importlib.util as _ilu
 _spec2 = _ilu.spec_from_file_location("sj2", os.path.join(BASE, "시험장.py"))
 _sj2 = _ilu.module_from_spec(_spec2)
 _spec2.loader.exec_module(_sj2)
@@ -397,10 +356,7 @@ DIAG_KEYS = ["2024상시2회_기대값.json", "2026_1회_기대값.json", "코�
 SLOTS9 = ["2024 상시 1회", "코코 1회", "2024 A형", "2024 상시 2회", "코코 2회", "2024 B형",
           "24 2급 상시", "컴활 2급 상시", "2026 1회"]
 
-
 def make_diag_tree(same_content=True, with_coco=False):
-    """진단 출력의 파일 트리(파일명만 같은 합성 파일). same_content=True면
-    '상시기출2회(문제).xlsm'을 '2024년 기출문제 유형 2회(문제).xlsm'과 같은 내용으로."""
     root = tempfile.mkdtemp(prefix="바탕화면_")
     for rel in DIAG_XLS:
         content = "동일내용-2024기출2회문제" if same_content and rel.endswith(
@@ -411,16 +367,14 @@ def make_diag_tree(same_content=True, with_coco=False):
     kd = os.path.join(root, "기대값")
     for fn in DIAG_KEYS:
         touch_json(os.path.join(kd, fn))
-    if with_coco:          # v2.3.1 set_files 배포 결과: 루트/모의고사/
+    if with_coco:
         for n in (1, 2):
             touch_xlsx(os.path.join(root, "모의고사", f"코코모의고사{n}회_문제.xlsx"))
             touch_xlsx(os.path.join(root, "모의고사", f"코코모의고사{n}회_정답.xlsx"))
             touch_pdf(os.path.join(root, "모의고사", f"코코모의고사{n}회_문제지.pdf"))
     return root, kd
 
-
 def table(sets, specs=SLOTS9, mapping=None):
-    """{슬롯: (세트명, PDF 파일명, 기대값 파일명, 사유)}"""
     out = {}
     for spec, (s, how) in sj.assign_slots(sets, specs, mapping).items():
         if spec in specs:
@@ -428,7 +382,6 @@ def table(sets, specs=SLOTS9, mapping=None):
                          (os.path.basename(s["pdf"]) if s and s.get("pdf") else None),
                          (os.path.basename(s["key"]) if s and s.get("key") else None), how)
     return out
-
 
 D1, KD1 = make_diag_tree(same_content=True)
 setsD = sj.scan_sets(D1, {}, key_dirs=[KD1])
@@ -492,13 +445,11 @@ check("진단: 슬롯 행에 세트·PDF·기대값 함께 표시",
 check("진단: 컴활2급상시_문제지.pdf·계산드릴_문제지.pdf는 미소속(문제지 행 유지)",
       any(l.startswith("컴활2급상시_문제지.pdf | ") and "| 미소속 |" in l for l in txtD.splitlines())
       and any(l.startswith("계산드릴_문제지.pdf | ") and "| 미소속 |" in l for l in txtD.splitlines()))
-# 적응형 일정의 첫 응시 순서 — v3.0.0: 고정 우선순위 표 없이 **이름순**
 pri = [(s["name"], lab) for s, lab in sj.prioritized_sets(setsD)]
 check("prioritized_sets: 보유 세트를 이름순으로 (라벨은 'n/전체' 순번)",
       [n for n, _l in pri] == sorted(s["name"] for s in setsD)
       and [l for _n, l in pri] == [f"{i + 1}/{len(setsD)}" for i in range(len(setsD))],
       str(pri))
-# 비병합 변형: 내용이 다르면 별개 세트 — '2024 상시 2회'는 2024년 기출 2회, 상시기출2회는 슬롯 없음 + 비슷한 이름 안내
 D2, KD2 = make_diag_tree(same_content=False)
 setsD2 = sj.scan_sets(D2, {}, key_dirs=[KD2])
 T2 = table(setsD2)
@@ -522,7 +473,7 @@ touch_xlsx(os.path.join(M1, "깊은/폴더/2024년 상시2회 2급_문제.xlsm")
 touch_xlsx(os.path.join(M1, "깊은/폴더/2024년 상시2회 2급_정답.xlsm"))
 touch_xlsx(os.path.join(M1, "상시2회_문제.xlsm"), "같은문제")
 touch_xlsx(os.path.join(M1, "상시2회_정답.xlsm"))
-pdf_deep = touch_pdf(os.path.join(M1, "깊은/폴더/2024년 상시2회 2급_문제지.pdf"))   # 깊은 쪽에만 같은 키 PDF
+pdf_deep = touch_pdf(os.path.join(M1, "깊은/폴더/2024년 상시2회 2급_문제지.pdf"))
 setsM = sj.scan_sets(M1, {})
 check("문제 파일 내용이 같으면 한 세트", len(setsM) == 1)
 check("대표: PDF가 붙은 쪽(깊은 폴더)이 얕은 폴더보다 우선, 중복 목록에 얕은 쪽",
@@ -533,7 +484,7 @@ touch_xlsx(os.path.join(M2, "깊은/폴더/2024년 상시2회 2급_문제.xlsm")
 touch_xlsx(os.path.join(M2, "깊은/폴더/2024년 상시2회 2급_정답.xlsm"))
 touch_xlsx(os.path.join(M2, "상시2회_문제.xlsm"), "같은문제")
 touch_xlsx(os.path.join(M2, "상시2회_정답.xlsm"))
-touch_xlsx(os.path.join(M2, "다른내용_문제.xlsm"))      # 크기 같아도 내용 다르면 별개
+touch_xlsx(os.path.join(M2, "다른내용_문제.xlsm"))
 touch_xlsx(os.path.join(M2, "다른내용_정답.xlsm"))
 setsM2 = sj.scan_sets(M2, {})
 repM2 = next(s for s in setsM2 if s.get("중복"))
@@ -558,7 +509,7 @@ check("merge_duplicate_sets: 읽을 수 없는 경로는 건너뜀(예외 없음
 print("11. PDF·기대값 전역 유일 연결 (v2.3.1)")
 L1 = make_tree(["k/2026 상시 1회_문제.xlsm", "k/2026 상시 1회_정답.xlsm",
                 "k/2026 상시 2회_문제.xlsm", "k/2026 상시 2회_정답.xlsm"])
-touch_pdf(os.path.join(L1, "k", "2026 상시 문제지.pdf"))          # 회차 없음 → 두 세트 동점
+touch_pdf(os.path.join(L1, "k", "2026 상시 문제지.pdf"))
 setsL1 = sj.scan_sets(L1, {})
 check("한 PDF에 두 세트가 동점(둘 다 문제지 없음) → 연결 안 함 + 양쪽 pdf_tie 사유",
       all(s["pdf"] is None for s in setsL1)
@@ -570,8 +521,8 @@ check("진단: 동점 PDF는 '미소속 (동점: …)' + 세트 표 '(동점: �
       and "- (동점: 2026 상시 문제지.pdf" in txtL1)
 L2 = make_tree(["k/컴활 2급 상시 기출 복원_문제.xlsm", "k/컴활 2급 상시 기출 복원_정답.xlsm",
                 "k/컴활 상시_문제.xlsm", "k/컴활 상시_정답.xlsm"])
-own = touch_pdf(os.path.join(L2, "k", "컴활 2급 상시 기출 복원_문제지.pdf"))   # 같은 키
-stray = touch_pdf(os.path.join(L2, "k", "컴활 2급 상시 기출 문제지.pdf"))       # 복원 세트에 4개, 컴활 상시에 2개
+own = touch_pdf(os.path.join(L2, "k", "컴활 2급 상시 기출 복원_문제지.pdf"))
+stray = touch_pdf(os.path.join(L2, "k", "컴활 2급 상시 기출 문제지.pdf"))
 setsL2 = sj.scan_sets(L2, {})
 sFull = next(s for s in setsL2 if "복원" in s["name"])
 sLess = next(s for s in setsL2 if s["name"] == "컴활 상시")
@@ -624,7 +575,6 @@ check("진단: 바탕 화면의 코코 PDF 사본은 '(같은 키 사본)' 소�
           for l in txtD3.splitlines()), [l for l in txtD3.splitlines() if l.startswith("코코모의고사1회_문제지.pdf")])
 check("슬롯 9개 전부 배정(미발견은 '컴활 2급 상시' 하나 — 사용자 폴더에 그 xlsx가 없음)",
       [k for k, v in T3.items() if v[0] is None] == ["컴활 2급 상시"])
-# 일정은 세트를 고정하지 않으므로(v3.0.0) 세트 이름을 넣은 슬롯이 전역 배정을 쓰는지 확인
 planD3 = dict(sj.plan_for_day(1), 세트=["2024 상시 1회"])
 rsD3 = sj.resolve_day_sets(planD3, setsD3, [], None)
 check("세트 이름을 지정한 슬롯도 전역 배정 결과 사용",

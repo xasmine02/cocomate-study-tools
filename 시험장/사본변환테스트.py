@@ -1,18 +1,4 @@
 # -*- coding: utf-8 -*-
-"""시험장.py v2.2.1 풀이 사본(xlsx→xlsm) 변환 + Excel 실행 헬퍼 헤드리스 테스트.
-
-  1. 실제 문제 파일(.xlsx, 있을 때) 변환: 모든 항목 flag_bits에 0x08 없음,
-     [Content_Types].xml 첫 항목, testzip 통과, 매크로 content-type, 나머지
-     파트 바이트 동일, openpyxl 로드
-  2. data descriptor(0x08) 비트·CT 순서가 어긋난 xlsx를 만들어 변환하면 깨끗해짐
-  3. copy_as_macro_enabled: .xlsm 사본 + 시작 로그 기록, 변환 불가 파일은
-     .xlsx 폴백, .xlsm 원본은 그대로 복사
-  4. Excel 실행 헬퍼: 명령 문자열 파싱, 잠금 파일 감지, 열림 판정,
-     Windows 외에서는 탐색 결과 None/unknown
-
-실제 파일: 환경변수 COCO_TEST_XLSX(문제 .xlsx 경로). 없으면 openpyxl로 만든
-합성 xlsx만 사용합니다. 실제 문제 파일은 절대 저장소에 복사하지 않습니다.
-"""
 import importlib.util
 import io
 import os
@@ -27,8 +13,7 @@ sj = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(sj)
 N = 0
 TMP = tempfile.mkdtemp(prefix="coco_conv_")
-sj.STARTUP_LOG_PATH = os.path.join(TMP, "시작로그.txt")   # 실제 로그 오염 방지
-
+sj.STARTUP_LOG_PATH = os.path.join(TMP, "시작로그.txt")
 
 def check(desc, cond, extra=""):
     global N
@@ -37,14 +22,11 @@ def check(desc, cond, extra=""):
     if not cond:
         raise AssertionError(f"{desc} {extra}")
 
-
 def real_xlsx():
     p = os.environ.get("COCO_TEST_XLSX")
     return p if p and os.path.isfile(p) else None
 
-
 class _NoSeek:
-    """seek/tell 없는 쓰기 스트림 — zipfile이 data descriptor(0x08)를 쓰게 만듦."""
 
     def __init__(self):
         self.buf = io.BytesIO()
@@ -55,10 +37,7 @@ class _NoSeek:
     def flush(self):
         pass
 
-
 def synth_xlsx(path, descriptor=False, ct_last=False):
-    """openpyxl로 만든 xlsx. descriptor=True면 0x08 비트가 있는 ZIP으로,
-    ct_last=True면 [Content_Types].xml을 마지막 항목으로 다시 포장."""
     import openpyxl
     wb = openpyxl.Workbook()
     ws = wb.active
@@ -87,7 +66,6 @@ def synth_xlsx(path, descriptor=False, ct_last=False):
         f.write(data)
     return path
 
-
 def entry_report(path):
     with zipfile.ZipFile(path) as zf:
         infos = zf.infolist()
@@ -100,7 +78,6 @@ def entry_report(path):
             "parts": {i.filename: zf.read(i.filename) for i in infos
                       if i.filename != sj.CONTENT_TYPES_NAME},
         }
-
 
 def assert_clean_conversion(src, dst, label):
     a, b = entry_report(src), entry_report(dst)
@@ -117,7 +94,6 @@ def assert_clean_conversion(src, dst, label):
     wb = openpyxl.load_workbook(dst)
     check(f"{label}: 시트 이름 보존", wb.sheetnames == openpyxl.load_workbook(src).sheetnames, str(wb.sheetnames))
     wb.close()
-
 
 print("1. 실제 문제 파일 변환")
 real = real_xlsx()
@@ -155,7 +131,7 @@ log = open(sj.STARTUP_LOG_PATH, encoding="utf-8").read()
 check("시작 로그에 사본 경로·크기·변환 성공 기록", "사본 생성" in log and dst3 in log and "변환 성공" in log
       and f"{os.path.getsize(dst3):,} bytes" in log, log.strip()[-120:])
 bogus = os.path.join(TMP, "가짜_문제.xlsx")
-with zipfile.ZipFile(bogus, "w") as zf:      # [Content_Types].xml 없는 zip
+with zipfile.ZipFile(bogus, "w") as zf:
     zf.writestr("xl/workbook.xml", "<workbook/>")
 dstb = sj.copy_as_macro_enabled(bogus, os.path.join(TMP, "풀이_가짜"))
 check("변환 불가 파일은 .xlsx 그대로 복사(폴백) + 로그", dstb.endswith(".xlsx") and os.path.isfile(dstb)
@@ -209,14 +185,12 @@ status, detail = sj.check_workbook_open(wb_path)
 check("잠금 파일 있으면 'open'", status == "open" and "잠금 파일" in detail, detail)
 os.remove(short_lock)
 
-
 class FakeProc:
     def __init__(self, rc):
         self.rc = rc
 
     def poll(self):
         return self.rc
-
 
 if sys.platform != "win32":
     check("Windows 아님 + 잠금 없음 → unknown", sj.check_workbook_open(wb_path)[0] == "unknown")
@@ -225,7 +199,7 @@ if sys.platform != "win32":
     check("종료 코드 0(기존 Excel에 파일 전달)만으로는 닫힘으로 보지 않음",
           sj.check_workbook_open(wb_path, FakeProc(0))[0] == "unknown")
     _orig_open = sj.open_file
-    sj.open_file = lambda p: (True, "")          # 실제로 프로그램을 띄우지 않음
+    sj.open_file = lambda p: (True, "")
     try:
         ok, method, err, proc = sj.open_workbook(wb_path)
     finally:

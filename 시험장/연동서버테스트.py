@@ -1,26 +1,4 @@
 # -*- coding: utf-8 -*-
-"""시험장.py v2.4.0 루틴 웹 연동 서버 헤드리스 테스트 (tkinter 불필요).
-
-실제 RoutineServer 를 임의 포트에 띄워 규약(문서/연동_API.md v2.6.0)을 검증합니다.
-  1. GET / — 루틴.html(실제 루틴.html)을 doctype/html/head/body 골격으로 감싸서
-     응답, 해시→탭 스크립트 포함, 파일이 없으면 안내 페이지, Cache-Control no-store
-  2. GET /api/state — 규약 필드 전부 존재·타입 (최상위·plan·days 16일·슬롯·sets·
-     records·review·checks·settings), 웹 픽스처(fixture_state.json)와 키 집합 일치
-  3. 쓰기 공통 — 토큰 없음/불일치 401, ?t= 토큰 허용, 본문 오류·필드 누락 400,
-     Host 가 루프백이 아니면 403, 응답은 최신 state + ok
-  4. POST /api/check → 세트설정 `_웹체크` 저장/삭제, generated 갱신
-  5. POST /api/score → 기록.json 에 mode=수동 추가(일시 = date + 현재 시각, 세트명),
-     알 수 없는 norm·범위 밖 total 400, 오늘 슬롯 소진 반영
-  6. POST /api/review → 오답노트 완료 저장소(이해체크 전체 + 완료 일시), 해제, 없는 기록
-  6-2. POST /api/exam_date → 시험일 저장/지우기(웹에서도 프로그램과 똑같이), 형식·순서 오류 400
-  7. POST /api/action → 시험 중 start_exam/start_retry 오류, open_pdf 없음, show ok,
-     알 수 없는 action 400, action_fn 호출 인자
-  8. GET /api/report/<id> → 기록의 채점결과 HTML, 없는 id 404, 경로 탈출 차단
-  9. 동시 요청(스레드 30개) 전부 200, 포트 충돌 시 대체 포트, generated 는 상태
-     변경마다 반드시 달라짐(시험 시작/종료 토글 포함)
- 10. 기록 id 규칙(같은 분 두 건 유일·안정), 채점 기록 wrong_items 필수(빈 배열),
-     자동 업데이트 검증이 set_files 의 .html 을 받아들임
-"""
 import http.client
 import importlib.util
 import json
@@ -46,14 +24,10 @@ sj.RECORDS_PATH = os.path.join(sj.RECORDS_DIR, "기록.json")
 sj.SET_CONFIG_PATH = os.path.join(TMP, "세트설정.json")
 os.makedirs(sj.RECORDS_DIR, exist_ok=True)
 TODAY = date(2026, 9, 6)
-# 시험일은 사용자가 넣는 값이다(코드에 박혀 있지 않다). 픽스처는 2026-09-10 을
-# 넣어 D-7 = 9/3, D-1 = 9/9, 오늘(9/6) = D-4 가 되게 한다.
 EXAM_DATE = date(2026, 9, 10)
 WEEK_START, WEEK_END = date(2026, 9, 3), date(2026, 9, 9)
 REAL_HTML = os.path.join(os.path.dirname(BASE), "루틴.html")
-# 웹(루틴 v6) 쪽 /api/state 픽스처와 키 집합을 맞춰 보는 선택 검사 — 경로는 환경 변수로
 FIXTURE = os.environ.get("COCO_WEB_FIXTURE") or os.path.join(BASE, "fixture_state.json")
-
 
 def check(desc, cond, extra=""):
     global N
@@ -62,23 +36,16 @@ def check(desc, cond, extra=""):
     if not cond:
         raise AssertionError(f"{desc} {extra}")
 
-
 def wjson(path, data):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=1)
-
 
 def rjson(path):
     with open(path, encoding="utf-8") as f:
         return json.load(f)
 
-
-# ---------------------------------------------------------------------------
-# 픽스처: 세트 3개(PDF 있음/없음), 채점결과 JSON·HTML, 기록 5건(시험·부분연습·오답재풀이·같은 분 2건)
-# ---------------------------------------------------------------------------
 SETDIR = os.path.join(TMP, "모의고사")
 os.makedirs(os.path.join(SETDIR, "채점결과"), exist_ok=True)
-
 
 def mkset(name, pdf=True, key=True):
     prob = os.path.join(SETDIR, f"{name}_문제.xlsx")
@@ -94,12 +61,10 @@ def mkset(name, pdf=True, key=True):
             "key": os.path.join(SETDIR, f"{name}_기대값.json") if key else None,
             "pdf": pdfp}
 
-
 A = mkset("2024년 상공회의소 샘플 A형")
 B = mkset("2024년 상공회의소 샘플 B형")
 C = mkset("2026 컴활 2급 실기 상시 복원 기출 1회", pdf=False, key=False)
 SETS = [A, B, C]
-
 
 def mkresult(name, stamp, total, wrong, partial=False):
     base = os.path.join(SETDIR, "채점결과", f"채점결과_{name}_{stamp}")
@@ -119,10 +84,9 @@ def mkresult(name, stamp, total, wrong, partial=False):
         f.write(f"<!doctype html><html><body><h1>채점결과 {name} {total}점</h1></body></html>")
     return base + ".html"
 
-
 HTML_A = mkresult(A["name"], "20260905_1015", 58,
                   [("계산작업", "계산작업 1번", 8, "계산작업"),
-                   ("계산작업", "계산작업 2번", 8, None)])      # category None → 시트로 보완
+                   ("계산작업", "계산작업 2번", 8, None)])
 HTML_B = mkresult(B["name"], "20260906_1012", 72, [("계산작업", "계산작업 3번", 8, "계산작업")])
 HTML_B_RETRY = mkresult(B["name"], "20260906_1140", 8, [], partial=True)
 HTML_NOWRONG = mkresult(A["name"], "20260904_2100", 100, [])
@@ -130,7 +94,7 @@ RECORDS = [
     {"일시": "2026-09-04 21:00", "세트명": A["name"], "점수": 24, "소요시간": "12:00",
      "리포트": os.path.join(TMP, "없는리포트.html"), "mode": "부분연습", "영역": "계산작업"},
     {"일시": "2026-09-04 21:00", "세트명": A["name"] + " (연습)", "점수": None,
-     "소요시간": "01:00", "리포트": None, "mode": "부분연습", "영역": "계산작업"},   # 같은 분 두 번째(채점 실패)
+     "소요시간": "01:00", "리포트": None, "mode": "부분연습", "영역": "계산작업"},
     {"일시": "2026-09-05 10:15", "세트명": A["name"], "점수": 58, "소요시간": "39:10",
      "리포트": HTML_A, "mode": "시험", "day": "d03", "루틴": "2026-09"},
     {"일시": "2026-09-06 10:12", "세트명": B["name"], "점수": 72, "소요시간": "40:00",
@@ -142,7 +106,6 @@ wjson(sj.RECORDS_PATH, RECORDS)
 wjson(sj.SET_CONFIG_PATH, {"_설정": {"루틴자동열기": True, "자동업데이트": False,
                                    "시험일": EXAM_DATE.isoformat(), "시험일2": None},
                           "_웹체크": {"e01": True, "d00t1": True}})
-# 루틴 페이지: 실제 루틴.html 을 그대로 서빙 (없으면 더미)
 PAGE = os.path.join(TMP, "루틴.html")
 if os.path.isfile(REAL_HTML):
     shutil.copy2(REAL_HTML, PAGE)
@@ -153,14 +116,12 @@ else:
 ACTIONS = []
 EXAM = {"running": False}
 
-
 def action_fn(action, s, rec, norm, rid):
     ACTIONS.append((action, s["norm"] if s else None, rec["json"] if rec else None, norm, rid))
     if action == "start_exam":
         EXAM["running"] = True
         sj.routine_touch()
     return True, None
-
 
 CHANGES = []
 srv = sj.RoutineServer(sets_fn=lambda: SETS, action_fn=action_fn,
@@ -169,7 +130,6 @@ srv = sj.RoutineServer(sets_fn=lambda: SETS, action_fn=action_fn,
                        html_path=PAGE, today=TODAY)
 srv.start()
 PORT = srv.port
-
 
 def req(method, path, body=None, token=None, headers=None, host=None, raw=None):
     conn = http.client.HTTPConnection("127.0.0.1", PORT, timeout=10)
@@ -195,13 +155,9 @@ def req(method, path, body=None, token=None, headers=None, host=None, raw=None):
         j = None
     return resp.status, dict(resp.getheaders()), text, j
 
-
 TOK = srv.token
 print(f"서버: 127.0.0.1:{PORT} 페이지={'실제 루틴.html' if os.path.isfile(REAL_HTML) else '더미'}")
 
-# ---------------------------------------------------------------------------
-# 1. GET /
-# ---------------------------------------------------------------------------
 st, hd, page, _ = req("GET", f"/?t={TOK}")
 check("GET / 200 + text/html + no-store", st == 200 and hd.get("Content-Type", "").startswith("text/html")
       and hd.get("Cache-Control") == "no-store", f"{st} {hd.get('Content-Type')}")
@@ -228,18 +184,15 @@ check("favicon 204", st == 204)
 st, _h, _t, j = req("GET", "/없는경로")
 check("없는 경로 404 JSON", st == 404 and j and j.get("ok") is False)
 
-# ---------------------------------------------------------------------------
-# 2. GET /api/state 스키마
-# ---------------------------------------------------------------------------
 st, hd, text, S = req("GET", "/api/state")
 check("GET /api/state 200 + application/json; charset=utf-8 + no-store",
       st == 200 and hd.get("Content-Type") == "application/json; charset=utf-8" and hd.get("Cache-Control") == "no-store")
 check("JSON 은 ensure_ascii=False (한글 그대로)", "상공회의소" in text)
 TOP = {"version": str, "today": str, "generated": str, "exam_running": bool, "plan": dict,
        "sets": list, "records": list, "review": dict, "checks": dict, "settings": dict,
-       "corrections": list, "achievements": list,      # 2.6.0 이의제기 반영 · 도전 과제
-       "bands": list,                                   # 2.7.0 점수대 보드 요약
-       "exam": dict}                                    # 3.0.0 사용자 시험일
+       "corrections": list, "achievements": list,
+       "bands": list,
+       "exam": dict}
 check("최상위 필드·타입", all(isinstance(S.get(k), t) for k, t in TOP.items()), str({k: type(S.get(k)).__name__ for k in TOP}))
 check("version=3.0.0 · today=프로그램 기준(2026-09-06) · exam_running=false", S["version"] == "3.0.0" and S["today"] == "2026-09-06" and S["exam_running"] is False)
 check("exam: 사용자가 넣은 시험일 · D-day · 루틴 길이 7 · 시작일(D-7) · 기준/지난 시험일(3.1.0)",
@@ -264,10 +217,8 @@ check("generated 는 마이크로초 ISO 일시", len(S["generated"]) == 26 and 
 P = S["plan"]
 PLAN_KEYS = {"kind", "seg", "today", "start", "end", "seg_start", "reason", "warning", "remaining", "retry_target",
              "missed_days", "boost_days", "demoted", "days", "preview",
-             # 2.5.0 추가 (스키마 호환 — 기존 필드는 그대로)
              "level", "streak", "attempts_left", "today_locked", "passed_sets",
              "total_sets", "all_clear", "retry_queue",
-             # 3.0.0 추가 (사용자 시험일 기준 1주 · 보유 세트)
              "exam_dates", "exam_set", "dday", "no_sets", "routine_days"}
 check("plan 필드 전부", PLAN_KEYS <= set(P), str(PLAN_KEYS - set(P)))
 check("plan: week·seg 1·start 9/6(오늘)·end 9/9(D-1)·seg_start 9/3(D-7)", P["kind"] == "week" and P["seg"] == 1 and P["start"] == "2026-09-06"
@@ -340,9 +291,7 @@ check("9/6 C 첫 응시 → 9/7부터 A형(58)·B형(72) 번갈아 재응시 · 
       and all(sl["goal"] == 80 for v in by_date_slots.values() for sl in v)
       and len(by_date_slots["2026-09-09"]) == 1,
       str({k: [(sl["set"]["norm"], sl["goal"]) for sl in v] for k, v in by_date_slots.items()}))
-# sets
 SET_KEYS = {"name", "norm", "pdf", "key", "attempts", "best", "review_done", "retry_done",
-            # 2.7.0 점수대 보드
             "band", "scores", "last_date", "prev_best", "prev_band", "best_delta", "improved"}
 SS = {s["norm"]: s for s in S["sets"]}
 check("sets: 3개 · 필드 전부", len(S["sets"]) == 3 and all(set(s) == SET_KEYS for s in S["sets"]))
@@ -351,7 +300,6 @@ check("sets: A형 pdf true·key true·attempts 1(부분연습 제외)·best 58 /
       and SS[C["norm"]]["pdf"] is False and SS[C["norm"]]["key"] is False and SS[C["norm"]]["attempts"] == 0 and SS[C["norm"]]["best"] is None)
 check("sets: B형 attempts 1(부분연습·오답재풀이 제외)·best 72·retry_done true(이후 오답재풀이)", SS[B["norm"]]["attempts"] == 1
       and SS[B["norm"]]["best"] == 72 and SS[B["norm"]]["retry_done"] is True and SS[B["norm"]]["review_done"] is False, str(SS[B["norm"]]))
-# 2.7.0 점수대 보드 (sets[] 밴드 필드 + 최상위 bands 요약)
 check("sets 밴드: A형 58 → fail · B형 72 → pass · C 미응시 → none",
       (SS[A["norm"]]["band"], SS[B["norm"]]["band"], SS[C["norm"]]["band"])
       == ("fail", "pass", "none"),
@@ -383,9 +331,8 @@ check("bands·sets 는 score_board(순수 함수) 결과와 같다 (웹 폴백�
       sj.score_board(SETS, S["records"])["bands"] == S["bands"]
       and all(SS[r["norm"]]["band"] == r["band"] and SS[r["norm"]]["scores"] == r["scores"]
               for r in sj.score_board(SETS, S["records"])["sets"]))
-# records
 REC_KEYS = {"id", "date", "time", "set", "mode", "total", "pass_line", "passed", "report_html", "report_json", "sheets", "wrong_items",
-            "elapsed", "elapsed_sec"}   # 2.6.0: 소요시간(게임형 '40분 내 완주' 판정)
+            "elapsed", "elapsed_sec"}
 R = S["records"]
 check("records: 5건 전부(부분연습·오답재풀이 포함) · 필드 전부", len(R) == 5 and all(set(r) == REC_KEYS for r in R))
 ids = [r["id"] for r in R]
@@ -405,7 +352,6 @@ check("리포트 파일이 없는 기록: report_html/json null · sheets/wrong_
 check("' (연습)' 접미 기록: 세트명 정리 · total null · passed false", R[1]["set"]["name"] == A["name"] and R[1]["total"] is None and R[1]["passed"] is False)
 check("오답재풀이 기록: mode 오답재풀이 · 채점 기록이라 wrong_items [] 포함(오답 없음)", R[4]["mode"] == "오답재풀이" and R[4]["report_json"] and R[4]["wrong_items"] == [])
 check("B형 72점 기록 passed true", R[3]["passed"] is True)
-# review / checks / settings
 check("review: 채점 JSON 이 있는 기록마다 {done, when}", set(S["review"]) == {"20260905101500", "20260906101200", "20260906114000"}
       and all(set(v) == {"done", "when"} for v in S["review"].values()) and S["review"]["20260905101500"]["done"] is False)
 check("checks: _웹체크 그대로 · settings(자동 열기·자동 업데이트·시험일·스캔 폴더·숨긴 세트) 그대로",
@@ -423,9 +369,6 @@ if os.path.isfile(FIXTURE):
           and set(fday) == DAY_KEYS and set(fslot) <= set(all_slots[0]) and set(FX["sets"][0]) == SET_KEYS and set(FX["records"][0]) == REC_KEYS,
           str((set(FX) - set(S), set(FX["plan"]) ^ set(P))))
 
-# ---------------------------------------------------------------------------
-# 3. 쓰기 공통: 토큰·본문·Host
-# ---------------------------------------------------------------------------
 st, _h, _t, j = req("POST", "/api/check", {"key": "x", "value": True})
 check("토큰 없음 → 401 {ok:false,error}", st == 401 and j == {"ok": False, "error": "토큰 불일치"}, f"{st} {j}")
 st, _h, _t, j = req("POST", "/api/check", {"key": "x", "value": True}, token="wrong-token")
@@ -445,9 +388,6 @@ check("Host 가 루프백이 아니면 403 (DNS 리바인딩 방지)", st == 403
 st, _h, _t, j = req("GET", "/api/state", host=f"localhost:{PORT}")
 check("Host localhost 허용", st == 200 and j["today"] == "2026-09-06")
 
-# ---------------------------------------------------------------------------
-# 4. /api/check
-# ---------------------------------------------------------------------------
 g0 = req("GET", "/api/state")[3]["generated"]
 st, _h, _t, j = req("POST", "/api/check", {"key": "2026-09-06|quiz", "value": True}, token=TOK)
 cfg = rjson(sj.SET_CONFIG_PATH)
@@ -462,9 +402,6 @@ check("기존 체크(e01·d00t1·e02) 유지", cfg["_웹체크"] == {"e01": True
 st, _h, _t, j = req("POST", "/api/check", {"key": "", "value": True}, token=TOK)
 check("빈 key → 400", st == 400)
 
-# ---------------------------------------------------------------------------
-# 5. /api/score
-# ---------------------------------------------------------------------------
 before = len(rjson(sj.RECORDS_PATH))
 st, _h, _t, j = req("POST", "/api/score", {"date": "2026-09-06", "set": C["norm"], "total": 66}, token=TOK)
 recs = rjson(sj.RECORDS_PATH)
@@ -501,9 +438,6 @@ for body, why in (({"date": "2026-09-06", "set": "없는norm", "total": 50}, "�
     check(f"score 잘못된 요청({why}) → 400", st == 400 and j["ok"] is False, f"{st} {j}")
 check("잘못된 요청은 기록에 안 남음", len(rjson(sj.RECORDS_PATH)) == before + 1)
 
-# ---------------------------------------------------------------------------
-# 6. /api/review
-# ---------------------------------------------------------------------------
 st, _h, _t, j = req("POST", "/api/review", {"record_id": "20260905101500", "done": True}, token=TOK)
 cfg = rjson(sj.SET_CONFIG_PATH)
 rv = cfg[A["norm"]]["오답연습"]
@@ -516,7 +450,6 @@ check("프로그램 쪽 load_review_state 로도 같은 체크가 보임", sj.lo
 st, _h, _t, j = req("POST", "/api/review", {"record_id": "20260905101500", "done": False}, token=TOK)
 rv = rjson(sj.SET_CONFIG_PATH)[A["norm"]]["오답연습"]
 check("review done:false → 체크·완료 해제", j["ok"] and rv["이해체크"][jn] == [] and jn not in rv["완료"] and j["review"]["20260905101500"]["done"] is False)
-# 프로그램 오답노트 창 경로: 전체 체크 → 완료, 하나 풀면 해제
 sj.record_review_state(A["norm"], jn, {0, 1}, sj.SET_CONFIG_PATH, total=2)
 d1 = req("GET", "/api/state")[3]["review"]["20260905101500"]
 sj.record_review_state(A["norm"], jn, {0}, sj.SET_CONFIG_PATH, total=2)
@@ -529,9 +462,6 @@ check("채점 JSON 없는 기록 → 200 ok:false", st == 200 and j["ok"] is Fal
 st, _h, _t, j = req("POST", "/api/review", {"done": True}, token=TOK)
 check("record_id 누락 → 400", st == 400)
 
-# ---------------------------------------------------------------------------
-# 6-2. /api/exam_date (v3.0.0) — 웹에서도 시험일을 바꿀 수 있어야 한다
-# ---------------------------------------------------------------------------
 g_ex = S3["generated"] if "S3" in dir() else None
 st, _h, _t, j = req("POST", "/api/exam_date",
                     {"date": "2026-09-12", "date2": "2026-09-13"}, token=TOK)
@@ -561,7 +491,6 @@ for body, why in (({"date": "2026-13-45"}, "달·일 범위 밖"),
                   ({"date": "2026-09-12", "date2": "x"}, "2차 형식 오류")):
     st, _h, _t, j = req("POST", "/api/exam_date", body, token=TOK)
     check(f"exam_date 400: {why}", st == 400 and j["ok"] is False, str(j))
-# v3.1.0: 목록 형식 (여러 개 추가·개별 제거·0개)
 st, _h, _t, j = req("POST", "/api/exam_date",
                     {"dates": ["2026-09-20", "2026-09-12", "2026-09-12"]},
                     token=TOK)
@@ -597,9 +526,6 @@ check("date2 생략 가능(2차 없음) · 원래 시험일로 되돌림",
 st, _h, _t, j = req("POST", "/api/exam_date", {"date": "2026-09-12"})
 check("토큰 없으면 401", st == 401 and j["ok"] is False)
 
-# ---------------------------------------------------------------------------
-# 7. /api/action
-# ---------------------------------------------------------------------------
 ACTIONS.clear()
 st, _h, _t, j = req("POST", "/api/action", {"action": "show", "set": None, "record_id": None}, token=TOK)
 check("show → ok:true + state · action_fn(show) 호출", st == 200 and j["ok"] and ACTIONS == [("show", None, None, None, None)], str(ACTIONS))
@@ -615,7 +541,6 @@ st, _h, _t, j = req("POST", "/api/action", {"action": "open_report", "set": None
 check("open_report: 리포트 없는 기록 → ok:false", st == 200 and j["ok"] is False)
 st, _h, _t, j = req("POST", "/api/action", {"action": "start_exam", "set": "없는norm", "record_id": None}, token=TOK)
 check("알 수 없는 세트 → ok:false", st == 200 and j == {"ok": False, "error": "알 수 없는 세트"})
-# v2.7.0: 오늘 이미 응시한 세트(B형 72)도 잠기지 않는다 — 점수 갱신용 재응시
 st, _h, _t, j = req("POST", "/api/action", {"action": "start_exam", "set": B["norm"], "record_id": None}, token=TOK)
 check("오늘 이미 응시한 세트도 start_exam ok:true (응시 제한 없음 — 점수 갱신)",
       st == 200 and j["ok"] is True and ACTIONS[-1][:2] == ("start_exam", B["norm"]), str(ACTIONS[-1]))
@@ -642,15 +567,11 @@ EXAM["running"] = False
 sj.routine_touch()
 st, _h, _t, S3 = req("GET", "/api/state")
 check("시험 종료(exam_running 토글)도 generated 갱신", S3["exam_running"] is False and S3["generated"] > j["generated"])
-# action_fn 이 (False, 사유) → ok:false
 srv.action_fn = lambda *a: (False, "세트를 찾을 수 없습니다")
 st, _h, _t, j = req("POST", "/api/action", {"action": "open_review", "set": A["norm"], "record_id": None}, token=TOK)
 check("프로그램 동작이 실패를 돌려주면 ok:false + 사유", j == {"ok": False, "error": "세트를 찾을 수 없습니다"})
 srv.action_fn = action_fn
 
-# ---------------------------------------------------------------------------
-# 8. /api/report/<id>
-# ---------------------------------------------------------------------------
 st, hd, text, _ = req("GET", "/api/report/20260905101500")
 check("report: 기록의 채점결과 HTML 그대로(text/html)", st == 200 and hd.get("Content-Type", "").startswith("text/html") and "채점결과" in text and "58점" in text)
 st, _h, _t, j = req("GET", "/api/report/20260904210000")
@@ -663,12 +584,8 @@ for bad in ("../비밀.html", "..%2F비밀.html", "%2e%2e/비밀.html", "/etc/pa
     st, _h, text, _ = req("GET", "/api/report/" + bad)
     check(f"report 경로 탈출 차단({bad}) → 404", st == 404 and "비밀" not in text, f"{st}")
 
-# ---------------------------------------------------------------------------
-# 9. 동시 요청 · 포트 충돌 · generated
-# ---------------------------------------------------------------------------
 results = []
 lock = threading.Lock()
-
 
 def worker(i):
     try:
@@ -683,7 +600,6 @@ def worker(i):
     except Exception as e:
         with lock:
             results.append(str(e))
-
 
 ths = [threading.Thread(target=worker, args=(i,)) for i in range(30)]
 [t.start() for t in ths]
@@ -701,7 +617,6 @@ gens = set()
 for _ in range(20):
     gens.add(sj.routine_touch())
 check("routine_touch 20회 연속 호출 → 전부 다른 값(단조 증가)", len(gens) == 20 and sorted(gens) == sorted(gens))
-# 파일이 GUI 밖에서 바뀌어도(grade.py·손 편집) generated 갱신
 g_before = req("GET", "/api/state")[3]["generated"]
 time.sleep(0.02)
 recs = rjson(sj.RECORDS_PATH)
@@ -715,9 +630,6 @@ check("시작 로그: 서버 시작·요청 요약(경로·상태)만 기록, /a
       "루틴 서버 시작: http://127.0.0.1:" in log and "POST /api/check → 200" in log and "POST /api/check → 401" in log
       and "GET /api/state → 200" not in log and "GET /api/state → 403" in log and srv.stats["state"] > 10, str(srv.stats))
 
-# ---------------------------------------------------------------------------
-# 10. 순수 함수·업데이트 검증
-# ---------------------------------------------------------------------------
 ids2 = [i for i, _r in sj.records_with_ids([{"일시": "2026-09-06 10:12"}, {"일시": "2026-09-06 10:12"}, {"일시": "2026-09-06 10:12:36"}, {"일시": "?"}, {"일시": "2026-09-06T10:12"}])]
 check("records_with_ids: 초 없음 '00', 중복 순번, 초 있음 그대로, 깨진 일시는 순번 id, T 구분자 허용",
       ids2 == ["20260906101200", "20260906101201", "20260906101236", "00000000000003", "20260906101202"], str(ids2))

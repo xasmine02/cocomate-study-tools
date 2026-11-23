@@ -1,24 +1,4 @@
 # -*- coding: utf-8 -*-
-"""시험장.py v3.2.0 — 우측 상단 타이머 · 다중 모니터 배치 헤드리스 테스트.
-
-화면(display)도 tkinter 도 Windows API 도 없는 환경에서 돌아갑니다. GUI 를
-띄우지 않고 검증할 수 있도록 기능을 두 층으로 나눠 두었고, 여기서는 그
-**순수 계산 층**과 **방어선**을 확인합니다.
-
-  1. 모니터 목록 정규화 — 0/1/2/3대, 정렬, 주 모니터 기본값, 깨진 항목 버리기
-  2. 사람이 읽는 이름표 ('모니터 2 (2560×1440, 오른쪽)')
-  3. 설정 UI 노출 기준 (2대 이상일 때만) · 기본 선택
-  4. 타이머 위치 계산 — 우측 상단 기준, 저장된 자리 복원, 화면 밖이면 되돌리기
-  5. 설정 저장·읽기 (세트설정.json `_설정`) 왕복
-  6. 창 배치용 좌표 계산 · 새로 뜬 창 고르기
-  7. 플랫폼이 Windows 가 아니면 안전하게 비활성화
-  8. Windows API 가 실패해도 예외가 새어 나오지 않음 (가짜 ctypes 로 강제)
-  9. GUI 층 구조 — 오버레이 정리 경로·설정 창 칸이 코드에 있는지 (ast)
- 10. 기존 시간 경고 규칙(색·ALERTS)을 오버레이가 다시 정의하지 않음
-
-GUI 가 실제로 어떻게 보이고 Excel 창이 옮겨지는지는 이 테스트로 알 수 없습니다
-— Windows PC 에서 직접 확인해야 합니다.
-"""
 import ast
 import importlib.util
 import inspect
@@ -40,7 +20,6 @@ sj.SET_CONFIG_PATH = os.path.join(TMP, "세트설정.json")
 sj.STARTUP_LOG_PATH = os.path.join(TMP, "시작로그.txt")
 sj.ERROR_LOG_PATH = os.path.join(TMP, "오류.log")
 
-
 def check(desc, cond, extra=""):
     global N
     N += 1
@@ -49,7 +28,6 @@ def check(desc, cond, extra=""):
     if not cond:
         raise AssertionError(f"{desc} {extra}")
 
-
 def cfg():
     try:
         with io.open(sj.SET_CONFIG_PATH, encoding="utf-8") as f:
@@ -57,27 +35,21 @@ def cfg():
     except Exception:
         return {}
 
-
 def reset_cfg(data=None):
     with io.open(sj.SET_CONFIG_PATH, "w", encoding="utf-8") as f:
         json.dump(data if data is not None else {}, f, ensure_ascii=False)
 
-
 def raw(left, top, w, h, primary=False, taskbar=0):
-    """가짜 모니터 한 대 (작업 표시줄만큼 작업영역을 줄인다)."""
     return {"rect": (left, top, left + w, top + h),
             "work": (left, top, left + w, top + h - taskbar),
             "primary": primary}
-
 
 reset_cfg()
 
 check("버전 3.2.0 이상", tuple(int(x) for x in sj.__version__.split(".")) >= (3, 2, 0),
       sj.__version__)
 
-# ---------------------------------------------------------------------------
 print("1. 모니터 목록 정규화 (0/1/2/3대)")
-# ---------------------------------------------------------------------------
 check("모니터 0대 → 빈 목록", sj.normalize_monitors([]) == [])
 check("None 이어도 빈 목록", sj.normalize_monitors(None) == [])
 
@@ -88,7 +60,6 @@ check("1대: 폭·높이는 rcMonitor 기준", (one[0]["width"], one[0]["height"
 check("1대: 작업영역은 rcWork (작업 표시줄 제외)", one[0]["work"] == (0, 0, 1920, 1040))
 check("1대: 위치 낱말 없음 (고를 것이 없음)", one[0]["position"] == "")
 
-# 주 모니터가 오른쪽에 있고, 보조가 왼쪽 음수 좌표에 있는 흔한 배치
 two = sj.normalize_monitors([raw(0, 0, 1920, 1080, primary=True, taskbar=40),
                              raw(-2560, 0, 2560, 1440)])
 check("모니터 2대: 왼→오 정렬 (음수 좌표 보조가 먼저)",
@@ -123,11 +94,11 @@ check("주 모니터 표식이 하나도 없으면 첫 번째를 주 모니터�
                              raw(1920, 0, 1920, 1080)])[0]["primary"] is True)
 
 junk = sj.normalize_monitors([
-    {"rect": (0, 0, 1920, 1080), "primary": True},       # work 없음 → rect 로
-    {"rect": (10, 10, 5, 5)},                            # 폭/높이 0 이하 → 버림
-    {"rect": ("a", "b", "c", "d")},                      # 숫자 아님 → 버림
-    {"work": (0, 0, 100, 100)},                          # rect 없음 → 버림
-    "모니터",                                             # dict 아님 → 버림
+    {"rect": (0, 0, 1920, 1080), "primary": True},
+    {"rect": (10, 10, 5, 5)},
+    {"rect": ("a", "b", "c", "d")},
+    {"work": (0, 0, 100, 100)},
+    "모니터",
     None,
 ])
 check("깨진 항목은 버리고 성한 것만 남김", len(junk) == 1)
@@ -135,9 +106,7 @@ check("work 가 없으면 rect 로 채움", junk[0]["work"] == junk[0]["rect"])
 
 check("rect_size", sj.rect_size((-100, 50, 1820, 1130)) == (1920, 1080))
 
-# ---------------------------------------------------------------------------
 print("2. 사람이 읽는 이름표")
-# ---------------------------------------------------------------------------
 check("이름표 번호는 1부터 · 주 모니터 · 해상도 · 위치",
       one[0]["label"] == "모니터 1 (주 모니터, 1920×1080)", one[0]["label"])
 check("2대 이름표 (보조)", two[0]["label"] == "모니터 1 (2560×1440, 왼쪽)",
@@ -147,9 +116,7 @@ check("2대 이름표 (주 모니터)",
 check("이름표는 모두 서로 다름 (콤보 상자에서 구분 가능)",
       len({m["label"] for m in three}) == 3)
 
-# ---------------------------------------------------------------------------
 print("3. 설정 UI 노출 기준 · 기본 선택")
-# ---------------------------------------------------------------------------
 check("모니터 0대 → UI 숨김", sj.monitor_ui_visible([]) is False)
 check("모니터 1대 → UI 숨김 (고를 것이 없음)", sj.monitor_ui_visible(one) is False)
 check("모니터 2대 → UI 노출", sj.monitor_ui_visible(two) is True)
@@ -180,9 +147,7 @@ check("primary_monitor: 표식 없으면 첫 번째",
       sj.primary_monitor([{"rect": (0, 0, 1, 1)}])["rect"] == (0, 0, 1, 1))
 check("primary_monitor: 빈 목록이면 None", sj.primary_monitor([]) is None)
 
-# ---------------------------------------------------------------------------
 print("4. 타이머 위치 계산 (우측 상단 · 저장된 자리 복원)")
-# ---------------------------------------------------------------------------
 SIZE = (200, 100)
 check("우측 상단: x = 오른쪽 - 폭 - 여백, y = 위 + 여백",
       sj.overlay_top_right((0, 0, 1920, 1040), SIZE, 16) == (1704, 16))
@@ -233,9 +198,7 @@ check("clamp: 오른쪽 아래로 넘긴 경우 주 모니터 작업영역 끝",
 check("clamp: 모니터를 모르면 손댄 자리 그대로",
       sj.clamp_overlay_position(7, 9, [], SIZE) == (7, 9))
 
-# ---------------------------------------------------------------------------
 print("5. 설정 저장·읽기 (세트설정.json `_설정`)")
-# ---------------------------------------------------------------------------
 reset_cfg()
 check("타이머 오버레이 기본값은 켜짐", sj.timer_overlay_enabled() is True)
 check("끄면 False 로 저장", sj.set_timer_overlay_enabled(False) is False
@@ -301,7 +264,6 @@ check("기본값으로 되돌리기", sj.clear_monitor_assignment()
       and sj.MONITOR_PDF_SETTING not in cfg().get("_설정", {}))
 check("되돌린 뒤 해석하면 기본 배치", sj.resolve_monitor_assignment(two) == d2)
 
-# 설정이 통째로 깨져도 죽지 않는다
 reset_cfg({"_설정": "망가짐"})
 check("_설정 이 dict 가 아니어도 기본값으로 읽힘",
       sj.timer_overlay_enabled() is True and sj.saved_overlay_pos() is None
@@ -313,9 +275,7 @@ check("세트설정.json 이 깨져도 기본값",
       and sj.resolve_monitor_assignment(two) == d2)
 reset_cfg()
 
-# ---------------------------------------------------------------------------
 print("6. 창 배치용 좌표 계산 · 새로 뜬 창 고르기")
-# ---------------------------------------------------------------------------
 check("창 배치 좌표 = 작업영역 (작업 표시줄 제외)",
       sj.window_rect_for_monitor(two[1]) == (0, 0, 1920, 1040))
 check("창 배치 좌표: 보조 모니터 (음수 좌표)",
@@ -333,9 +293,7 @@ check("새 창이 없으면 빈 목록", sj.pick_new_windows([1, 2], [2, 1]) == 
 check("before 가 비면 전부 새 창", sj.pick_new_windows([], [4, 5]) == [4, 5])
 check("None 이어도 죽지 않음", sj.pick_new_windows(None, None) == [])
 
-# ---------------------------------------------------------------------------
 print("7. 플랫폼이 Windows 가 아니면 안전하게 비활성화")
-# ---------------------------------------------------------------------------
 check("여기는 Windows 가 아님 (테스트 전제)", sys.platform != "win32", sys.platform)
 check("monitors_supported() False", sj.monitors_supported() is False)
 check("모니터 열거는 빈 목록", sj.enum_monitors_raw() == [])
@@ -360,17 +318,12 @@ check("Excel 배치는 우리가 띄운 프로세스를 먼저 대조한다",
 check("프로세스를 모르면 맨 앞 창 하나만 — 남이 열어 둔 통합 문서는 그대로",
       "[:1]" in _place_src)
 
-# ---------------------------------------------------------------------------
 print("8. Windows API 가 실패해도 예외가 새어 나오지 않음")
-# ---------------------------------------------------------------------------
-
 
 class _Boom:
-    """무엇을 건드려도 터지는 가짜 user32 (API 실패 재현)."""
 
     def __getattr__(self, name):
         raise OSError(f"가짜 실패: {name}")
-
 
 fake_ctypes = types.ModuleType("ctypes")
 fake_ctypes.windll = _Boom()
@@ -402,7 +355,7 @@ finally:
     sys.platform = real_platform
     if real_ctypes is not None:
         sys.modules["ctypes"] = real_ctypes
-    else:                                          # pragma: no cover
+    else:
         sys.modules.pop("ctypes", None)
 check("실패는 삼키지 않고 오류 로그에 남긴다 (조용히 죽지는 않음)",
       os.path.isfile(sj.ERROR_LOG_PATH)
@@ -410,23 +363,18 @@ check("실패는 삼키지 않고 오류 로그에 남긴다 (조용히 죽지�
 check("가짜 ctypes 를 되돌린 뒤 정상 동작", sj.monitors_supported() is False
       and sj.list_monitors() == [])
 
-# 이 환경에는 tkinter 가 없을 수 있다 — 그래도 import 단계에서 죽지 않았다
 check("tkinter 가 없어도 모듈이 그대로 import 됨 (HAS_TK 로만 갈라짐)",
       isinstance(sj.HAS_TK, bool))
 
-# ---------------------------------------------------------------------------
 print("9. GUI 층 구조 (ast — 화면 없이 확인할 수 있는 만큼)")
-# ---------------------------------------------------------------------------
 tree = ast.parse(io.open(SOURCE, encoding="utf-8").read())
 classes = {}
-
 
 def walk(node):
     for child in ast.iter_child_nodes(node):
         if isinstance(child, ast.ClassDef):
             classes[child.name] = child
         walk(child)
-
 
 walk(tree)
 check("TimerOverlay 클래스가 있다", "TimerOverlay" in classes)
@@ -501,9 +449,7 @@ check("항목 문구에 무엇을 띄우는지 적혀 있다",
       "문제지" in row_texts[0] and "Excel" in row_texts[1]
       and "타이머" in row_texts[2], str(row_texts))
 
-# ---------------------------------------------------------------------------
 print("10. 기존 시간 경고 규칙을 오버레이가 다시 정의하지 않음")
-# ---------------------------------------------------------------------------
 color_src = ast.unparse(next(n for n in timer.body
                              if isinstance(n, ast.FunctionDef)
                              and n.name == "_color"))

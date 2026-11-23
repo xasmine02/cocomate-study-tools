@@ -1,109 +1,5 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""
-코코 시험장 — 컴활 2급 실기 모의고사 런처
-
-시작 화면에서 모의고사 세트를 고르고 [시험 시작]을 누르면
-문제 파일 사본이 Excel로 열리고 타이머가 시작됩니다.
-제출하면 grade.py로 자동 채점해 점수와 리포트를 보여 줍니다.
-오늘의 학습(적응형 일정, 시험일 기준 1주 D-7~D-1): 하루 한 세트 40분 완주 →
-채점까지가 오늘 클리어(오답노트·오답 재풀이·함수 퀴즈는 선택). 응시 횟수 제한은
-없고(예습·복습 자유), 목표는 70 → 80 → 90 → 100 단계로 올라갑니다.
-시험일은 첫 실행 때 입력하고 언제든 바꿀 수 있으며, 무엇을 푸는지는 사용자가
-학습 폴더에 넣은 문제·정답 파일(세트)로 정해집니다.
-
-v2.2.1: Excel 실행 강화 — Windows에서 EXCEL.EXE를 직접 찾아 실행하고 5초 뒤
-프로세스를 확인해 안 떴으면 재열기 안내, 타이머 [풀이 파일 열기], 시작 로그
-(채점결과/시험장_시작로그.txt), 문제지 PDF 회차 검증, 시작·재시작 안정화.
-v2.2.2: 세트 기대값 JSON 퍼지 연결 — 파일명 키가 달라도 연도·회차 토큰이 같은
-'*기대값*.json'을 문제지 PDF와 같은 규칙(유일할 때만)으로 세트에 연결.
-v2.3.0: 완전 자동 업데이트 — 실행할 때마다 백그라운드로 version.json을 확인해
-새 버전이면 묻지 않고 내려받아 검증(sha256·py_compile·json)·백업·적용하고
-자동 재시작(시험 중이면 종료 후). 기대값 JSON(data_files)은 루트/기대값/에
-자동 배포·갱신되고 세트에 자동 연결. 세트설정 `_설정.자동업데이트` 토글.
-v2.3.1: 세트 인식 전면 수정 — 일정 슬롯↔세트를 전역 유일 배정(연도 충돌은 슬롯
-전체 토큰 기준, 정확 > 식별 > 부분 일치, 한 세트는 한 슬롯, 동점은 미배정+사유),
-문제 파일 내용(SHA-256)이 같은 세트 병합, 문제지 PDF·기대값 JSON 전역 유일 연결,
-세트 토큰 없는 PDF는 진단에서 '무관'으로 접음. 코코 모의고사 1·2회 세트 파일
-(xlsx·pdf)을 version.json `set_files`로 루트/모의고사/에 자동 배포.
-v2.4.0: 루틴 웹 연동 — 프로그램 안에 로컬 HTTP 서버(127.0.0.1:8765, 사용 중이면
-빈 포트)를 띄워 루틴 페이지(시험장/루틴.html, 자동 업데이트로 갱신)를
-서빙하고, 규약(문서/연동_API.md v2.4.1)대로 일정·세트·기록·오답노트·체크 상태를
-/api/state 로 내보내며 체크·수동 점수·오답노트 완료·시험 시작 등 쓰기 요청을
-받습니다(세션 토큰). [루틴 열기] 버튼·`_설정.루틴자동열기`·단계 가이드
-[웹에서 퀴즈 풀기]. 채점 결과는 클립보드 복사 대신 루틴 페이지에 자동 반영.
-v2.5.0: 루틴 간소화 — ① 하루 1세트(= 시험 모드 하루 1회 제한, 오늘 응시했으면
-[시험 시작] 잠금 + 자정까지 남은 시간 표시. 오답 재풀이·부분 연습은 제한 없음).
-주말 2세트·밀림 승격·용량 계산·전 세트 완주 보장·'선택' 강등 경고는 폐지하고
-"남은 응시 기회 N회"로 표시. ② 목표 사다리 70 → 80 → 90 → 100: 현재 목표는
-아직 달성하지 못한 가장 낮은 단계(전체 기록 최고점 기준, 100 달성이면 만점).
-③ 세트 선택 = 미응시 → 70점 미만(최고점 낮은 순) → 현재 목표 미달(최고점 낮은
-순) → 전부 목표 이상이면 그 날은 자유 복습(빈 슬롯). ④ 하루 클리어 = 완주 +
-채점(점수는 조건 아님), 오답노트·오답 재풀이·함수 퀴즈는 선택 단계. ⑤ 연동
-규약에 level·streak·attempts_left·today_locked 추가(스키마 호환).
-v2.6.0: ① 이의제기 자동 반영 — 채점할 때마다 기록에 채점 근거(채점기 버전 ·
-문제/정답/기대값 파일 sha256 · 풀이 파일 경로)를 함께 저장하고, 실행할 때마다
-백그라운드에서 "채점기가 올라갔거나 정답·문제·기대값 파일이 바뀐" 지난 기록을
-찾아 `풀이_*.xlsm` 사본으로 **자동으로 다시 채점**한다(사용자 조작 없음).
-점수가 바뀌면 원점수를 `정정이력` 에 보관하고 새 리포트를 저장한 뒤 시작
-화면에 "이의제기 반영: … 86 → 95점" 띠를 띄운다. 풀이 파일이 없어 다시 채점할
-수 없는 기록은 업데이트로 배포되는 `정정/점수정정.json`(data_files) 으로 점수만
-정정한다. 정정된 점수로 목표 단계·연속 응시·합격 세트 수·일정 배정·웹
-진행률이 다시 계산되고, 규약에 `corrections` 가 추가됐다.
-v2.7.0: ① 응시 제한 폐지 — 하루 1회 잠금(2.5.0)을 완전히 없앴다. 예습·복습을
-위해 하루에 몇 번이든, 어떤 세트든 시험 모드를 시작할 수 있다. 일정의 "오늘
-배정"은 강제가 아니라 **오늘 추천 세트**이고, `attempts_left` 는 "남은 응시
-기회"가 아니라 **남은 학습일**을 뜻한다(`today_locked` 는 하위 호환용으로
-언제나 false). 연속 응시(`streak`)는 그대로 — 같은 날 여러 번 응시해도 1일.
-② 점수대 세트 보드 — 세트마다 최고점·응시 횟수·마지막 응시일·점수 이력·밴드
-배지를 보여 주고 밴드(미응시·미달·합격·숙련·고득점·만점)별로 묶어 "아직 목표에
-못 미친 세트"를 한눈에 보게 했다. 보드에서 세트를 골라 [이 세트 응시]로 바로
-다시 풀 수 있고(오늘 배정과 무관), 최고점이 오르면 "최고 58 → 76 (+18)" 처럼
-갱신과 밴드 이동을 표시한다. 규약 `sets[]` 에 `band`·`last_date`·`scores`·
-`prev_best`·`best_delta`·`improved`·`prev_band` 가, 최상위에 `bands` 요약이
-추가됐다(프로그램·웹 공통 순수 함수 `score_band`).
-v2.7.2: ① 정정 데이터 가산점 — `정정/점수정정.json` 항목에 `delta` 가 생겼다.
-`new_total` 은 총점을 그 값으로 못박지만, 문제지 쪽 결함처럼 **채점기가 알 수
-없는 사유**를 못박아 두면 다음 재채점이 덮어써 인정한 점수가 날아간다. `delta`
-는 채점 결과 **위에** 얹는 가산점이라 채점기가 올라가도 유지된다. 지금 점수에
-얹힌 가산점은 기록의 `정정가산키` 에 남아 중복 가산을 막는다. ② 리포트에 적힌
-시각의 초가 기록과 어긋나도 같은 '분' 의 기록이 하나뿐이면 찾아서 반영한다.
-③ 채점기 2.0.6 동봉(테두리 표기 기준·제작 메모 제외·VBA 읽기 수정).
-v3.0.0: 배포판 — ① **시험일을 사용자가 입력**한다(세트설정 `_설정.시험일`,
-2차 시험일은 선택). 코드에 박혀 있던 시험일은 전부 없앴다. ② 일정은 2주 고정
-일정표 대신 **시험일 기준 1주(D-7 ~ D-1)**. 7일이 안 남았으면 뒤에서부터 잘라
-배정하고(D-3에 설치했으면 D-3·D-2·D-1만), 7일보다 많이 남았으면 D-7 전은 자유
-연습, 시험일이 지났으면 "시험일을 다시 설정하세요" 안내. ③ **고정 세트 슬롯
-폐지** — 무엇을 푸는지는 사용자가 학습 폴더에 넣은 문제·정답 파일로 정해진다
-(첫 응시는 이름순, 그다음은 70점 미만 → 현재 목표 미달 → 보유 세트 순환 재응시).
-세트가 하나도 없으면 넣는 방법을 안내한다.
-v3.1.0: 배포 설치 후 나온 요청 반영. ① **자동 업데이트를 첫 실행 때 묻는다** —
-동의/거절 두 갈래이고, 거절하면 `_설정.자동업데이트=false` 로 끈다(프로그램은
-그대로 돌고 [업데이트 확인]은 계속 쓸 수 있다). 창을 닫으면 거절로 본다.
-② **스캔 폴더를 화면에서 바꾼다**(`_설정.스캔폴더`) — 설치 폴더 위쪽을 통째로
-훑어 원치 않는 세트가 잡히던 문제. ③ **세트 숨기기**(`_설정.숨긴세트`) — 목록·
-일정·점수대 보드에서 빼되 파일도 기록도 지우지 않는다. ④ **시험일을 목록으로**
-다루어 추가·제거한다(0개면 자유 연습, 여러 개면 가장 가까운 미래 시험일 기준).
-⑤ 루틴 웹으로 가는 길을 시작 화면에서 분명히 하고, 서버가 안 떴으면 이유와
-대안을 알린다.
-v3.2.0: 시험장 환경 재현 — ① **우측 상단 타이머**. 시험이 시작되면 실제
-시험장처럼 화면 우측 상단에 테두리 없는 작은 창이 떠서 남은 시간을 크게,
-세트명을 작게 보여 준다. 마우스로 끌어 옮길 수 있고 그 자리를
-`_설정.타이머오버레이위치` 에 저장해 다음 응시 때 복원한다. 시간 경고 색은
-타이머 창이 이미 쓰던 규칙(10분 호박·5분 빨강)을 그대로 쓰고, 제출·중단·시간
-종료 어느 쪽으로 끝나도 반드시 닫힌다. `_설정.타이머오버레이=false` 로 끈다.
-② **다중 모니터 배치**. 모니터가 2대 이상일 때만 [설정]에 칸이 생겨(1대면
-조용히 숨김) 문제지(PDF)·Excel·타이머를 어느 화면에 띄울지 고른다
-(`_설정.문제지모니터`·`엑셀모니터`·`타이머모니터`). 시험을 시작하면 Excel 본
-창(창 클래스 XLMAIN)을 고른 모니터의 작업영역으로 옮겨 최대화하고, 문제지는
-무엇으로 열릴지 알 수 없어 새로 뜬 창을 잠시 지켜보다 옮긴다 — 못 잡으면
-억지로 옮기지 않고 한 줄만 안내한다. 모니터 열거·창 배치는 Windows 에서만
-`ctypes` 로 하고, 실패하면 조용히 배치 없이 예전과 똑같이 진행된다. 좌표
-계산·이름표·설정 읽기/쓰기는 Windows API 와 분리한 순수 함수라 헤드리스로
-검증한다(시험장/모니터타이머테스트.py).
-
-의존성: Python 표준 라이브러리 + tkinter (채점은 grade.py/openpyxl 필요)
-"""
 
 __version__ = "3.2.1"
 
@@ -132,12 +28,8 @@ try:
 except ImportError:
     HAS_TK = False
 
-# ---------------------------------------------------------------------------
-# 상수 / 브랜딩
-# ---------------------------------------------------------------------------
-
 APP_TITLE = "코코 시험장"
-BRAND = "#107C41"        # 코코 그린
+BRAND = "#107C41"
 BRAND_DARK = "#0B5D31"
 BRAND_SOFT = "#E3F2E8"
 AMBER = "#B45309"
@@ -158,11 +50,9 @@ RECORDS_PATH = os.path.join(RECORDS_DIR, "기록.json")
 _OLD_RECORDS_PATH = os.path.join(BASE_DIR, "기록.json")
 ERROR_LOG_PATH = os.path.join(RECORDS_DIR, "시험장_오류.log")
 STARTUP_LOG_PATH = os.path.join(RECORDS_DIR, "시험장_시작로그.txt")
-STARTUP_LOG_KEEP = 200          # 시작 로그 최근 줄 수
-
+STARTUP_LOG_KEEP = 200
 
 def _ensure_records_home():
-    """기록.json 보관 폴더 생성 + 구버전 위치의 기록 자동 이전."""
     try:
         os.makedirs(RECORDS_DIR, exist_ok=True)
         if os.path.isfile(_OLD_RECORDS_PATH) \
@@ -171,17 +61,9 @@ def _ensure_records_home():
     except OSError:
         pass
 
-_LOG_LOCK = threading.RLock()    # 시작 로그 읽고-쓰기 (루틴 서버 스레드와 공유)
-
+_LOG_LOCK = threading.RLock()
 
 def startup_log(message, path=None, keep=STARTUP_LOG_KEEP):
-    """시작 로그 1줄 append (채점결과/시험장_시작로그.txt, 최근 keep줄 유지).
-
-    프로그램 시작·세트 선택·사본 생성·Excel/PDF 실행·예외처럼 "무슨 일이
-    있었는지"를 pythonw(콘솔 없음)에서도 남깁니다. 실패는 조용히 무시.
-    여러 스레드(루틴 서버 동시 요청)가 같이 써도 줄이 사라지지 않도록
-    읽기-쓰기 전체를 잠급니다. 반환: 기록한 한 줄.
-    """
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = f"[{stamp}] {__version__} " + str(message).replace("\n", " | ")
     p = path or STARTUP_LOG_PATH
@@ -199,9 +81,7 @@ def startup_log(message, path=None, keep=STARTUP_LOG_KEEP):
         pass
     return line
 
-
 def read_startup_log(path=None):
-    """시작 로그 전체 텍스트 (없으면 안내문)."""
     p = path or STARTUP_LOG_PATH
     try:
         with open(p, encoding="utf-8", errors="replace") as f:
@@ -212,12 +92,7 @@ def read_startup_log(path=None):
             f"{datetime.now().strftime('%Y-%m-%d %H:%M')}\n파일: {p}\n")
     return head + "\n" + (body or "(아직 기록이 없습니다)")
 
-
 def log_error(context, exc=None, path=None):
-    """오류를 채점결과/시험장_오류.log에 append (pythonw에서도 흔적 보존).
-
-    exc: 예외 객체 또는 (type, value, tb). 반환: 기록한 텍스트.
-    """
     import traceback
     if isinstance(exc, tuple) and len(exc) == 3:
         detail = "".join(traceback.format_exception(*exc))
@@ -237,33 +112,23 @@ def log_error(context, exc=None, path=None):
             f.write(text + "-" * 60 + "\n")
     except Exception:
         pass
-    if path is None:   # 시작 로그에도 한 줄 요약 (흐름 추적용)
+    if path is None:
         last = detail.strip().splitlines()[-1] if detail.strip() else ""
         startup_log(f"예외: {context}" + (f" — {last}" if last else ""))
     return text
 
-
 UI_FONT = ("Malgun Gothic", 10)
 UI_FONT_BOLD = ("Malgun Gothic", 10, "bold")
 DIGIT_FONT = ("Consolas", 44, "bold")
-OVERLAY_DIGIT_FONT = ("Consolas", 26, "bold")   # 우측 상단 타이머 오버레이
+OVERLAY_DIGIT_FONT = ("Consolas", 26, "bold")
 
 PROBLEM_RE = re.compile(r"^(?P<name>.+)_문제\.(?P<ext>xlsx|xlsm)$", re.IGNORECASE)
 
-
-# ---------------------------------------------------------------------------
-# 헤드리스 로직 (GUI 없이 테스트 가능)
-# ---------------------------------------------------------------------------
-
-
 def default_scan_root():
-    """기본 스캔 경로: 시험장.py가 있는 폴더의 상위 폴더."""
     parent = os.path.dirname(BASE_DIR)
     return parent if parent else BASE_DIR
 
-
 def find_grade_py(user_path=None):
-    """grade.py 탐색: 같은 폴더 -> ../채점/ -> 사용자 지정."""
     candidates = [
         os.path.join(BASE_DIR, "grade.py"),
         os.path.join(os.path.dirname(BASE_DIR), "채점", "grade.py"),
@@ -275,33 +140,21 @@ def find_grade_py(user_path=None):
             return os.path.abspath(c)
     return None
 
-
 SET_CONFIG_PATH = os.path.join(BASE_DIR, "세트설정.json")
-EXPECTED_DIR_NAME = "기대값"      # 자동 배포되는 세트별 기대값 JSON 폴더
+EXPECTED_DIR_NAME = "기대값"
 
-# 세트 스캔 범위·숨김 (v3.1.0) — 세트설정.json `_설정`
-#   스캔폴더: 세트를 찾을 폴더. 없으면 default_scan_root()(= 시험장.py 상위 폴더).
-#   숨긴세트: 목록·일정·점수대 보드에서 뺄 세트의 정규화 키 목록. 파일도 기록도
-#            지우지 않고 화면에서만 뺀다 — 다시 보이게 하면 그대로 돌아온다.
 SCAN_ROOT_SETTING = "스캔폴더"
 HIDDEN_SETS_SETTING = "숨긴세트"
 
-# 루틴 웹 연동 서버 (v2.4.0, 규약: 문서/연동_API.md v2.4.1)
-ROUTINE_API_VERSION = "3.0.0"          # /api/state 의 version (규약 버전)
-ROUTINE_HTML_NAME = "루틴.html"        # 시험장 폴더의 루틴 페이지 파일
-ROUTINE_DATA_KEY = "시험장/루틴.html"   # version.json set_files 키 (자동 업데이트)
+ROUTINE_API_VERSION = "3.0.0"
+ROUTINE_HTML_NAME = "루틴.html"
+ROUTINE_DATA_KEY = "시험장/루틴.html"
 ROUTINE_PORT_DEFAULT = 8765
-ROUTINE_PORT_SETTING = "루틴포트"        # 세트설정 _설정: 실제로 쓴 포트
-ROUTINE_AUTO_OPEN_SETTING = "루틴자동열기"   # 세트설정 _설정: 시작 시 브라우저 열기
-WEB_CHECKS_KEY = "_웹체크"              # 세트설정: 웹 체크 상태 {키: true}
-
+ROUTINE_PORT_SETTING = "루틴포트"
+ROUTINE_AUTO_OPEN_SETTING = "루틴자동열기"
+WEB_CHECKS_KEY = "_웹체크"
 
 def expected_values_dir(base_dir=None):
-    """자동 업데이트로 내려받는 기대값 JSON 폴더.
-
-    설치 구조가 <루트>/시험장/시험장.py + <루트>/채점/grade.py 이면
-    <루트>/기대값/, 한 폴더에 전부 있는 평면 구조면 <시험장 폴더>/기대값/.
-    """
     base_dir = base_dir or BASE_DIR
     root = os.path.dirname(base_dir)
     if os.path.basename(base_dir) == "시험장" \
@@ -309,13 +162,7 @@ def expected_values_dir(base_dir=None):
         return os.path.join(root, EXPECTED_DIR_NAME)
     return os.path.join(base_dir, EXPECTED_DIR_NAME)
 
-
 def key_link_label(s):
-    """세트 정보 패널용 기대값 표시: '파일명', '파일명 (자동 연결)', '없음'.
-
-    세트 폴더 안의 정확 키(같은 정규화 키) 파일만 기본 연결로 보고, 그 밖의
-    위치(루트/기대값 폴더·다른 폴더)나 토큰 일치로 연결된 파일은 '(자동 연결)'.
-    """
     key = s.get("key")
     if not key:
         return "없음"
@@ -324,23 +171,17 @@ def key_link_label(s):
            and norm_set_key(key) == (s.get("norm") or ""))
     return os.path.basename(key) + ("" if own else " (자동 연결)")
 
-
 _ROLE_TOKENS_STRIP = ("문제지", "기대값", "정답지", "답안지", "정답", "답안",
                       "문제")
 
-
 def norm_set_key(name):
-    """파일명 -> 세트 식별 키: 소문자화, 공백/언더스코어/괄호/구분자 제거,
-    역할 토큰(문제/정답/답안/문제지/기대값) 제거."""
     s = os.path.splitext(os.path.basename(str(name)))[0].lower()
     s = re.sub(r"[\s_\-()\[\]{}.,·~]+", "", s)
     for tok in _ROLE_TOKENS_STRIP:
         s = s.replace(tok, "")
     return s
 
-
 def file_role(name):
-    """파일명에서 역할 판별: 'answer' / 'problem' / None."""
     base = os.path.splitext(os.path.basename(str(name)))[0]
     if "정답" in base or "답안" in base:
         return "answer"
@@ -348,17 +189,13 @@ def file_role(name):
         return "problem"
     return None
 
-
 def display_name(problem_path):
-    """문제 파일명에서 세트 표시명 (뒤쪽 '문제'/'(문제)' 토큰 제거)."""
     stem = os.path.splitext(os.path.basename(str(problem_path)))[0]
     stem = re.sub(r"[\s_\-]*[(\[]?\s*문제(지)?\s*[)\]]?[\s_\-]*$", "",
                   stem).strip(" _-")
     return stem or os.path.splitext(os.path.basename(str(problem_path)))[0]
 
-
 def set_tokens(text):
-    """세트 식별 토큰: 연도(20xx), N회, A/B/가/나형, N급, 키워드."""
     s = str(text).lower()
     toks = set()
     for m in re.finditer(r"20\d{2}", s):
@@ -369,7 +206,7 @@ def set_tokens(text):
         toks.add(f"{m.group(1)}형")
     for m in re.finditer(r"([1-9])\s*급", s):
         toks.add(f"{m.group(1)}급")
-    for m in re.finditer(r"(?<!\d)(2[0-9])(?!\d)", s):   # 2자리 연도 '24'
+    for m in re.finditer(r"(?<!\d)(2[0-9])(?!\d)", s):
         toks.add(m.group(1))
     for word in ("상시", "코코", "모의", "복원", "기출", "실기", "필기",
                  "드릴", "계산", "컴활"):
@@ -377,15 +214,12 @@ def set_tokens(text):
             toks.add(word)
     return toks
 
-
 _YEAR4_RE = re.compile(r"20\d{2}")
 _YEAR2_RE = re.compile(r"2\d")
 _ROUND_RE = re.compile(r"\d{1,2}회")
 _FORM_RE = re.compile(r"[ab가나]형")
 
-
 def _year_tokens(toks):
-    """연도 토큰을 4자리로 정규화한 집합 ('24' → '2024', '2026' 그대로)."""
     out = set()
     for t in toks:
         if _YEAR4_RE.fullmatch(t):
@@ -394,17 +228,10 @@ def _year_tokens(toks):
             out.add("20" + t)
     return out
 
-
 def _is_year_token(t):
     return bool(_YEAR4_RE.fullmatch(t) or _YEAR2_RE.fullmatch(t))
 
-
 def _token_conflict(a, b):
-    """연도/회차/형 토큰이 양쪽 모두에 있는데 서로 다르면 충돌.
-
-    연도는 2자리('24')와 4자리('2024')를 같은 해로 봅니다(v2.3.1) — '24 2급
-    상시' 슬롯이나 '24_2급상시_문제지.pdf'가 2026 세트에 붙지 않도록.
-    """
     ya, yb = _year_tokens(a), _year_tokens(b)
     if ya and yb and not (ya & yb):
         return True
@@ -415,28 +242,17 @@ def _token_conflict(a, b):
             return True
     return False
 
-
 def _shared_count(a, b):
-    """겹치는 토큰 수 — 연도는 정규화해 같은 해면 1개로 셉니다."""
     non_year = {t for t in a & b if not _is_year_token(t)}
     return len(non_year) + len(_year_tokens(a) & _year_tokens(b))
 
-
 def _numeric_shared(a, b):
-    """겹치는 연도(정규화)·회차·형 토큰 수 — 동점 가르기용."""
     n = len(_year_tokens(a) & _year_tokens(b))
     n += len({t for t in a
               if _ROUND_RE.fullmatch(t) or _FORM_RE.fullmatch(t)} & b)
     return n
 
-
 def _pdf_score(toks, pt, name=""):
-    """세트 토큰과 파일(문제지 PDF·기대값 JSON) 토큰의 일치 점수.
-
-    회차·형·연도(2자리 포함) 충돌이면 0. 연도만 겹치는 파일은 파일명에
-    '문제'/'기대값'이 있을 때만 후보(v2.3.1) — '아이모2026_발표.pdf' 같은
-    무관한 문서가 연도 하나로 세트에 붙지 않도록.
-    """
     if _token_conflict(toks, pt):
         return 0
     shared = _shared_count(toks, pt)
@@ -445,16 +261,7 @@ def _pdf_score(toks, pt, name=""):
         return 0
     return shared
 
-
 def match_pdf_for_set(toks, pdf_paths, others=()):
-    """토큰 우선순위 매칭으로 유일한 문제지 PDF 찾기. 복수/0개면 None.
-
-    others: 다른 세트들의 토큰 집합 목록. PDF가 다른 세트와 같은 점수로
-    맞으면(예: '2024 상시 문제지.pdf'가 상시 1회·2회 모두에 맞음) 어느
-    세트의 문제지인지 알 수 없으므로 연결하지 않습니다.
-    (직접 선택 세트처럼 세트 목록이 없을 때 쓰는 단일 세트용 — 스캔 세트
-    전체는 link_files_globally가 전역 유일 연결을 합니다.)
-    """
     scored = []
     for p in pdf_paths:
         name = os.path.basename(p)
@@ -463,7 +270,7 @@ def match_pdf_for_set(toks, pdf_paths, others=()):
         if shared < 1:
             continue
         if any(_pdf_score(ot, pt, name) >= shared for ot in others):
-            continue           # 다른 세트에도 똑같이 맞는 애매한 PDF
+            continue
         scored.append((shared, p))
     if not scored:
         return None
@@ -471,15 +278,7 @@ def match_pdf_for_set(toks, pdf_paths, others=()):
     matched = [p for s, p in scored if s == best]
     return matched[0] if len(matched) == 1 else None
 
-
 def _file_link_score(st, path):
-    """세트 토큰 ↔ 파일 점수 튜플 (겹침 수, 연도·회차·형 겹침 수, 파일 토큰이
-    세트 토큰에 다 들어가는지). 후보가 아니면 None.
-
-    겹침이 1개뿐이면 파일 토큰이 세트 토큰에 모두 포함될 때만 후보 —
-    '코코모의고사1회_기대값.json'이 '1회' 하나로 2024 기출 1회 세트에 붙지 않도록
-    ('2024_문제지.pdf' ↔ '2024 A형'처럼 파일 쪽 토큰이 더 적은 경우는 허용).
-    """
     name = os.path.basename(path)
     pt = set_tokens(name)
     shared = _pdf_score(st, pt, name)
@@ -490,29 +289,14 @@ def _file_link_score(st, path):
         return None
     return (shared, _numeric_shared(st, pt), contained)
 
-
 def link_files_globally(sets, paths, field, origin=None, tokens_of=None,
                         cands_of=None):
-    """세트 ↔ 파일(문제지 PDF 또는 기대값 JSON) 전역 유일 연결 (v2.3.1).
-
-    각 파일은 최대 한 세트, 각 세트는 최대 한 파일. field가 이미 있는 세트와
-    이미 쓰인 파일은 후보에서 빠집니다. 점수(겹치는 토큰 수 → 그중 연도·회차·형
-    수 → 파일 토큰이 세트 토큰의 부분집합인지)가 높은 짝부터 배정하고,
-    - 어떤 파일에 다른 세트(문제지가 이미 있는 세트 포함)가 더 높은 점수로
-      맞으면 그 파일은 그 세트의 것으로 보고 낮은 세트에는 붙이지 않습니다.
-    - 같은 점수로 두 후보가 남으면(동점) 연결하지 않고 세트에
-      s[field + "_tie"] = "파일명 ↔ 경쟁 세트" 사유를 남깁니다(진단 표시).
-    origin이 있으면 연결된 세트에 s[field + "_origin"] = origin.
-    cands_of(세트) → 그 세트의 후보 경로 목록(기본: paths 전부) — 같은 이름의
-    기대값이 여러 폴더에 있을 때 세트 폴더 사본을 고르는 데 씁니다.
-    """
     tokens_of = tokens_of or _set_tokens_of
     used = {os.path.abspath(s[field]) for s in sets if s.get(field)}
     cands = [p for p in paths if os.path.abspath(p) not in used]
     if not cands:
         return
     toks = {id(s): tokens_of(s) for s in sets}
-    # 파일별 최고 점수(문제지가 있는 세트 포함) — 더 잘 맞는 세트가 있으면 제외
     best_any = {}
     for s in sets:
         for p in cands:
@@ -560,13 +344,9 @@ def link_files_globally(sets, paths, field, origin=None, tokens_of=None,
         taken_sets.add(id(s))
         taken_paths.add(p)
 
-
 _CFG_DICT_KEYS = ("_슬롯매핑", "_진행", "_자동선택", "_설정", WEB_CHECKS_KEY)
 
-
 def normalize_set_config(data):
-    """세트설정.json 내용을 방어적으로 정규화: 최상위는 dict, 세트 항목과
-    '_슬롯매핑/_진행/_자동선택/_설정'은 dict만 남김(깨진 항목은 버림)."""
     if not isinstance(data, dict):
         return {}
     out = {}
@@ -579,15 +359,11 @@ def normalize_set_config(data):
             out[k] = v
     return out
 
-
 def _cfg_section(cfg, key):
-    """설정의 하위 dict (없거나 dict가 아니면 빈 dict)."""
     v = (cfg or {}).get(key)
     return v if isinstance(v, dict) else {}
 
-
-_FILE_LOCK = threading.RLock()   # 세트설정·기록 파일 읽기/쓰기 (루틴 서버 스레드와 공유)
-
+_FILE_LOCK = threading.RLock()
 
 def load_set_config(path=SET_CONFIG_PATH):
     try:
@@ -597,25 +373,18 @@ def load_set_config(path=SET_CONFIG_PATH):
         return {}
     return normalize_set_config(data)
 
-
 def save_set_config(config, path=SET_CONFIG_PATH):
     try:
         with _FILE_LOCK, open(path, "w", encoding="utf-8") as f:
             json.dump(config, f, ensure_ascii=False, indent=2)
-        routine_touch()          # 루틴 페이지가 다시 그리도록 상태 표식 갱신
+        routine_touch()
         return True
     except OSError:
         return False
 
-
-# --- 상태 변경 표식 (루틴 웹 연동 /api/state 의 generated) ---
 _ROUTINE_GEN = {"value": None, "lock": threading.Lock()}
 
-
 def routine_touch():
-    """상태가 바뀔 때마다 호출 — /api/state 의 `generated` 를 반드시 다른 값으로
-    갱신합니다(마이크로초 ISO 일시, 같은 마이크로초면 1µs 올림). 세트설정·기록
-    저장 함수와 시험 시작/종료에서 호출합니다. 반환: 새 표식."""
     with _ROUTINE_GEN["lock"]:
         now = datetime.now()
         prev = _ROUTINE_GEN["value"]
@@ -629,16 +398,12 @@ def routine_touch():
         _ROUTINE_GEN["value"] = now.isoformat(timespec="microseconds")
         return _ROUTINE_GEN["value"]
 
-
 def routine_generated():
-    """현재 상태 표식 (없으면 지금 만들어 반환)."""
     with _ROUTINE_GEN["lock"]:
         v = _ROUTINE_GEN["value"]
     return v if v is not None else routine_touch()
 
-
 def remember_set(s, path=SET_CONFIG_PATH):
-    """세트 구성을 세트설정.json에 저장 (정규화 키 기준, 기존 항목과 병합)."""
     cfg = load_set_config(path)
     key = s.get("norm") or norm_set_key(s["problem"])
     ent = cfg.setdefault(key, {})
@@ -650,22 +415,15 @@ def remember_set(s, path=SET_CONFIG_PATH):
         "pdf": os.path.abspath(s["pdf"]) if s.get("pdf") else None,
     })
     if s.get("pdf") and s.get("pdf_확인됨"):
-        ent["pdf_확인됨"] = True      # 회차가 달라도 사용자가 확인한 연결
+        ent["pdf_확인됨"] = True
     else:
         ent.pop("pdf_확인됨", None)
     return save_set_config(cfg, path)
 
-
 PDF_MISMATCH_WARNING = ("⚠ 문제지 회차가 세트와 다릅니다 — [문제지 연결]로 "
                         "바로잡으세요")
 
-
 def pdf_conflicts_with_set(s, pdf=None):
-    """연결(저장)된 문제지 PDF의 회차·형·연도 토큰이 세트와 충돌하는지.
-
-    예: '2024년 상시2회' 세트에 '…상시1회 문제지.pdf' → True.
-    토큰이 없는 PDF(예: 'aaa.pdf')는 충돌로 보지 않습니다.
-    """
     pdf = pdf or s.get("pdf")
     if not pdf:
         return False
@@ -675,10 +433,7 @@ def pdf_conflicts_with_set(s, pdf=None):
     except Exception:
         return False
 
-
 def _attach_saved_pdf(s, pdf, confirmed, origin):
-    """저장된 PDF 연결을 세트에 반영 — 회차 충돌이면 무시하고 로그+경고 표시.
-    사용자가 [문제지 연결]에서 확인한 연결(pdf_확인됨)은 그대로 존중."""
     if not (isinstance(pdf, str) and pdf and os.path.isfile(pdf)):
         return False
     if not confirmed and pdf_conflicts_with_set(s, pdf):
@@ -692,10 +447,7 @@ def _attach_saved_pdf(s, pdf, confirmed, origin):
         s["pdf_확인됨"] = True
     return True
 
-
 def apply_set_config(sets, config):
-    """저장된 세트 구성 반영. 사라진 경로·깨진 항목·회차가 다른 PDF는 무시.
-    병합된 중복 세트(s["중복"])의 키로 저장된 항목은 대표 세트에 반영합니다."""
     by_key = {}
     for s in sets:
         for d in s.get("중복") or []:
@@ -735,9 +487,7 @@ def apply_set_config(sets, config):
             sets.append(s)
     return sets
 
-
 def _is_under(path, root):
-    """path가 root 폴더(또는 그 하위)에 있는가."""
     try:
         return os.path.commonpath([os.path.abspath(path),
                                    os.path.abspath(root)]) == \
@@ -745,11 +495,7 @@ def _is_under(path, root):
     except ValueError:
         return False
 
-
 def _dedupe_keys_by_name(paths, set_dir, key_dirs):
-    """같은 파일명의 기대값이 여러 폴더에 있으면(세트 폴더 사본 + 루트/기대값
-    배포본 등) 우선순위가 높은 하나만 남깁니다 — 동점 후보로 취급되어
-    연결이 막히지 않도록. 우선순위: 세트 폴더 → 기대값 폴더 → 그 밖(경로순)."""
     by_name = {}
     for p in paths:
         by_name.setdefault(os.path.basename(p), []).append(p)
@@ -761,10 +507,7 @@ def _dedupe_keys_by_name(paths, set_dir, key_dirs):
             out.append(_pick_exact_key(group, set_dir, key_dirs)[0])
     return out
 
-
 def _pick_exact_key(cands, set_dir, key_dirs):
-    """같은 정규화 키의 기대값 후보 중 우선순위: 세트 폴더 → 루트/기대값
-    폴더 → 그 밖(경로순). 반환: (경로, 출처 문구) 또는 (None, None)."""
     if not cands:
         return None, None
     own = [p for p in cands if os.path.dirname(p) == set_dir]
@@ -776,9 +519,7 @@ def _pick_exact_key(cands, set_dir, key_dirs):
         return sorted(in_kd)[0], "기대값 폴더"
     return sorted(cands)[0], "다른 폴더"
 
-
 def _dir_depth(path, root=None):
-    """폴더 깊이(루트 기준 경로 요소 수). 루트가 없거나 밖이면 절대 경로 기준."""
     try:
         rel = os.path.relpath(os.path.abspath(path), os.path.abspath(root)) \
             if root else os.path.abspath(path)
@@ -786,23 +527,11 @@ def _dir_depth(path, root=None):
         rel = os.path.abspath(path)
     return len([p for p in rel.replace("\\", "/").split("/") if p not in ("", ".")])
 
-
 def _dup_entry(s):
     return {k: s.get(k) for k in ("name", "norm", "dir", "problem", "answer",
                                   "pdf", "key")}
 
-
 def merge_duplicate_sets(sets, root=None):
-    """문제 파일 내용이 같은 세트를 하나로 병합 (v2.3.1).
-
-    사용자가 세트를 복사·개명해 두 폴더에 둔 경우(예: '상시기출2회(문제).xlsm'
-    과 '2024년 기출문제 유형 2회(문제).xlsm')를 한 세트로 봅니다. 크기가 같은
-    문제 파일끼리만 SHA-256을 계산해 같으면 중복. 대표: 같은 키의 문제지
-    PDF·기대값이 붙은 쪽 → 폴더가 얕은 쪽 → 이름순. 나머지는 대표의
-    s["중복"] 목록({name, norm, dir, problem, answer, pdf, key})에 남아
-    토큰(슬롯·PDF·기대값 매칭)과 진단 표시에 쓰이고, 중복 쪽에만 있던
-    문제지·기대값은 대표가 넘겨받습니다. 반환: 병합된 세트 목록.
-    """
     by_size = {}
     for s in sets:
         try:
@@ -836,10 +565,7 @@ def merge_duplicate_sets(sets, root=None):
                 drop.add(id(d))
     return [s for s in sets if id(s) not in drop]
 
-
 def similar_named_sets(sets):
-    """내용은 다른데 이름이 비슷한 세트 짝 [(세트A, 세트B, 공통 토큰)] —
-    회차/형 토큰을 공유하고 충돌 없이 토큰이 2개 이상 겹치는 경우(진단 안내용)."""
     out = []
     for i, a in enumerate(sets):
         ta = _set_tokens_of(a)
@@ -854,26 +580,7 @@ def similar_named_sets(sets):
                 out.append((a, b, sorted(common)))
     return out
 
-
 def scan_sets(root, config=None, key_dirs=None):
-    """느슨한 세트 그룹핑 스캔.
-
-    xlsx/xlsm/pdf/기대값 json을 정규화 키로 묶고, 파일명 토큰으로
-    문제/정답 역할을 판별합니다. 같은 키에 PDF가 없으면 토큰 퍼지
-    매칭으로 문제지 PDF를 연결합니다. '풀이_' 파일과 '채점결과' 폴더
-    제외. 반환: [{"name","norm","dir","problem","answer","key","pdf"}]
-
-    기대값 JSON 연결 우선순위(v2.3.0): ① 세트 폴더 안의 정확 키 파일
-    ② 루트/기대값/(key_dirs, 자동 업데이트로 배포됨)의 정확 키 파일
-    ③ 스캔 루트 어디든 정확 키 파일 ④ 연도·회차·형 토큰이 충돌 없이
-    유일하게 맞는 파일(문제지 PDF와 같은 규칙). 출처는 s["key_origin"].
-    key_dirs가 스캔 루트 밖이어도 그 폴더의 기대값 JSON은 후보에 넣습니다.
-
-    v2.3.1: 문제 파일 내용이 같은 세트는 하나로 병합(merge_duplicate_sets,
-    s["중복"]), 같은 키가 없는 문제지 PDF·기대값 JSON은 link_files_globally로
-    전역 유일 연결(각 파일 한 세트, 각 세트 한 파일, 동점은 s["pdf_tie"]/
-    s["key_tie"] 사유만 남김).
-    """
     sets = []
     all_pdfs = []
     all_keys = []
@@ -914,7 +621,7 @@ def scan_sets(root, config=None, key_dirs=None):
                            and d != "채점결과"]
             for fn in sorted(filenames):
                 add_file(dirpath, fn)
-    for kd in key_dirs:      # 스캔 루트 밖의 기대값 폴더도 후보에 포함
+    for kd in key_dirs:
         if not os.path.isdir(kd) or (root and _is_under(kd, root)):
             continue
         for fn in sorted(os.listdir(kd)):
@@ -926,13 +633,11 @@ def scan_sets(root, config=None, key_dirs=None):
         answer = sorted(answers)[0] if answers else None
         problem = sorted(problems)[0] if problems else None
         if not problem and answer and len(g["excel"]) == 2:
-            # 정답 토큰만 있는 2파일 세트 -> 나머지를 문제로 추정
             problem = next(p for p in g["excel"] if p != answer)
         if not (problem and answer) or problem == answer:
             continue
         set_dir = os.path.dirname(problem)
         key, origin = _pick_exact_key(g["json"], set_dir, key_dirs)
-        # 같은 키 PDF가 여럿이면 세트 폴더 안의 것 우선
         pdfs = sorted(g["pdf"], key=lambda p: (os.path.dirname(p) != set_dir, p))
         sets.append({
             "name": display_name(problem), "norm": k,
@@ -940,19 +645,13 @@ def scan_sets(root, config=None, key_dirs=None):
             "problem": problem, "answer": answer,
             "key": key, "key_origin": origin,
             "pdf": pdfs[0] if pdfs else None,
-            "pdf_사본": pdfs[1:],        # 같은 키의 다른 사본(진단 표시용)
+            "pdf_사본": pdfs[1:],
         })
-    # 문제 파일 내용이 같은 세트 병합 (대표가 토큰·문제지·기대값을 넘겨받음)
     sets = merge_duplicate_sets(sets, root)
-    # 같은 키 PDF가 없는 세트: 토큰 전역 유일 연결 (이미 연결된 파일과 같은
-    # 이름의 다른 사본은 후보에서 제외)
     used_pdf_names = {os.path.basename(s["pdf"]) for s in sets if s.get("pdf")}
     link_files_globally(
         sets, [p for p in all_pdfs if os.path.basename(p) not in used_pdf_names],
         "pdf")
-    # 같은 키 기대값 JSON이 없는 세트: 같은 규칙 — 예: '2026_1회_기대값.json'
-    # ↔ '2026 … 1회_문제.xlsm'. 같은 이름의 기대값이 여러 폴더에 있으면 세트
-    # 폴더 → 기대값 폴더 순으로 하나만 후보에 둡니다.
     used_k = {os.path.abspath(s["key"]) for s in sets if s.get("key")}
     used_k_names = {os.path.basename(s["key"]) for s in sets if s.get("key")}
     free_keys = [p for p in all_keys if os.path.abspath(p) not in used_k
@@ -964,14 +663,7 @@ def scan_sets(root, config=None, key_dirs=None):
     sets.sort(key=lambda s: s["name"])
     return sets
 
-
 def build_direct_set(problem, answer, pdf=None, key_dirs=None):
-    """직접 선택한 문제/정답(+문제지)으로 세트 구성 (기대값/문제지 자동 감지).
-
-    기대값 JSON: 문제 파일 폴더의 정확 키 → 루트/기대값 폴더(key_dirs)의
-    정확 키 → 두 곳의 후보 중 토큰(연도·회차·형)이 2개 이상 겹치고 유일한
-    파일 순으로 연결합니다.
-    """
     d = os.path.dirname(os.path.abspath(problem))
     k = norm_set_key(problem)
     key = None
@@ -1006,11 +698,9 @@ def build_direct_set(problem, answer, pdf=None, key_dirs=None):
                 continue
             if norm_set_key(fn) == k and key is None:
                 key, origin = os.path.join(kd, fn), "기대값 폴더"
-            elif fn not in have:      # 세트 폴더에 같은 이름이 있으면 그쪽 우선
+            elif fn not in have:
                 key_cands.append(os.path.join(kd, fn))
     if key is None and key_cands:
-        # 같은 키가 없으면 토큰(연도·회차·형) 퍼지 매칭 — 유일하고 토큰이
-        # 2개 이상(예: 2026·1회) 겹칠 때만 (직접 선택은 다른 세트 정보가 없음)
         toks = set_tokens(display_name(problem)) | set_tokens(os.path.basename(d))
         cand = match_pdf_for_set(toks, key_cands)
         if cand and _pdf_score(toks, set_tokens(os.path.basename(cand))) >= 2:
@@ -1023,10 +713,7 @@ def build_direct_set(problem, answer, pdf=None, key_dirs=None):
         "pdf": os.path.abspath(pdf) if pdf else auto_pdf,
     }
 
-
 def _coerce_score(v):
-    """점수 값 정규화: 숫자 → 그대로, 숫자 문자열("85", "85.0", "85점") →
-    숫자, 그 외(None, "채점 실패", bool …) → None."""
     if isinstance(v, bool):
         return None
     if isinstance(v, (int, float)):
@@ -1038,14 +725,7 @@ def _coerce_score(v):
             return int(f) if f.is_integer() else f
     return None
 
-
 def normalize_record(r):
-    """기록 1건을 현재 스키마로 방어적 정규화. dict가 아니면 None.
-
-    구버전(v1.x) 기록에는 mode/day/루틴 키가 없고(=시험 모드로 취급),
-    손으로 고친 파일에는 점수가 문자열이거나 세트명이 빠져 있을 수
-    있습니다 — 어느 경우에도 죽지 않고 읽을 수 있는 만큼만 살립니다.
-    """
     if not isinstance(r, dict):
         return None
     out = dict(r)
@@ -1064,13 +744,7 @@ def normalize_record(r):
             out[k] = str(out[k])
     return out
 
-
 def normalize_records(data):
-    """기록.json 내용(어떤 형태든) → 정규화된 기록 리스트.
-
-    리스트가 정상 형태. dict면 {"기록": [...]} 또는 {세트명: 기록dict}로
-    간주해 최대한 살립니다.
-    """
     if isinstance(data, dict):
         inner = next((data[k] for k in ("기록", "records", "items")
                       if isinstance(data.get(k), list)), None)
@@ -1093,9 +767,7 @@ def normalize_records(data):
             out.append(n)
     return out
 
-
 def load_records(path=RECORDS_PATH):
-    """기록.json 로드 (없음/깨짐/옛 스키마여도 절대 예외 없이 리스트 반환)."""
     if path == RECORDS_PATH:
         _ensure_records_home()
     try:
@@ -1109,9 +781,7 @@ def load_records(path=RECORDS_PATH):
         log_error("기록.json 정규화", e)
         return []
 
-
 def _backup_corrupt_json(path):
-    """파싱 불가한 JSON을 덮어쓰기 전에 .corrupt-<일시> 사본으로 보존."""
     try:
         if os.path.isfile(path) and os.path.getsize(path) > 0:
             with open(path, encoding="utf-8-sig") as f:
@@ -1124,9 +794,7 @@ def _backup_corrupt_json(path):
         except OSError:
             pass
 
-
 def append_record(record, path=RECORDS_PATH):
-    """기록.json에 응시 기록 1건 추가. 전체 목록 반환."""
     if path == RECORDS_PATH:
         _ensure_records_home()
     with _FILE_LOCK:
@@ -1138,11 +806,7 @@ def append_record(record, path=RECORDS_PATH):
     routine_touch()
     return records
 
-
 def records_summary(records):
-    """세트별 최고점과 최근 3회 점수 (부분 연습·오답 재풀이 기록은 제외).
-
-    {세트명: {"best":.., "recent":[..]}}"""
     by = {}
     for r in records:
         if r.get("mode") in ("부분연습", "오답재풀이"):
@@ -1158,28 +822,14 @@ def records_summary(records):
         }
     return out
 
-
-# --- 매크로 보존 사본 생성 (xlsx -> xlsm ZIP 변환 + MotW 제거) ---
-
 XLSX_MAIN_CT = ("application/vnd.openxmlformats-officedocument."
                 "spreadsheetml.sheet.main+xml")
 XLSM_MAIN_CT = "application/vnd.ms-excel.sheet.macroEnabled.main+xml"
 
-
 CONTENT_TYPES_NAME = "[Content_Types].xml"
 ZIP_FLAG_DATA_DESCRIPTOR = 0x08
 
-
 def convert_xlsx_to_xlsm(src, dst):
-    """xlsx -> xlsm ZIP 수준 변환.
-
-    [Content_Types].xml의 워크북 메인 파트 content-type만 교체하고 그 외
-    모든 파트는 바이트 무손실 복사 (openpyxl 재저장 없음 — 서식·차트 보존).
-    항목마다 새 ZipInfo(이름·날짜·DEFLATED)로 깨끗하게 다시 씁니다 —
-    원본 ZipInfo를 재사용하면 data descriptor 비트(0x08)·extra 필드 같은
-    Office가 싫어하는 흔적이 그대로 전파될 수 있습니다. [Content_Types].xml은
-    항상 첫 항목, 디렉터리·중복 항목은 버립니다.
-    """
     import zipfile
     with zipfile.ZipFile(src) as zin:
         items = [i for i in zin.infolist() if not i.is_dir()]
@@ -1209,14 +859,7 @@ def convert_xlsx_to_xlsm(src, dst):
                 zout.writestr(info, data)
     return dst
 
-
 def verify_xlsm_copy(path, load_openpyxl=True):
-    """변환된 사본 검증. (통과 여부, 설명) 반환.
-
-    zipfile.testzip 통과 + [Content_Types].xml이 첫 항목 + 어떤 항목에도
-    data descriptor 비트(0x08) 없음 + 매크로 content-type 포함 + (있으면)
-    openpyxl 로드.
-    """
     import zipfile
     try:
         with zipfile.ZipFile(path) as zf:
@@ -1247,17 +890,13 @@ def verify_xlsm_copy(path, load_openpyxl=True):
             return False, f"openpyxl 로드 실패: {e}"
     return True, note
 
-
 def _strip_motw(path):
-    """Mark-of-the-Web(Zone.Identifier ADS) 제거 시도 — 실패는 조용히 무시."""
     try:
         os.remove(path + ":Zone.Identifier")
     except OSError:
         pass
 
-
 def _unique_stem(d, stem):
-    """같은 이름의 .xlsm/.xlsx 사본과 겹치지 않는 경로 어간."""
     cand = os.path.join(d, stem)
     n = 2
     while os.path.exists(cand + ".xlsm") or os.path.exists(cand + ".xlsx"):
@@ -1265,14 +904,7 @@ def _unique_stem(d, stem):
         n += 1
     return cand
 
-
 def copy_as_macro_enabled(source, dst_stem):
-    """사본을 매크로 저장 가능한 .xlsm으로 생성.
-
-    원본이 .xlsx면 ZIP 수준 변환 후 verify_xlsm_copy 검증(실패 시 원본
-    확장자 .xlsx로 그대로 복사해 폴백), .xlsm이면 그대로 복사. 사본의
-    MotW도 제거. 결과(경로·크기·변환 성공 여부)를 시작 로그에 남깁니다.
-    """
     ext = os.path.splitext(source)[1].lower()
     note = ""
     if ext == ".xlsx":
@@ -1304,22 +936,16 @@ def copy_as_macro_enabled(source, dst_stem):
     startup_log(f"사본 생성: {dst} ({size:,} bytes) · {note} · 원본={source}")
     return dst
 
-
 def make_attempt_copy(problem, set_name, when=None):
-    """문제 파일을 풀이_<세트명>_<일시>.xlsm 사본으로 (매크로 저장 가능)."""
     when = when or datetime.now()
     stamp = when.strftime("%Y%m%d_%H%M")
     d = os.path.dirname(os.path.abspath(problem))
     return copy_as_macro_enabled(
         problem, _unique_stem(d, f"풀이_{set_name}_{stamp}"))
 
-
-# --- 앱 설정 (세트설정.json의 "_설정" 영역) ---
-
 def get_app_setting(name, default=None, path=None):
     cfg = load_set_config(path or SET_CONFIG_PATH)
     return _cfg_section(cfg, "_설정").get(name, default)
-
 
 def set_app_setting(name, value, path=None):
     p = path or SET_CONFIG_PATH
@@ -1327,12 +953,7 @@ def set_app_setting(name, value, path=None):
     cfg.setdefault("_설정", {})[name] = value
     return save_set_config(cfg, p)
 
-
-# --- 세트 스캔 폴더 (v3.1.0) ----------------------------------------------
-
-
 def configured_scan_root(path=None, cfg=None):
-    """설정에 저장된 스캔 폴더. 없거나 폴더가 아니면 기본값(상위 폴더)."""
     if cfg is not None:
         v = _cfg_section(cfg, "_설정").get(SCAN_ROOT_SETTING)
     else:
@@ -1341,27 +962,18 @@ def configured_scan_root(path=None, cfg=None):
         return os.path.abspath(v)
     return default_scan_root()
 
-
 def save_scan_root(folder, path=None):
-    """스캔 폴더 저장. None/빈 값이면 기본값으로 되돌린다. 반환: 적용된 경로."""
     if folder is None or not str(folder).strip():
         set_app_setting(SCAN_ROOT_SETTING, None, path=path)
         return default_scan_root()
     set_app_setting(SCAN_ROOT_SETTING, os.path.abspath(str(folder)), path=path)
     return configured_scan_root(path=path)
 
-
 def scan_root_is_default(path=None, cfg=None):
-    """지금 스캔 폴더가 기본값(시험장.py 상위 폴더)인가."""
     return os.path.abspath(configured_scan_root(path, cfg)) == \
         os.path.abspath(default_scan_root())
 
-
-# --- 세트 개별 숨기기 (v3.1.0) --------------------------------------------
-
-
 def hidden_set_keys(cfg=None, path=None):
-    """숨긴 세트의 정규화 키 목록 (오름차순, 중복 제거)."""
     sec = _cfg_section(cfg, "_설정") if cfg is not None \
         else _cfg_section(load_set_config(path or SET_CONFIG_PATH), "_설정")
     raw = sec.get(HIDDEN_SETS_SETTING)
@@ -1375,9 +987,7 @@ def hidden_set_keys(cfg=None, path=None):
             out.append(k)
     return sorted(out)
 
-
 def set_hidden_keys(s):
-    """세트를 가리키는 정규화 키들 (대표 + 병합된 중복 세트)."""
     keys = []
     cands = [(s or {}).get("norm")] + [d.get("norm")
                                        for d in ((s or {}).get("중복") or [])]
@@ -1390,19 +1000,12 @@ def set_hidden_keys(s):
         keys.append(norm_set_key(s["problem"]))
     return keys
 
-
 def is_hidden_set(s, hidden=None, cfg=None, path=None):
-    """이 세트가 숨김 목록에 있는가."""
     if hidden is None:
         hidden = hidden_set_keys(cfg=cfg, path=path)
     return bool(set(hidden or []) & set(set_hidden_keys(s)))
 
-
 def split_hidden_sets(sets, hidden=None, cfg=None, path=None):
-    """(보이는 세트, 숨긴 세트) 로 나눈다.
-
-    숨김은 **화면에서만** 빼는 것이라 파일도 기록도 지우지 않습니다 — 다시
-    보이게 하면 점수·기록이 그대로 돌아옵니다."""
     if hidden is None:
         hidden = hidden_set_keys(cfg=cfg, path=path)
     hide = set(hidden or [])
@@ -1416,9 +1019,7 @@ def split_hidden_sets(sets, hidden=None, cfg=None, path=None):
             shown.append(s)
     return shown, gone
 
-
 def set_set_hidden(key, hidden=True, path=None):
-    """세트 숨기기/보이기 (정규화 키 기준). 반환: 저장된 숨김 키 목록."""
     k = str(key or "").strip()
     k = (norm_set_key(k) or k) if k else ""
     cur = hidden_set_keys(path=path)
@@ -1433,55 +1034,29 @@ def set_set_hidden(key, hidden=True, path=None):
     set_app_setting(HIDDEN_SETS_SETTING, cur, path=path)
     return cur
 
-
 def clear_hidden_sets(path=None):
-    """숨긴 세트 전부 다시 보이게."""
     set_app_setting(HIDDEN_SETS_SETTING, [], path=path)
     return []
 
-
-# ---------------------------------------------------------------------------
-# 타이머 오버레이 · 다중 모니터 배치 (v3.2.0)
-# ---------------------------------------------------------------------------
-# 실제 시험장을 흉내 냅니다. ① 시험이 시작되면 화면 **우측 상단**에 남은 시간이
-# 작게 떠 있고(끌어서 옮길 수 있고 자리를 기억합니다), ② 모니터가 2대 이상이면
-# 문제지(PDF)·Excel·타이머를 어느 화면에 띄울지 고를 수 있습니다.
-#
-# 이 영역은 일부러 두 층으로 나눠 두었습니다.
-#   · 순수 계산 — 모니터 목록 정규화·이름표·좌표 계산·설정 읽기/쓰기.
-#     화면도 Windows도 필요 없어 헤드리스 테스트로 검증합니다
-#     (시험장/모니터타이머테스트.py).
-#   · Windows API — 모니터 열거(EnumDisplayMonitors)·창 찾기(EnumWindows)·
-#     창 배치(SetWindowPos). Windows가 아니거나 호출이 실패하면 **조용히**
-#     아무것도 하지 않습니다. 예외는 절대 밖으로 새지 않고, 배치를 못 해도
-#     시험은 예전과 똑같이 진행됩니다.
-
-TIMER_OVERLAY_SETTING = "타이머오버레이"          # 세트설정 _설정: bool (기본 켜짐)
-TIMER_OVERLAY_POS_SETTING = "타이머오버레이위치"   # 세트설정 _설정: [x, y]
-MONITOR_PDF_SETTING = "문제지모니터"              # 세트설정 _설정: 0부터의 번호
+TIMER_OVERLAY_SETTING = "타이머오버레이"
+TIMER_OVERLAY_POS_SETTING = "타이머오버레이위치"
+MONITOR_PDF_SETTING = "문제지모니터"
 MONITOR_EXCEL_SETTING = "엑셀모니터"
 MONITOR_TIMER_SETTING = "타이머모니터"
 
-OVERLAY_MARGIN = 16             # 모니터 가장자리에서 띄울 여백(px)
-OVERLAY_SIZE = (190, 96)        # 오버레이 기본 크기(폭, 높이) — 위치 계산용
-OVERLAY_MIN_VISIBLE = 40        # 이만큼은 화면에 걸쳐 있어야 '보이는' 자리
-EXCEL_PLACE_DELAY_MS = 2500     # Excel 창이 뜨기를 기다렸다가 배치
-PDF_PLACE_DELAY_MS = 700        # 문제지 뷰어 창을 지켜보기 시작할 때까지
-                                # (Excel을 띄우는 1초보다 먼저 한 번 본다)
-PLACE_RETRY_MS = 1500           # 창을 못 찾았을 때 다시 볼 간격
+OVERLAY_MARGIN = 16
+OVERLAY_SIZE = (190, 96)
+OVERLAY_MIN_VISIBLE = 40
+EXCEL_PLACE_DELAY_MS = 2500
+PDF_PLACE_DELAY_MS = 700
+PLACE_RETRY_MS = 1500
 EXCEL_PLACE_TRIES = 6
 PDF_PLACE_TRIES = 8
 
 _H_WORDS = {1: ("",), 2: ("왼쪽", "오른쪽"), 3: ("왼쪽", "가운데", "오른쪽")}
 _V_WORDS = {1: ("",), 2: ("위", "아래"), 3: ("위", "가운데", "아래")}
 
-
-# --- 순수 계산: 모니터 목록 ------------------------------------------------
-
-
 def _rect_tuple(value, default=None):
-    """(left, top, right, bottom) 정수 튜플로. 숫자 4개가 아니거나 폭/높이가
-    0 이하면 default."""
     try:
         left, top, right, bottom = (int(v) for v in value)
     except Exception:
@@ -1490,19 +1065,11 @@ def _rect_tuple(value, default=None):
         return default
     return (left, top, right, bottom)
 
-
 def rect_size(rect):
-    """(폭, 높이)."""
     left, top, right, bottom = rect
     return (right - left, bottom - top)
 
-
 def monitor_position_words(mons):
-    """모니터를 사람 말로 부르는 낱말 목록 ('왼쪽'·'가운데'·'오른쪽'·'위'…).
-
-    가로로 늘어놓았으면 왼쪽/오른쪽, 세로로 쌓았으면 위/아래로 부르고,
-    4대 이상이면 '왼쪽에서 3번째'처럼 셉니다. 반환 길이는 입력과 같습니다.
-    """
     rects = [m.get("rect") for m in mons or []]
     if not rects or any(r is None for r in rects):
         return ["" for _ in rects]
@@ -1519,9 +1086,7 @@ def monitor_position_words(mons):
                    else tail % (i + 1))
     return out
 
-
 def monitor_label(m):
-    """'모니터 1 (주 모니터, 1920×1080, 왼쪽)' 처럼 알아볼 수 있는 이름표."""
     bits = []
     if m.get("primary"):
         bits.append("주 모니터")
@@ -1530,17 +1095,7 @@ def monitor_label(m):
         bits.append(m["position"])
     return f"모니터 {int(m.get('index') or 0) + 1} (" + ", ".join(bits) + ")"
 
-
 def normalize_monitors(raw):
-    """모니터 열거 결과를 화면 표시·좌표 계산용으로 정리 (순수 함수).
-
-    raw 항목: {"rect": (l,t,r,b), "work": (l,t,r,b), "primary": bool}
-    — rect 가 없거나 이상한 항목은 버리고, work 가 없으면 rect 로 채웁니다.
-    반환: 왼→오(세로 배치는 위→아래) 순으로 정렬된
-        [{"index", "primary", "rect", "work", "width", "height",
-          "position", "label"}]  (index 는 0부터, 이름표의 번호는 1부터)
-    주 모니터 표식이 하나도 없으면 첫 번째를 주 모니터로 봅니다.
-    """
     mons = []
     for item in raw or []:
         if not isinstance(item, dict):
@@ -1562,18 +1117,13 @@ def normalize_monitors(raw):
         m["label"] = monitor_label(m)
     return mons
 
-
 def primary_monitor(mons):
-    """주 모니터 (표식이 없으면 첫 번째, 목록이 비었으면 None)."""
     for m in mons or []:
         if m.get("primary"):
             return m
     return (list(mons) or [None])[0]
 
-
 def pick_monitor(mons, index):
-    """번호로 모니터 고르기. 없는 번호·이상한 값이면 주 모니터, 목록이 비었으면
-    None (부르는 쪽이 '배치하지 않음'으로 봅니다)."""
     mons = list(mons or [])
     if not mons:
         return None
@@ -1583,18 +1133,10 @@ def pick_monitor(mons, index):
         return primary_monitor(mons)
     return mons[i] if 0 <= i < len(mons) else primary_monitor(mons)
 
-
 def monitor_ui_visible(mons):
-    """모니터 설정 UI를 보여 줄까 — 2대 이상일 때만 (1대면 조용히 숨김)."""
     return len(mons or []) >= 2
 
-
 def default_monitor_choices(mons):
-    """기본 배치: Excel 은 주 모니터, 문제지는 남는 모니터, 타이머는 Excel 쪽.
-
-    (실제 시험장처럼 '작업하는 화면' 에 남은 시간이 같이 보이게.)
-    모니터가 0·1대면 셋 다 같은 번호입니다.
-    """
     mons = list(mons or [])
     if not mons:
         return {"pdf": 0, "excel": 0, "timer": 0}
@@ -1603,24 +1145,14 @@ def default_monitor_choices(mons):
                   if int(m["index"]) != excel), excel)
     return {"pdf": other, "excel": excel, "timer": excel}
 
-
-# --- 순수 계산: 오버레이 좌표 ----------------------------------------------
-
-
 def overlay_top_right(rect, size=OVERLAY_SIZE, margin=OVERLAY_MARGIN):
-    """작업영역 `rect` 의 **우측 상단** 좌표 (x, y) — 실제 시험장 표시 자리."""
     left, top, right, _bottom = rect
     width, _height = size
     return (max(int(left), int(right) - int(width) - int(margin)),
             max(int(top), int(top) + int(margin)))
 
-
 def point_on_any_monitor(x, y, mons, size=OVERLAY_SIZE,
                          need=OVERLAY_MIN_VISIBLE):
-    """(x, y)에 놓은 size 크기 창이 어느 모니터에든 need px 이상 걸치는가.
-
-    모니터를 뺐을 때 저장된 자리가 화면 밖이 되는 경우를 걸러냅니다.
-    """
     width, height = size
     for m in mons or []:
         rect = m.get("rect") or m.get("work")
@@ -1632,16 +1164,8 @@ def point_on_any_monitor(x, y, mons, size=OVERLAY_SIZE,
             return True
     return False
 
-
 def overlay_position(mons, index=None, size=OVERLAY_SIZE, saved=None,
                      margin=OVERLAY_MARGIN):
-    """타이머 오버레이를 띄울 좌표 (x, y).
-
-    저장된 자리(saved)가 있고 지금 모니터 구성에서 보이면 그 자리를, 아니면
-    고른 모니터(index)의 작업영역 **우측 상단**을 씁니다. 모니터를 하나도
-    알아내지 못했고 저장된 자리도 없으면 None (부르는 쪽이 tkinter 가 아는
-    화면 크기로 대신 계산합니다).
-    """
     mons = list(mons or [])
     if saved is not None:
         try:
@@ -1656,18 +1180,14 @@ def overlay_position(mons, index=None, size=OVERLAY_SIZE, saved=None,
         return None
     return overlay_top_right(m.get("work") or m.get("rect"), size, margin)
 
-
 def overlay_position_for_screen(screen_w, screen_h, size=OVERLAY_SIZE,
                                 saved=None, margin=OVERLAY_MARGIN):
-    """모니터 열거를 못 했을 때(비 Windows 등) tkinter 가 아는 화면 크기로."""
     rect = (0, 0, int(screen_w), int(screen_h))
     return overlay_position([{"rect": rect, "work": rect, "primary": True,
                               "index": 0}], 0, size, saved, margin)
 
-
 def clamp_overlay_position(x, y, mons, size=OVERLAY_SIZE,
                            need=OVERLAY_MIN_VISIBLE):
-    """끌어다 놓은 자리가 화면 밖이면 가장 가까운 모니터 안으로 되돌림."""
     x, y = int(x), int(y)
     mons = list(mons or [])
     if not mons or point_on_any_monitor(x, y, mons, size=size, need=need):
@@ -1685,10 +1205,7 @@ def clamp_overlay_position(x, y, mons, size=OVERLAY_SIZE,
     return (max(int(left), min(x, int(right) - int(width))),
             max(int(top), min(y, int(bottom) - int(height))))
 
-
 def window_rect_for_monitor(m, margin=0):
-    """창을 올려 놓을 (x, y, 폭, 높이) — 모니터 **작업영역**(작업 표시줄 제외).
-    모니터가 없으면 None."""
     if not m:
         return None
     rect = m.get("work") or m.get("rect")
@@ -1699,34 +1216,23 @@ def window_rect_for_monitor(m, margin=0):
             max(1, int(right) - int(left) - 2 * margin),
             max(1, int(bottom) - int(top) - 2 * margin))
 
-
 def pick_new_windows(before, after):
-    """창 목록 두 스냅숏을 견줘 새로 생긴 창만 (after 순서 유지)."""
     seen = set(before or ())
     return [h for h in (after or ()) if h not in seen]
 
-
-# --- 순수 계산: 설정 읽기/쓰기 ---------------------------------------------
-
-
 def timer_overlay_enabled(cfg=None, path=None):
-    """우측 상단 타이머 오버레이를 쓸지 (설정이 없으면 켜짐)."""
     if cfg is not None:
         v = _cfg_section(cfg, "_설정").get(TIMER_OVERLAY_SETTING, True)
     else:
         v = get_app_setting(TIMER_OVERLAY_SETTING, True, path=path)
     return True if v is None else bool(v)
 
-
 def set_timer_overlay_enabled(on, path=None):
-    """오버레이 켜기/끄기. 반환: 저장한 값."""
     on = bool(on)
     set_app_setting(TIMER_OVERLAY_SETTING, on, path=path)
     return on
 
-
 def saved_overlay_pos(cfg=None, path=None):
-    """끌어다 놓은 타이머 자리 (x, y). 없거나 깨졌으면 None."""
     if cfg is not None:
         v = _cfg_section(cfg, "_설정").get(TIMER_OVERLAY_POS_SETTING)
     else:
@@ -1739,10 +1245,7 @@ def saved_overlay_pos(cfg=None, path=None):
         return None
     return (x, y)
 
-
 def save_overlay_pos(x, y, path=None):
-    """타이머 자리 기억. x 나 y 가 None 이면 기억해 둔 자리를 지웁니다
-    (다음 응시 때 다시 우측 상단)."""
     if x is None or y is None:
         set_app_setting(TIMER_OVERLAY_POS_SETTING, None, path=path)
         return None
@@ -1753,14 +1256,11 @@ def save_overlay_pos(x, y, path=None):
     set_app_setting(TIMER_OVERLAY_POS_SETTING, pos, path=path)
     return (pos[0], pos[1])
 
-
 _MONITOR_SETTINGS = (("pdf", MONITOR_PDF_SETTING),
                      ("excel", MONITOR_EXCEL_SETTING),
                      ("timer", MONITOR_TIMER_SETTING))
 
-
 def monitor_assignment(cfg=None, path=None):
-    """설정에 저장된 모니터 배치 {"pdf","excel","timer"} (안 골랐으면 None)."""
     sec = _cfg_section(cfg, "_설정") if cfg is not None else \
         _cfg_section(load_set_config(path or SET_CONFIG_PATH), "_설정")
     out = {}
@@ -1771,9 +1271,7 @@ def monitor_assignment(cfg=None, path=None):
             out[key] = None
     return out
 
-
 def save_monitor_assignment(pdf=None, excel=None, timer=None, path=None):
-    """모니터 배치 저장 (값을 주지 않은 항목은 그대로 둠). 반환: 저장된 배치."""
     p = path or SET_CONFIG_PATH
     cfg = load_set_config(p)
     sec = cfg.setdefault("_설정", {})
@@ -1787,9 +1285,7 @@ def save_monitor_assignment(pdf=None, excel=None, timer=None, path=None):
     save_set_config(cfg, p)
     return monitor_assignment(cfg=cfg)
 
-
 def clear_monitor_assignment(path=None):
-    """모니터 배치를 지워 기본값으로 되돌림. 반환: 비워진 배치."""
     p = path or SET_CONFIG_PATH
     cfg = load_set_config(p)
     sec = cfg.setdefault("_설정", {})
@@ -1798,13 +1294,7 @@ def clear_monitor_assignment(path=None):
     save_set_config(cfg, p)
     return monitor_assignment(cfg=cfg)
 
-
 def resolve_monitor_assignment(mons, cfg=None, path=None):
-    """저장값 + 기본값 → 실제로 쓸 모니터 번호 {"pdf","excel","timer"}.
-
-    저장된 번호가 지금 연결된 모니터 수를 벗어나면(모니터를 뺐다면) 조용히
-    기본값으로 내려갑니다.
-    """
     mons = list(mons or [])
     out = dict(default_monitor_choices(mons))
     saved = monitor_assignment(cfg=cfg, path=path)
@@ -1814,12 +1304,6 @@ def resolve_monitor_assignment(mons, cfg=None, path=None):
             out[key] = v
     return out
 
-
-# --- Windows API 층 (없거나 실패하면 조용히 아무것도 안 함) -----------------
-#
-# 여기서부터는 ctypes 로 user32 를 부릅니다. Windows 가 아니거나 호출이 실패
-# 하면 빈 목록 / False 를 돌려주고, 예외는 밖으로 내보내지 않습니다.
-
 SW_MAXIMIZE = 3
 SW_RESTORE = 9
 SWP_NOZORDER = 0x0004
@@ -1827,30 +1311,18 @@ SWP_NOACTIVATE = 0x0010
 SWP_SHOWWINDOW = 0x0040
 GW_OWNER = 4
 MONITORINFOF_PRIMARY = 1
-EXCEL_WINDOW_CLASS = "XLMAIN"        # Excel 본 창의 창 클래스
-
+EXCEL_WINDOW_CLASS = "XLMAIN"
 
 def monitors_supported():
-    """모니터 열거·창 배치를 시도해 볼 수 있는 환경인가 (Windows + ctypes).
-
-    아니면 이 기능은 통째로 꺼지고, 시험은 배치 없이 그대로 진행됩니다.
-    """
     if sys.platform != "win32":
         return False
     try:
-        import ctypes                                     # noqa: F401
+        import ctypes
         return hasattr(ctypes, "windll")
     except Exception:
         return False
 
-
 def enum_monitors_raw():
-    """user32.EnumDisplayMonitors + GetMonitorInfoW 로 모니터 정보 수집.
-
-    반환: [{"rect","work","primary"}] — Windows 밖이거나 실패하면 [].
-    (DPI 인식은 일부러 건드리지 않습니다. tkinter 와 같은 좌표계를 써야
-    geometry() 로 계산한 자리와 실제 자리가 어긋나지 않습니다.)
-    """
     if not monitors_supported():
         return []
     try:
@@ -1891,22 +1363,18 @@ def enum_monitors_raw():
         log_error("모니터 열거", e)
         return []
 
-
 def list_monitors():
-    """연결된 모니터 목록(정규화). Windows 밖·실패면 빈 목록."""
     try:
         return normalize_monitors(enum_monitors_raw())
     except Exception as e:
         log_error("모니터 목록", e)
         return []
 
-
 def _window_class(user32, hwnd):
     import ctypes
     buf = ctypes.create_unicode_buffer(256)
     user32.GetClassNameW(hwnd, buf, 256)
     return buf.value
-
 
 def _window_title(user32, hwnd):
     import ctypes
@@ -1917,9 +1385,7 @@ def _window_title(user32, hwnd):
     user32.GetWindowTextW(hwnd, buf, n + 1)
     return buf.value
 
-
 def top_level_windows(visible_only=True):
-    """지금 떠 있는 최상위 창 핸들 목록. Windows 밖·실패면 []."""
     if not monitors_supported():
         return []
     try:
@@ -1943,14 +1409,7 @@ def top_level_windows(visible_only=True):
         log_error("창 열거", e)
         return []
 
-
 def excel_windows(pid=None, strict=False):
-    """Excel 본 창(창 클래스 XLMAIN) 핸들 목록 — 맨 앞 창부터.
-
-    Excel 인스턴스가 여럿일 수 있어 **프로세스 ID 대조**를 먼저 봅니다.
-    strict=True 면 그 프로세스의 창만(없으면 빈 목록), 아니면 대조에 걸리는
-    창이 없을 때 클래스가 맞는 창 전체를 돌려줍니다. Windows 밖·실패면 [].
-    """
     if not monitors_supported():
         return []
     try:
@@ -1974,9 +1433,7 @@ def excel_windows(pid=None, strict=False):
         log_error("Excel 창 찾기", e)
         return []
 
-
 def move_window_to_monitor(hwnd, mon, maximize=True):
-    """창 하나를 모니터 작업영역으로 옮기고(가능하면 최대화). 성공 여부."""
     rect = window_rect_for_monitor(mon)
     if not hwnd or rect is None or not monitors_supported():
         return False
@@ -1984,25 +1441,17 @@ def move_window_to_monitor(hwnd, mon, maximize=True):
     try:
         import ctypes
         user32 = ctypes.windll.user32
-        user32.ShowWindow(hwnd, SW_RESTORE)      # 최대화/최소화를 먼저 풀고
+        user32.ShowWindow(hwnd, SW_RESTORE)
         user32.SetWindowPos(hwnd, None, int(x), int(y), int(w), int(h),
                             SWP_NOZORDER | SWP_NOACTIVATE | SWP_SHOWWINDOW)
         if maximize:
-            user32.ShowWindow(hwnd, SW_MAXIMIZE)   # 그 모니터에서 최대화
+            user32.ShowWindow(hwnd, SW_MAXIMIZE)
         return True
     except Exception as e:
         log_error("창 배치", e)
         return False
 
-
 def place_excel_on_monitor(mon, pid=None, maximize=True):
-    """이번에 띄운 Excel 창을 고른 모니터로. (옮긴 창 수, 설명).
-
-    우리가 직접 실행한 Excel 프로세스의 창이 있으면 그것만 옮깁니다. 이미 떠
-    있던 Excel 에 파일을 넘긴 경우에는 프로세스를 알 수 없으므로 **맨 앞 창
-    하나만** 옮깁니다 — 사용자가 따로 열어 둔 다른 통합 문서까지 끌고 다니지
-    않기 위해서입니다. 실패해도 예외 없이 (0, 사유).
-    """
     if mon is None:
         return 0, "모니터 정보 없음"
     wins, note = (excel_windows(pid, strict=True) if pid is not None else [],
@@ -2015,16 +1464,8 @@ def place_excel_on_monitor(mon, pid=None, maximize=True):
     return moved, (f"Excel 창 {moved}개 배치({note})" if moved
                    else "창 배치 실패")
 
-
 def place_new_window_on_monitor(mon, before, maximize=True,
                                 skip_classes=(EXCEL_WINDOW_CLASS,)):
-    """**무엇이 뜰지 모르는** 창(문제지 뷰어)을 고른 모니터로.
-
-    문제지는 Edge·Acrobat·Chrome 등 무엇으로 열릴지 알 수 없어, 열기 직전에
-    찍어 둔 창 목록(before)과 지금을 견줘 새로 생긴 창 가운데 제목이 있고
-    주인 창이 없는 첫 창을 옮깁니다. 못 잡으면 (0, 사유) — 억지로 옮기지
-    않고 부르는 쪽이 사용자에게 한 줄 안내만 남깁니다.
-    """
     if mon is None:
         return 0, "모니터 정보 없음"
     if not monitors_supported():
@@ -2038,7 +1479,7 @@ def place_new_window_on_monitor(mon, before, maximize=True,
                     continue
                 if not _window_title(user32, hwnd).strip():
                     continue
-                if user32.GetWindow(hwnd, GW_OWNER):   # 대화상자는 건너뜀
+                if user32.GetWindow(hwnd, GW_OWNER):
                     continue
             except Exception:
                 continue
@@ -2049,17 +1490,12 @@ def place_new_window_on_monitor(mon, before, maximize=True,
         log_error("문제지 창 배치", e)
         return 0, f"배치 실패({e})"
 
-
-# --- Excel 신뢰 위치 등록 (매크로 차단 배너 해결) ---
-
 TRUST_MANUAL_GUIDE = (
     "수동 설정: Excel → 파일 → 옵션 → 보안 센터 → 보안 센터 설정 → "
     "신뢰할 수 있는 위치 → '새 위치 추가'에서 학습 폴더를 추가하고 "
     "'이 위치의 하위 폴더도 신뢰할 수 있음'을 체크하세요.")
 
-
 def build_trusted_location_values(folder, version="16.0", slot="LocationCC"):
-    """등록할 레지스트리 키 경로·값 구성 (테스트 가능)."""
     path = (rf"Software\Microsoft\Office\{version}\Excel\Security"
             rf"\Trusted Locations\{slot}")
     folder = str(folder).rstrip("\\/") + "\\"
@@ -2067,19 +1503,14 @@ def build_trusted_location_values(folder, version="16.0", slot="LocationCC"):
             "values": {"Path": folder, "AllowSubfolders": 1,
                        "Description": "코코 시험장 학습 폴더"}}
 
-
 def register_trusted_location(folder, version=None):
-    """HKCU에 신뢰 위치 등록. (성공 여부, 메시지) 반환.
-
-    Windows 외 환경/실패 시 수동 설정 경로 안내를 메시지에 포함.
-    """
     try:
         import winreg
     except ImportError:
         return False, ("이 기능은 Windows에서만 동작합니다.\n\n"
                        + TRUST_MANUAL_GUIDE)
     versions = [version] if version else []
-    try:  # 설치된 Office 버전 키 탐색
+    try:
         with winreg.OpenKey(winreg.HKEY_CURRENT_USER,
                             r"Software\Microsoft\Office") as k:
             i = 0
@@ -2094,7 +1525,7 @@ def register_trusted_location(folder, version=None):
     except OSError:
         pass
     if "16.0" not in versions:
-        versions.append("16.0")  # Office 2016+/365 기본
+        versions.append("16.0")
     seen = []
     for v in sorted(set(versions), key=lambda x: -float(x)):
         seen.append(v)
@@ -2117,11 +1548,8 @@ def register_trusted_location(folder, version=None):
     return False, (f"레지스트리 등록에 실패했습니다 ({last_err}).\n\n"
                    + TRUST_MANUAL_GUIDE)
 
-
 def build_grade_cmd(grade_py, problem, answer, student, key=None, html=None,
                     json_out=None, history=None, sheets=None):
-    """grade.py 실행 인자 목록. sheets 지정 시 '--sheets 시트1,시트2' 부분 채점.
-    (오답 재풀이는 오답 시트 목록을 그대로 넘깁니다 — GUI 없이 테스트 가능)"""
     cmd = [sys.executable, grade_py,
            "--problem", problem, "--answer", answer, "--student", student]
     if key:
@@ -2137,15 +1565,9 @@ def build_grade_cmd(grade_py, problem, answer, student, key=None, html=None,
                                      if str(s).strip())]
     return cmd
 
-
 def run_grading(grade_py, problem, answer, student,
                 key=None, html=None, json_out=None, history=None,
                 sheets=None, timeout=600):
-    """grade.py를 서브프로세스로 실행. sheets 지정 시 부분 채점.
-
-    반환: (결과 dict 또는 None, stdout, stderr, returncode)
-    결과 dict는 --json 출력이 우선, 실패 시 콘솔 총점 파싱 폴백.
-    """
     cmd = build_grade_cmd(grade_py, problem, answer, student, key=key,
                           html=html, json_out=json_out, history=history,
                           sheets=sheets)
@@ -2171,13 +1593,11 @@ def run_grading(grade_py, problem, answer, student,
                       "passed": int(m.group(1)) >= PASS_LINE, "sheets": []}
     return result, proc.stdout, proc.stderr, proc.returncode
 
-
 def open_file(path):
-    """파일을 기본 프로그램으로 열기. (성공 여부, 오류 메시지) 반환."""
     path = os.path.abspath(path)
     try:
         if sys.platform == "win32":
-            os.startfile(path)  # noqa
+            os.startfile(path)
             return True, ""
         for opener in ("xdg-open", "open"):
             exe = shutil.which(opener)
@@ -2190,20 +1610,14 @@ def open_file(path):
     except Exception as e:
         return False, str(e)
 
-
-# --- Excel 직접 실행 · 실행 확인 (Windows) ---
-
 CREATE_NO_WINDOW = 0x08000000
 DETACHED_PROCESS = 0x00000008
 CREATE_NEW_PROCESS_GROUP = 0x00000200
-EXCEL_OPEN_DELAY_MS = 1000      # PDF를 먼저 열고 Excel은 이만큼 뒤에 (맨 앞에 오게)
-EXCEL_CHECK_DELAY_MS = 5000     # Excel 실행 후 프로세스 확인까지 대기
-_EXCEL_EXE_CACHE = [None, False]   # [경로, 탐색했는지]
-
+EXCEL_OPEN_DELAY_MS = 1000
+EXCEL_CHECK_DELAY_MS = 5000
+_EXCEL_EXE_CACHE = [None, False]
 
 def _exe_from_command(cmd):
-    """레지스트리 shell\\Open\\command 값 → 실행 파일 경로.
-    예: '"C:\\...\\EXCEL.EXE" /dde' 또는 'C:\\...\\EXCEL.EXE "%1"'."""
     text = str(cmd or "").strip()
     if not text:
         return None
@@ -2216,9 +1630,7 @@ def _exe_from_command(cmd):
     cand = os.path.expandvars(cand.strip())
     return cand or None
 
-
 def _excel_registry_candidates():
-    """Windows 레지스트리에서 EXCEL.EXE 후보 경로 (winreg는 Windows 전용)."""
     try:
         import winreg
     except ImportError:
@@ -2258,9 +1670,7 @@ def _excel_registry_candidates():
                 out.append(os.path.join(v, "EXCEL.EXE"))
     return out
 
-
 def _excel_common_paths():
-    """흔한 설치 경로 후보 (Program Files[ (x86)]\\Microsoft Office\\…)."""
     out = []
     subs = (r"Microsoft Office\root\Office16", r"Microsoft Office\Office16",
             r"Microsoft Office\root\Office15", r"Microsoft Office\Office15",
@@ -2270,14 +1680,11 @@ def _excel_common_paths():
         if root:
             out.extend(os.path.join(root, sub, "EXCEL.EXE") for sub in subs)
     la = os.environ.get("LOCALAPPDATA")
-    if la:   # 스토어판 Office의 앱 실행 별칭
+    if la:
         out.append(os.path.join(la, r"Microsoft\WindowsApps\excel.exe"))
     return out
 
-
 def find_excel_exe(refresh=False):
-    """Windows에서 EXCEL.EXE 경로 탐색: App Paths → ProgID command →
-    InstallRoot → 흔한 경로 → PATH. 못 찾으면(또는 Windows 아님) None."""
     if sys.platform != "win32":
         return None
     if _EXCEL_EXE_CACHE[1] and not refresh:
@@ -2297,14 +1704,7 @@ def find_excel_exe(refresh=False):
     _EXCEL_EXE_CACHE[:] = [found, True]
     return found
 
-
 def open_workbook(path, prefer_excel=True):
-    """풀이 파일 열기. (성공, 방법, 오류, Popen 또는 None) 반환.
-
-    Windows에서 EXCEL.EXE를 찾으면 subprocess.Popen([excel, path])로 직접
-    실행(어느 프로그램이 열었는지·즉시 죽었는지 알 수 있음), 못 찾거나 실행
-    실패면 os.startfile(기본 프로그램) 폴백. 다른 OS는 open_file.
-    """
     path = os.path.abspath(path)
     err = ""
     if sys.platform == "win32" and prefer_excel:
@@ -2322,9 +1722,7 @@ def open_workbook(path, prefer_excel=True):
         else "기본 프로그램"
     return ok, method, "; ".join(x for x in (err, err2) if x), None
 
-
 def excel_running():
-    """EXCEL.EXE 프로세스가 있는지 (Windows: tasklist). 알 수 없으면 None."""
     if sys.platform != "win32":
         return None
     try:
@@ -2336,10 +1734,7 @@ def excel_running():
     except Exception:
         return None
 
-
 def workbook_lock_file(path):
-    """Excel이 파일을 열면 같은 폴더에 만드는 '~$이름' 잠금 파일 경로.
-    (긴 이름은 앞 글자가 잘리므로 뒷부분 일치로 찾음) 없으면 None."""
     d, base = os.path.split(os.path.abspath(path))
     try:
         for fn in os.listdir(d):
@@ -2352,15 +1747,7 @@ def workbook_lock_file(path):
         pass
     return None
 
-
 def check_workbook_open(path, proc=None):
-    """Excel이 파일을 열었는지 판정. ('open'|'closed'|'unknown', 설명) 반환.
-
-    잠금 파일(~$…)이 있으면 열림. 없으면 EXCEL.EXE 프로세스 존재 여부와
-    직접 실행한 프로세스의 종료 코드로 판단합니다. (이미 떠 있던 Excel에
-    파일을 넘기면 새 프로세스는 곧바로 끝나므로 종료 코드 0만으로는
-    실패로 보지 않습니다.)
-    """
     lock = workbook_lock_file(path)
     if lock:
         return "open", f"잠금 파일 확인({os.path.basename(lock)})"
@@ -2381,14 +1768,7 @@ def check_workbook_open(path, proc=None):
         return "closed", rc_note
     return "unknown", "확인 불가 (Windows 외 환경)"
 
-
 def restart_command(argv=None, executable=None, base_dir=None):
-    """재시작 명령 (args, Popen kwargs). 래퍼(코코시험장.pyw)로 시작했으면
-    래퍼를, 아니면 시험장.py를 같은 인터프리터로 실행합니다.
-
-    Windows: 콘솔이 튀지 않게 pythonw면 DETACHED_PROCESS, python.exe면
-    CREATE_NO_WINDOW (+ CREATE_NEW_PROCESS_GROUP, 부모 종료와 분리).
-    """
     argv = list(sys.argv if argv is None else argv)
     exe = executable or sys.executable
     base_dir = base_dir or BASE_DIR
@@ -2409,13 +1789,10 @@ def restart_command(argv=None, executable=None, base_dir=None):
         kwargs["start_new_session"] = True
     return args, kwargs
 
-
 MANUAL_PIP = ("수동 설치: 명령 프롬프트에서  py -m pip install openpyxl\n"
               "(위 명령이 안 되면: python -m pip install openpyxl)")
 
-
 def _pip_python():
-    """pip 실행용 인터프리터. pythonw.exe면 같은 폴더 python.exe로 치환."""
     exe = sys.executable
     base = os.path.basename(exe).lower()
     if base.startswith("pythonw"):
@@ -2425,12 +1802,10 @@ def _pip_python():
             return cand
     return exe
 
-
 def install_openpyxl(timeout=600):
-    """pip로 openpyxl 설치 (창 숨김). (성공 여부, 출력 요약) 반환."""
     kwargs = {}
     if sys.platform == "win32":
-        kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+        kwargs["creationflags"] = 0x08000000
     try:
         proc = subprocess.run(
             [_pip_python(), "-m", "pip", "install", "openpyxl"],
@@ -2443,9 +1818,7 @@ def install_openpyxl(timeout=600):
         log = log[-1200:]
     return proc.returncode == 0, log
 
-
 def classify_grading_error(rc, text):
-    """채점 실패 원인 분류: 'module' | 'file' | 'other'."""
     t = text or ""
     if rc == 3 or "ModuleNotFoundError" in t or "ImportError" in t \
             or "openpyxl 라이브러리가 설치되어" in t:
@@ -2455,33 +1828,20 @@ def classify_grading_error(rc, text):
         return "file"
     return "other"
 
+EXAM_DATES_SETTING = "시험일목록"
+EXAM_DATE_SETTING = "시험일"
+EXAM_DATE2_SETTING = "시험일2"
+ROUTINE_DAYS = 7
 
-# ---------------------------------------------------------------------------
-# 오늘의 학습 — 시험일 기준 1주(D-7 ~ D-1) 루틴 (웹 루틴과 동일)
-#   시험일은 사용자가 첫 실행 때 입력하고 세트설정.json `_설정.시험일`에 저장한다
-#   (2차 시험일은 선택). 코드에는 어떤 시험일도 박아 두지 않는다.
-#   Day 1~7 = D-7 ~ D-1. 시험일까지 7일이 안 남았으면 뒤에서부터 잘라 배정하고
-#   (D-3에 설치했으면 D-3·D-2·D-1만), 7일보다 많이 남았으면 D-7 전은 자유 연습.
-#   하루 1세트 40분 완주 → 채점 (여기까지가 클리어) · 목표 70→80→90→100
-#   무엇을 푸는지는 **사용자가 가진 세트**로 정한다 (고정 세트 슬롯 없음).
-# ---------------------------------------------------------------------------
+GOAL_TIERS = [70, 80, 90, 100]
+DAILY_CAP = 1
 
-EXAM_DATES_SETTING = "시험일목록"    # 세트설정.json `_설정` — 시험일 목록 (v3.1.0)
-EXAM_DATE_SETTING = "시험일"        # 〃 1번째 시험일 (구버전 호환 미러)
-EXAM_DATE2_SETTING = "시험일2"      # 〃 2번째 시험일 (구버전 호환 미러)
-ROUTINE_DAYS = 7                   # 커리큘럼 길이: D-7 ~ D-1
-
-GOAL_TIERS = [70, 80, 90, 100]   # 목표 사다리 (70=합격선, 그 위는 승급 목표)
-DAILY_CAP = 1                    # 하루 추천 1세트 (응시 횟수 제한이 아님)
-
-PLAN_EXAM1, PLAN_EXAM2, PLAN_AFTER = 8, 9, 10       # 시험 / 2차 시험 / 이후
+PLAN_EXAM1, PLAN_EXAM2, PLAN_AFTER = 8, 9, 10
 PLAN_ORDER = ([0] + list(range(1, ROUTINE_DAYS + 1))
-              + [PLAN_EXAM1, PLAN_EXAM2, PLAN_AFTER])   # 시간순
-AUTO = "자동선택"           # 세트 슬롯 값: 기록 기반 자동 선택
-
+              + [PLAN_EXAM1, PLAN_EXAM2, PLAN_AFTER])
+AUTO = "자동선택"
 
 def parse_iso_date(value):
-    """'YYYY-MM-DD' -> date (형식이 아니면 None). date 를 주면 그대로."""
     if isinstance(value, date):
         return value
     s = str(value or "").strip()[:10]
@@ -2490,12 +1850,9 @@ def parse_iso_date(value):
     except (TypeError, ValueError):
         return None
 
-
 _EXAM_CACHE = {"path": None, "mtime": None, "value": []}
 
-
 def _norm_date_list(values):
-    """날짜 후보 목록 -> 오름차순 유일 date 목록 (깨진 값은 버림)."""
     out = []
     for x in values or []:
         d = parse_iso_date(x)
@@ -2503,25 +1860,17 @@ def _norm_date_list(values):
             out.append(d)
     return sorted(out)
 
-
 def _exam_dates_from_cfg(cfg):
-    """설정 -> 시험일 목록. `_설정.시험일목록`(v3.1.0)이 있으면 그것이 기준이고,
-    없으면 옛 `시험일`·`시험일2` 를 읽어 옮긴다(마이그레이션)."""
     sec = _cfg_section(cfg, "_설정")
     raw = sec.get(EXAM_DATES_SETTING)
     if isinstance(raw, (list, tuple)):
         return _norm_date_list(raw)
-    if isinstance(raw, str):                 # 한 개만 문자열로 저장된 경우
+    if isinstance(raw, str):
         return _norm_date_list([raw])
     return _norm_date_list([sec.get(EXAM_DATE_SETTING),
                             sec.get(EXAM_DATE2_SETTING)])
 
-
 def exam_dates(cfg=None, path=None):
-    """설정에 저장된 시험일 **전체** 목록 (0개 이상, 오름차순).
-
-    지난 시험일도 그대로 들어 있습니다 — 일정 기준이 되는 목록은
-    effective_exams() 가 따로 계산합니다."""
     if cfg is not None:
         return _exam_dates_from_cfg(cfg)
     p = path or SET_CONFIG_PATH
@@ -2535,36 +1884,21 @@ def exam_dates(cfg=None, path=None):
     _EXAM_CACHE.update(path=p, mtime=m, value=list(v))
     return list(v)
 
-
 def _exams(exam=None):
-    """엔진 내부: 인자로 받은 시험일(또는 설정값)을 정규화한 **전체** 목록."""
     if exam is None:
         return exam_dates()
     if isinstance(exam, date):
         exam = [exam]
     return _norm_date_list(exam)
 
-
 def effective_exams(exam=None, today=None):
-    """**일정 기준**이 되는 시험일 목록 (v3.1.0).
-
-    시험일은 여러 개를 넣을 수 있고, 일정(D-7 ~ D-1)은 언제나 **가장 가까운
-    미래 시험일**을 기준으로 잡는다. 지난 시험일은 목록에 남지만 기준에서는
-    빠진다. 전부 지났으면 전체 목록을 그대로 돌려준다("시험 이후" 안내를
-    위해). 0개면 [].
-    """
     ex = _exams(exam)
     if not ex:
         return []
     today = today or date.today()
     return [d for d in ex if d >= today] or ex
 
-
 def save_exam_date_list(dates, path=None):
-    """시험일 목록 저장 (0개 허용). 저장된 목록(date 오름차순) 반환.
-
-    `_설정.시험일목록` 에 쓰고, 구버전이 읽는 `시험일`·`시험일2` 에도 앞의 두
-    개를 미러로 남긴다(3.0.x 로 되돌아가도 깨지지 않게)."""
     p = path or SET_CONFIG_PATH
     cfg = load_set_config(p)
     out = _norm_date_list(dates)
@@ -2576,11 +1910,7 @@ def save_exam_date_list(dates, path=None):
     _EXAM_CACHE.update(path=None, mtime=None, value=[])
     return out
 
-
 def save_exam_dates(first, second=None, path=None):
-    """(구 API) 시험일 1~2개 저장 — 목록을 통째로 바꾼다.
-
-    first 가 None 이면 전부 지웁니다. 새 코드는 save_exam_date_list 를 쓰세요."""
     d1, d2 = parse_iso_date(first), parse_iso_date(second)
     if d1 is None:
         d1, d2 = None, None
@@ -2588,9 +1918,7 @@ def save_exam_dates(first, second=None, path=None):
         d2 = None
     return save_exam_date_list([d for d in (d1, d2) if d], path)
 
-
 def add_exam_date(value, path=None):
-    """시험일 하나 추가 (이미 있으면 그대로). (저장된 목록, 추가됨) 반환."""
     d = parse_iso_date(value)
     if d is None:
         return exam_dates(path=path), False
@@ -2599,51 +1927,36 @@ def add_exam_date(value, path=None):
         return cur, False
     return save_exam_date_list(cur + [d], path), True
 
-
 def remove_exam_date(value, path=None):
-    """시험일 하나 제거. (저장된 목록, 지워짐) 반환."""
     d = parse_iso_date(value)
     cur = exam_dates(path=path)
     if d is None or d not in cur:
         return cur, False
     return save_exam_date_list([x for x in cur if x != d], path), True
 
-
 def clear_exam_dates(path=None):
-    """시험일 전체 비우기 (0개 = 자유 연습 모드)."""
     return save_exam_date_list([], path)
 
-
 def exam_date_set(exam=None):
-    """시험일이 하나라도 설정돼 있으면 True."""
     return bool(_exams(exam))
 
-
 def routine_start(exam=None, today=None):
-    """Day 1(= D-7) 날짜. 시험일 미설정이면 None."""
     ex = effective_exams(exam, today)
     return ex[0] - timedelta(days=ROUTINE_DAYS) if ex else None
 
-
 def routine_tag(exam=None, today=None):
-    """기록.json 루틴 세대 표시 — 기준 시험일마다 다른 값 (미설정이면 '')."""
     ex = effective_exams(exam, today)
     return ex[0].isoformat() if ex else ""
 
-
 def progress_ns(exam=None, today=None):
-    """세트설정.json '_진행' 키 접두 — 기준 시험일이 바뀌면 진행도 분리."""
     ex = effective_exams(exam, today)
     return "r" + (ex[0].strftime("%Y%m%d") if ex else "0")
-
 
 EXAM_UNSET_TODO = (
     "시험일이 아직 설정되지 않았습니다. [시험일 설정]에서 시험 날짜를 "
     "입력하면 그 날짜 기준으로 D-7 ~ D-1 일주일 일정이 만들어집니다.")
 
 ROUTINE_PLAN = {
-    # 0 = 자유 연습 (시험일 미설정 또는 D-7 이전). 1~7 = Day 1~7 (D-7 ~ D-1).
-    # 어느 세트를 푸는지는 여기에 적지 않는다 — 보유 세트에서 엔진이 고른다.
     0: {"제목": "자유 연습", "종류": "안내",
         "할일": "아직 일주일 일정이 시작되기 전입니다. 지금은 자유 연습 "
                "구간이니 가진 세트를 편하게 풀어 보세요. 프로그램 실행·채점 "
@@ -2687,9 +2000,7 @@ PREP_STEPS = [
             "즐겨찾기에 추가하세요. 하루 1세트, 완주 + 채점이면 클리어입니다."},
 ]
 
-
 def set_intake_help(root=None):
-    """내 문제/정답 파일을 넣는 방법 안내 (프로그램·웹 공통 문구)."""
     where = f"\n넣는 곳: {root}" if root else ""
     return (
         "가지고 있는 문제 파일로 일정이 만들어집니다. 학습 폴더(하위 폴더 "
@@ -2703,12 +2014,7 @@ def set_intake_help(root=None):
         "\n파일을 넣고 [세트 다시 스캔]을 누르세요. 목록에 보이지 않으면 "
         "[세트 인식 진단]에 이유가 나옵니다.")
 
-
 def routine_date_for(no, exam=None, today=None):
-    """일정 번호 -> 날짜. Day N = 기준 시험일 - (ROUTINE_DAYS + 1 - N)일.
-
-    기준 시험일 = 가장 가까운 미래 시험일(effective_exams). PLAN_EXAM2 는 그
-    다음 시험일(없으면 None)."""
     ex = effective_exams(exam, today)
     if not ex:
         return None
@@ -2721,15 +2027,12 @@ def routine_date_for(no, exam=None, today=None):
         return ex[1] if len(ex) > 1 else None
     return None
 
-
 def routine_day_no(today=None, exam=None):
-    """날짜 -> 일정 번호. 0=D-7 이전(자유 연습·미설정), 1~7=Day, 8=시험,
-    9=다음 시험, 10=마지막 시험 이후."""
     today = today or date.today()
     all_ex = _exams(exam)
     if not all_ex:
         return 0
-    if today in all_ex:      # 시험 당일 — 목록 순번대로 8(첫) / 9(그 다음)
+    if today in all_ex:
         return PLAN_EXAM1 if all_ex.index(today) == 0 else PLAN_EXAM2
     ex = effective_exams(all_ex, today)
     if today > max(ex):
@@ -2740,33 +2043,22 @@ def routine_day_no(today=None, exam=None):
             return no
     return 0
 
-
 def plan_day_tag(no):
-    """일정 번호 -> 진행 저장/기록 day 라벨 ('d00'~'d07', 그 외 None)."""
     return f"d{int(no):02d}" if 0 <= int(no) <= ROUTINE_DAYS else None
 
-
 def dday_num(today=None, exam=None):
-    """다음 시험까지 남은 날 수 (오늘이 시험일이면 0, 전부 지났으면 음수).
-    시험일이 하나도 없으면 None."""
     today = today or date.today()
     ex = effective_exams(exam, today)
     if not ex:
         return None
     return (ex[0] - today).days
 
-
 def dday_label(n):
-    """남은 날 수 -> 'D-7' / 'D-day' / 'D+2'."""
     if n is None:
         return ""
     return "D-day" if n == 0 else (f"D-{n}" if n > 0 else f"D+{-n}")
 
-
 def dday_text(today=None, exam=None):
-    """D-day 문구: '시험 D-6' (다음 시험일이 또 있으면 '시험 D-6 · 2차 D-3').
-
-    기준은 가장 가까운 미래 시험일이고, 지난 시험일은 문구에 넣지 않는다."""
     today = today or date.today()
     ex = effective_exams(exam, today)
     if not ex:
@@ -2776,12 +2068,7 @@ def dday_text(today=None, exam=None):
         parts.append(f"2차 {dday_label((ex[1] - today).days)}")
     return " · ".join(parts)
 
-
 def scored_exam_records(records):
-    """점수가 있는 시험·수동 기록 (부분연습·오답재풀이·중단 응시 제외).
-
-    제출 없이 닫은 응시(점수 None)는 '응시'로 세지 않습니다 — 다시 응시 가능.
-    """
     out = []
     for r in records or []:
         if r.get("mode") in ("부분연습", "오답재풀이"):
@@ -2793,41 +2080,23 @@ def scored_exam_records(records):
         out.append(r)
     return out
 
-
 def best_total(records):
-    """전체 기록 최고점 (없으면 None)."""
     scores = [r["점수"] for r in scored_exam_records(records)]
     return max(scores) if scores else None
 
-
 def level_info(records):
-    """목표 사다리 상태 → {tier, current_goal, best_total, achieved, next_goal}.
-
-    현재 목표 = 아직 달성하지 못한 가장 낮은 단계(전체 기록 최고점 기준).
-    예: 최고점 72 → 70 달성, 현재 목표 80. 100 달성이면 tier "perfect".
-    """
     return level_from_best(best_total(records))
 
-
 def goal_label(goal):
-    """목표 표시 문구: '목표 70점(합격선)' · '목표 80점(승급)'."""
     if not goal:
         return ""
     return f"목표 {int(goal)}점(" \
         + ("합격선" if int(goal) == PASS_LINE else "승급") + ")"
 
-
 def attempt_dates(records):
-    """응시한 날짜 집합 (점수 있는 시험·수동 기록이 있는 날)."""
     return {_record_date(r) for r in scored_exam_records(records)}
 
-
 def streak_info(records, today=None, exam=None):
-    """연속 응시 → {current, best, today_done}.
-
-    current = 오늘(오늘 미응시면 어제)까지 이어진 연속 응시 일수,
-    best = 첫 응시일부터 오늘까지 가장 길었던 연속 일수 (시험일은 세지 않음).
-    """
     today = today or date.today()
     ex = _exams(exam)
     days = {d for d in attempt_dates(records)
@@ -2846,14 +2115,6 @@ def streak_info(records, today=None, exam=None):
         d += timedelta(days=1)
     return {"current": cur, "best": best, "today_done": today_done}
 
-
-# --- 점수대 밴드 (v2.7.0) — 프로그램·웹 공통 정의 ---------------------------
-#
-# 세트의 **최고점**을 여섯 구간으로 나눈다. "아직 목표에 못 미친(미완성) 세트"를
-# 한눈에 보고 바로 다시 풀 수 있게 하는 용도라, 미응시·미달을 위에 두고 만점을
-# 아래에 둔다. 규약(문서/연동_API.md)의 `sets[].band`·`bands` 와 같은 정의이며
-# 판정은 최고점 하나만 보는 순수 함수라 프로그램·웹이 언제나 같은 결과를 낸다.
-
 SCORE_BANDS = [
     {"id": "none", "name": "미응시", "min": None, "max": None,
      "desc": "아직 응시 기록이 없는 세트 — 먼저 한 번 풀어 보세요"},
@@ -2871,12 +2132,7 @@ SCORE_BANDS = [
 BAND_IDS = [b["id"] for b in SCORE_BANDS]
 BAND_LABELS = {b["id"]: b["name"] for b in SCORE_BANDS}
 
-
 def score_band(best):
-    """세트 최고점 → 점수대 id (기록 없음 none · 0~69 fail · 70~79 pass ·
-    80~89 skilled · 90~99 high · 100 perfect).
-
-    숫자가 아니면 none, 100 을 넘는 값은 perfect, 0 미만은 fail 로 본다."""
     if isinstance(best, bool) or not isinstance(best, (int, float)):
         return "none"
     if best >= 100:
@@ -2889,24 +2145,13 @@ def score_band(best):
         return "pass"
     return "fail"
 
-
 def band_label(band_id):
-    """점수대 id → 이름 ('fail' → '미달')."""
     return BAND_LABELS.get(str(band_id or ""), "")
 
-
-# --- 게임형 요소 (v2.6.0): 티어 · 도전 과제 — 프로그램·웹 공통 정의 -----------
-#
-# 규약(문서/연동_API.md)의 `achievements` 와 같은 정의입니다. 판정은 **규약
-# records[]**(serialize_records 출력)만 보는 순수 함수라 프로그램과 웹(폴백
-# 모드 포함)이 같은 결과를 냅니다. 유치한 연출 대신 "지금 어디까지 왔는지"를
-# 한눈에 보여 주는 용도이며, 색만으로 상태를 구분하지 않도록 아이콘 글자와
-# 달성/미달성 문구를 항상 함께 씁니다.
-
 TIER_LABELS = {70: "합격", 80: "숙련", 90: "고득점", 100: "만점"}
-FAST_CLEAR_SEC = 40 * 60          # '40분 내 완주' 기준 (실제 시험 시간)
+FAST_CLEAR_SEC = 40 * 60
 CALC_AREA = "계산작업"
-BASE_AREA_POINTS = 60             # 계산작업을 뺀 세 영역의 배점 합
+BASE_AREA_POINTS = 60
 CALC_AREA_POINTS = 40
 
 ACHIEVEMENT_DEFS = [
@@ -2939,17 +2184,13 @@ ACHIEVEMENT_DEFS = [
 ]
 ACHIEVEMENT_IDS = [a["id"] for a in ACHIEVEMENT_DEFS]
 
-
 def tier_label(goal):
-    """목표 점수 → 티어 이름: 70 합격 · 80 숙련 · 90 고득점 · 100 만점."""
     try:
         return TIER_LABELS[int(goal)]
     except (TypeError, ValueError, KeyError):
         return ""
 
-
 def level_from_best(best):
-    """최고점 → level_info 와 같은 dict (기록 형식과 무관한 순수 계산)."""
     achieved = [t for t in GOAL_TIERS if best is not None and best >= t]
     perfect = GOAL_TIERS[-1] in achieved
     goal = GOAL_TIERS[-1] if perfect \
@@ -2958,11 +2199,7 @@ def level_from_best(best):
             "best_total": best, "achieved": achieved,
             "next_goal": None if perfect else goal}
 
-
 def parse_elapsed(value):
-    """소요시간 → 초. '38분 10초' · '39:10' · '1:02:03' · 숫자 모두 처리.
-
-    읽을 수 없으면 0 ('-' 인 수동 기록 등)."""
     if isinstance(value, bool):
         return 0
     if isinstance(value, (int, float)):
@@ -2983,11 +2220,7 @@ def parse_elapsed(value):
     m2 = re.fullmatch(r"(\d+)\s*초?", text)
     return int(m2.group(1)) if m2 else 0
 
-
 def _ach_records(records):
-    """규약 records[] → 도전 과제 판정용 정규화 목록 (date·time·id 순).
-
-    점수가 있는 `시험`·`수동` 기록만. 이상한 항목은 조용히 버립니다."""
     out = []
     for r in records or []:
         if not isinstance(r, dict):
@@ -3021,9 +2254,7 @@ def _ach_records(records):
     out.sort(key=lambda r: (r["date"], r["time"], r["id"]))
     return out
 
-
 def _area_totals(rec):
-    """기록 1건의 영역별 [배점, 득점] — 시트 이름을 영역으로 묶습니다."""
     out = {}
     for s in rec.get("sheets") or []:
         cat = _category_of_sheet(s.get("name"))
@@ -3032,22 +2263,13 @@ def _area_totals(rec):
         cur[1] += s["earned"]
     return out
 
-
 def _iso_next(d):
-    """'2026-09-05' → '2026-09-06' (읽을 수 없으면 None)."""
     try:
         return (date.fromisoformat(d) + timedelta(days=1)).isoformat()
     except (TypeError, ValueError):
         return None
 
-
 def achievements(records, exam=None):
-    """도전 과제 12종 판정 (규약 records[] 만 보는 순수 함수).
-
-    반환: ACHIEVEMENT_DEFS 순서의 [{id, name, desc, icon, group, done, when}].
-    `when` 은 달성한 기록의 응시 날짜(YYYY-MM-DD), 연속 배지는 그 연속이
-    채워진 날. 프로그램·웹이 같은 정의를 씁니다.
-    """
     recs = _ach_records(records)
     got = {}
 
@@ -3081,7 +2303,6 @@ def achievements(records, exam=None):
             mark("fast40", d)
         if d not in days:
             days.append(d)
-    # 연속 응시 (streak_info 와 같은 규칙: 시험일은 세지 않음)
     exam_iso = [x.isoformat() for x in _exams(exam)]
     run, prev = 0, None
     for d in sorted(days):
@@ -3098,30 +2319,22 @@ def achievements(records, exam=None):
         out.append(dict(a, done=a["id"] in got, when=got.get(a["id"])))
     return out
 
-
 def achievement_summary(records):
-    """도전 과제 요약 → {done, total, items, latest}."""
     items = achievements(records)
     done = [a for a in items if a["done"]]
     latest = max(done, key=lambda a: a["when"]) if done else None
     return {"done": len(done), "total": len(items), "items": items,
             "latest": latest}
 
-
 def new_achievements(before, after):
-    """직전 기록 목록 대비 **새로 달성한** 도전 과제 (응시 결과 연출용)."""
     had = {a["id"] for a in achievements(before) if a["done"]}
     return [a for a in achievements(after) if a["done"] and a["id"] not in had]
 
-
 def serialized_best(records):
-    """규약 records[] 의 최고점 (점수 있는 시험·수동 기록 기준, 없으면 None)."""
     scores = [r["total"] for r in _ach_records(records)]
     return max(scores) if scores else None
 
-
 def gauge_fraction(best, goal):
-    """티어 게이지 채움 비율 0.0~1.0 (최고점 / 현재 목표)."""
     try:
         g = float(goal or 0)
     except (TypeError, ValueError):
@@ -3131,13 +2344,7 @@ def gauge_fraction(best, goal):
     b = float(best or 0)
     return max(0.0, min(1.0, b / g))
 
-
 def progress_delta(before, after):
-    """응시 결과 연출용 요약 (규약 records[] 두 벌, after 는 이번 기록 포함).
-
-    → {prev_best, best, best_delta, level_before, level_after, tier_up[],
-       new_badges[], badges_done, badges_total}
-    """
     prev_best = serialized_best(before)
     best = serialized_best(after)
     lv_b, lv_a = level_from_best(prev_best), level_from_best(best)
@@ -3151,21 +2358,7 @@ def progress_delta(before, after):
         "badges_done": summ["done"], "badges_total": summ["total"],
     }
 
-
-# --- 점수대 세트 보드 (v2.7.0) — 프로그램·웹 공통 정의 -----------------------
-#
-# 입력은 도전 과제와 같은 **규약 records[]** 하나뿐이라 프로그램·웹(폴백 모드
-# 포함)이 같은 보드를 그린다. 세트 식별은 norm(정규화 키)으로만 한다.
-
 def set_progress(norm, records):
-    """세트 하나의 진행 상황 (규약 records[] 만 보는 순수 함수).
-
-    → {attempts, best, band, scores, last_date, prev_best, prev_band,
-       best_delta, improved}
-    · scores: 응시 순서(날짜 → 시각 → id)대로의 점수 목록 (예: [58, 76])
-    · prev_best: 마지막 응시 **전까지의** 최고점 (첫 응시면 None)
-    · best_delta·improved: 마지막 응시로 최고점이 올랐으면 오른 폭과 True
-    """
     key = str(norm or "")
     recs = [r for r in _ach_records(records) if r["norm"] == key] if key else []
     scores = [r["total"] for r in recs]
@@ -3186,16 +2379,7 @@ def set_progress(norm, records):
         "improved": improved,
     }
 
-
 def score_board(sets, records):
-    """점수대 세트 보드 → {"sets": [...], "bands": [...]}.
-
-    sets 는 프로그램 세트 dict 든 규약 sets[] 든 `name`·`norm` 만 본다.
-    · sets[]: 입력 순서 그대로 + set_progress 결과 (+ name·norm)
-    · bands[]: SCORE_BANDS 순서(미응시 → 미달 → … → 만점)의
-      {id, name, desc, count, sets[norm]} — 밴드 안은 최고점 오름차순(동점은
-      이름순), 미응시는 입력 순서를 지킨다.
-    """
     rows = []
     for s in sets or []:
         norm = str((s or {}).get("norm") or "")
@@ -3206,7 +2390,7 @@ def score_board(sets, records):
     for i, b in enumerate(SCORE_BANDS):
         mine = [(k, r) for k, r in enumerate(rows) if r["band"] == b["id"]]
         if b["id"] == "none":
-            order = mine                                   # 미응시는 입력 순서
+            order = mine
         else:
             order = sorted(mine, key=lambda kr: (kr[1]["best"], kr[1]["name"]))
         bands.append({"id": b["id"], "name": b["name"], "desc": b["desc"],
@@ -3214,40 +2398,24 @@ def score_board(sets, records):
                       "sets": [r["norm"] for _k, r in order]})
     return {"sets": rows, "bands": bands}
 
-
 def band_summary_text(bands):
-    """밴드 개수 요약 한 줄: '미응시 3 · 미달 2 · 합격 1' (빈 밴드는 뺀다)."""
     parts = [f"{b['name']} {b['count']}" for b in bands or [] if b["count"]]
     return " · ".join(parts) if parts else "세트 없음"
 
-
 def best_update_text(row):
-    """최고점 갱신 문구: '최고 58 → 76 (+18)'. 갱신이 아니면 ''."""
     if not row or not row.get("improved") or row.get("prev_best") is None:
         return ""
     return (f"최고 {row['prev_best']:g} → {row['best']:g} "
             f"(+{row['best_delta']:g})")
 
-
 def mandatory_step_indexes(steps):
-    """클리어에 필요한 필수 스텝 번호 (선택 표시가 없는 스텝)."""
     return [i for i, s in enumerate(steps or []) if not s.get("선택")]
 
-
 def plan_slot_names(plan):
-    """세트 슬롯 표시명 목록 (자동 슬롯은 '자동 선택')."""
     return [spec if spec != AUTO else "자동 선택"
             for spec in (plan.get("세트") or [])]
 
-
 def build_day_steps(plan, slot_names=None):
-    """일정 -> 스텝 시퀀스 (세트 슬롯마다 필수 ①② + 선택 ③④).
-
-    ① 시험 모드 40분 완주 ② 채점·성적 확인 — 여기까지가 '오늘 클리어'.
-    ③ (선택) 오답노트 확인 ④ (선택) 오답 재풀이 15분
-    → (특별: 마감일) (선택) 실수 노트 → (선택) 함수 퀴즈.
-    점수는 클리어 조건이 아닙니다 (낮으면 그 세트가 이후 날짜에 다시 배정됨).
-    """
     no = plan.get("no", 0)
     if plan.get("종류") != "모의":
         return [dict(s) for s in PREP_STEPS] if no == 0 else []
@@ -3303,7 +2471,6 @@ def build_day_steps(plan, slot_names=None):
                          "자동 체크됩니다. 건너뛰어도 됩니다."})
     return steps
 
-
 def _default_todo(plan):
     names = plan_slot_names(plan)
     txt = "모의고사 " + " + ".join(names) + " 40분 완주 → 채점"
@@ -3314,9 +2481,7 @@ def _default_todo(plan):
         txt += f"  [{plan['메모']}]"
     return txt
 
-
 def plan_for_day(no, slot_names=None, exam=None):
-    """일정 번호 -> 일정 dict (no/날짜/할일/스텝 포함)."""
     no = int(no)
     if no not in ROUTINE_PLAN:
         no = max(0, min(PLAN_AFTER, no))
@@ -3333,16 +2498,9 @@ def plan_for_day(no, slot_names=None, exam=None):
     plan["스텝"] = build_day_steps(plan, slot_names)
     return plan
 
-
-# 날짜별 기본 스텝 시퀀스 (세트명은 슬롯 표시명) — 무결성 테스트/조회용
 ROUTINE_STEPS = {no: plan_for_day(no)["스텝"] for no in PLAN_ORDER}
 
-
 def plan_title(plan, today=None, set_names=None, exam=None):
-    """카드 제목: 'Day 3 · 9/5(토) · 오늘: 내 모의 1회 · 시험 D-5'.
-
-    today를 주면 D-day를 병기합니다.
-    """
     d = plan.get("날짜")
     d_txt = f"{d.month}/{d.day}({'월화수목금토일'[d.weekday()]})" if d else ""
     no = plan["no"]
@@ -3378,14 +2536,6 @@ def plan_title(plan, today=None, set_names=None, exam=None):
         parts.append(dday_text(today, exam))
     return " · ".join(parts)
 
-
-# 일정 슬롯별 식별 규칙 (v2.3.1: 연도+회차/형 중심).
-#   "핵심": 반드시 있어야 하는 토큰 묶음 목록 — 묶음 안은 대안(어느 하나면 됨,
-#           연도는 2자리/4자리를 같은 해로 봄)
-#   "보조": 식별 일치에 더 필요한 묶음 — 없으면 '부분 일치'로 강등
-#   "연도제외": True면 연도 토큰(20xx·2자리)이 있는 세트는 후보에서 제외
-# 어느 등급이든 슬롯 문구 전체 토큰과 세트 토큰의 연도·회차·형 충돌은 후보 제외
-# (예: '2024 상시 1회'는 2026 세트에 붙지 않음).
 SLOT_IDENTITY = {
     "2024 상시 1회": {"핵심": [["2024", "24"], ["1회"]]},
     "2024 상시 2회": {"핵심": [["2024", "24"], ["2회"]]},
@@ -3400,55 +2550,37 @@ SLOT_IDENTITY = {
 }
 SLOT_TIER_LABEL = {3: "전체 토큰 일치", 2: "식별 토큰 일치", 1: "부분 일치"}
 
-
 def slot_identity_spec(text):
-    """슬롯 문구의 식별 규칙 dict (표에 없으면 연도(20xx)를 뺀 토큰 각각이 핵심)."""
     if text in SLOT_IDENTITY:
         return SLOT_IDENTITY[text]
     toks = set_tokens(text)
     rest = sorted(t for t in toks if not _YEAR4_RE.fullmatch(t)) or sorted(toks)
     return {"핵심": [[t] for t in rest]}
 
-
 def slot_identity_tokens(text):
-    """슬롯 문구의 식별 토큰 표시용 집합 — 대안 묶음은 '2024/24'처럼 합쳐 표시."""
     spec = slot_identity_spec(text)
     return {"/".join(g) for g in spec["핵심"]} | \
         {"/".join(g) for g in spec.get("보조", [])}
 
-
 def _set_tokens_of(s):
-    """세트 토큰: 세트명 + 폴더명 (+ 병합된 중복 세트의 이름·폴더명)."""
     toks = set_tokens(s["name"]) | set_tokens(os.path.basename(s["dir"] or ""))
     for d in s.get("중복") or []:
         toks |= set_tokens(d.get("name") or "")
         toks |= set_tokens(os.path.basename(d.get("dir") or ""))
     return toks
 
-
 def _has_token(st, t):
-    """세트 토큰에 t가 있는가 (연도는 2자리/4자리 동일시)."""
     if _is_year_token(t):
         return bool(_year_tokens({t}) & _year_tokens(st))
     return t in st
 
-
 def _group_hit(st, group):
-    """대안 묶음 중 세트에 있는 토큰 (없으면 None)."""
     for t in group:
         if _has_token(st, t):
             return t
     return None
 
-
 def slot_candidate_score(spec, s, st=None):
-    """(슬롯, 세트) 점수 (등급, 연도·회차·형 겹침, 전체 겹침) 또는 None(후보 아님).
-
-    등급 3 전체 토큰 일치(슬롯 문구 토큰이 세트에 다 있음) > 2 식별 토큰 일치
-    (핵심+보조) > 1 부분 일치(핵심만). 슬롯 전체 토큰과 연도·회차·형이 충돌하거나
-    핵심 묶음이 하나라도 없으면 후보 아님. 반환 튜플 뒤에 사유 문구가 붙습니다:
-    ((등급, 숫자겹침, 겹침), 사유).
-    """
     toks = set_tokens(spec)
     st = st if st is not None else _set_tokens_of(s)
     if _token_conflict(toks, st):
@@ -3478,12 +2610,7 @@ def slot_candidate_score(spec, s, st=None):
                         " — " + "·".join(missing) + " 없음)")
     return (tier, _numeric_shared(toks, st), _shared_count(toks, st)), why
 
-
 def all_slot_specs():
-    """알려진 슬롯 문구 전부 (식별 표 + 일정표에 남은 고정 문구) — 순서 유지.
-
-    일정은 더 이상 세트를 고정하지 않으므로(보유 세트에서 엔진이 고른다) 보통은
-    식별 표뿐이다. 이 표는 '계산 드릴' 같은 이름을 세트에 이어 주는 용도다."""
     specs = list(SLOT_IDENTITY)
     for no in sorted(ROUTINE_PLAN):
         for spec in ROUTINE_PLAN[no].get("세트") or []:
@@ -3491,26 +2618,12 @@ def all_slot_specs():
                 specs.append(spec)
     return specs
 
-
 def assign_slots(sets, specs=None, mapping=None):
-    """일정 슬롯 ↔ 세트 전역 유일 배정 (v2.3.1). 반환 {슬롯: (세트|None, 사유)}.
-
-    요청한 specs에 알려진 슬롯 전부(all_slot_specs)를 더해 함께 배정합니다 —
-    '2026 1회'처럼 확실한 슬롯이 그 세트를 먼저 가져가야 '2024 상시 1회'나
-    '컴활 2급 상시'가 같은 세트를 차지하지 못하기 때문입니다.
-    ① 세트설정 `_슬롯매핑`(mapping, 직접 선택 저장)이 최우선 — 그 세트(같은 키의
-       스캔 세트 포함)는 다른 슬롯 후보에서 제외.
-    ② 모든 (슬롯, 세트) 쌍을 slot_candidate_score로 채점, 점수 높은 짝부터
-       탐욕적으로 배정(한 세트는 한 슬롯). 같은 점수의 짝이 슬롯 또는 세트를
-       공유하면(동점) 그 슬롯들은 미배정으로 두고 사유에 후보를 나열합니다.
-    ③ 남은 슬롯: 후보가 다른 슬롯에 배정됐으면 그 사실을, 아예 없으면
-       '후보 없음'을 사유로.
-    """
     specs = list(dict.fromkeys(list(specs or []) + all_slot_specs()))
     result = {}
-    taken = set()          # 배정된 세트 norm
+    taken = set()
     mapping = mapping or {}
-    for spec in specs:                           # ① 직접 선택 저장
+    for spec in specs:
         ent = mapping.get(spec)
         if not isinstance(ent, dict):
             continue
@@ -3520,11 +2633,11 @@ def assign_slots(sets, specs=None, mapping=None):
         result[spec] = (ms, "직접 선택 저장됨 (" +
                         os.path.basename(ms["problem"]) + ")")
         taken.add(ms["norm"])
-        for s in sets:                           # 중복 병합 대표도 같은 세트
+        for s in sets:
             if any(d.get("norm") == ms["norm"] for d in s.get("중복") or []):
                 taken.add(s["norm"])
     toks = {id(s): _set_tokens_of(s) for s in sets}
-    pairs = []                                   # ② 채점
+    pairs = []
     for spec in specs:
         if spec in result:
             continue
@@ -3536,9 +2649,9 @@ def assign_slots(sets, specs=None, mapping=None):
                 pairs.append((r[0], spec, s, r[1]))
     order = {spec: i for i, spec in enumerate(specs)}
     pairs.sort(key=lambda t: (tuple(-x for x in t[0]), order[t[1]], t[2]["name"]))
-    tied = {}                                    # spec -> 사유
-    blocked = set()                              # 동점으로 묶인 세트 norm
-    winner = {}                                  # norm -> spec
+    tied = {}
+    blocked = set()
+    winner = {}
     for i, (sc, spec, s, why) in enumerate(pairs):
         if spec in result or spec in tied or s["norm"] in taken \
                 or s["norm"] in blocked:
@@ -3567,7 +2680,7 @@ def assign_slots(sets, specs=None, mapping=None):
                                 f"'{spec}'과(와) 동점 — [직접 선택]으로 "
                                 "지정하세요")
             blocked.add(s["norm"])
-    for spec in specs:                           # ③ 미배정 사유
+    for spec in specs:
         if spec in result:
             continue
         if spec in tied:
@@ -3585,31 +2698,18 @@ def assign_slots(sets, specs=None, mapping=None):
                                   "문제/정답 짝이 없음")
     return result
 
-
 def match_slot(sets, text, mapping=None):
-    """슬롯 문구 -> (세트 or None, 판정 설명). GUI 없이 테스트 가능.
-
-    v2.3.1: 알려진 슬롯 전부와 함께 전역 유일 배정(assign_slots)한 결과 중
-    text의 항목 — 다른 슬롯이 더 잘 맞는 세트는 이 슬롯에 오지 않습니다.
-    """
     return assign_slots(sets, [text], mapping)[text]
 
-
 def find_set_for_tokens(sets, text):
-    """일정의 세트 지정 문구를 스캔된 세트에 매칭 (match_slot의 세트만)."""
     return match_slot(sets, text)[0]
 
-
 def load_slot_mapping(path=None):
-    """세트설정.json '_슬롯매핑': {슬롯 문구: {problem, answer, pdf}}.
-    (저장된 pdf의 회차 충돌 검증은 set_from_mapping에서)"""
     cfg = load_set_config(path or SET_CONFIG_PATH)
     raw = _cfg_section(cfg, "_슬롯매핑")
     return {k: v for k, v in raw.items() if isinstance(v, dict)}
 
-
 def save_slot_mapping(spec, s, path=None):
-    """슬롯 문구 -> 직접 선택한 세트 파일 매핑 저장 (이후 자동 해석)."""
     p = path or SET_CONFIG_PATH
     cfg = load_set_config(p)
     cfg.setdefault("_슬롯매핑", {})[str(spec)] = {
@@ -3620,9 +2720,7 @@ def save_slot_mapping(spec, s, path=None):
     }
     return save_set_config(cfg, p)
 
-
 def set_from_mapping(ent):
-    """매핑 항목 -> 세트 dict (파일이 없으면 None)."""
     try:
         prob, ans = ent.get("problem"), ent.get("answer")
         if not (isinstance(prob, str) and isinstance(ans, str) and prob
@@ -3634,20 +2732,13 @@ def set_from_mapping(ent):
         s["direct"] = True
         pdf = ent.get("pdf")
         if isinstance(pdf, str) and pdf and os.path.isfile(pdf):
-            # 저장된 PDF가 회차·형·연도 충돌이면 무시 (같은 키 자동 감지 유지)
             _attach_saved_pdf(s, pdf, bool(ent.get("pdf_확인됨")), "슬롯매핑")
         return s
     except Exception:
         return None
 
-
 def scan_diagnosis_text(root, config=None, specs=None, sets=None,
                         hidden_sets=None):
-    """[세트 인식 진단] 텍스트: 파일 → 키 → 역할 → 세트 → 슬롯 매칭 결과.
-
-    맨 위에 지금 쓰는 **스캔 폴더**(기본값인지 직접 지정한 것인지)와 **숨긴
-    세트**를 적어, 세트가 왜 보이거나 안 보이는지 한 화면에서 알 수 있게 한다.
-    """
     if config is None:
         config = load_set_config()
     hide_keys = hidden_set_keys(cfg=config)
@@ -3680,17 +2771,17 @@ def scan_diagnosis_text(root, config=None, specs=None, sets=None,
         lines.append("숨긴 세트: 없음")
     lines.append("")
     owner = {}
-    tie_files = {}          # 동점으로 연결 못 한 파일명 -> 사유
+    tie_files = {}
     for s in sets:
         for k in ("problem", "answer", "pdf", "key"):
             if s.get(k):
                 owner[os.path.abspath(s[k])] = s["name"]
-        for d in s.get("중복") or []:          # 병합된 중복 세트의 파일
+        for d in s.get("중복") or []:
             for k in ("problem", "answer", "pdf", "key"):
                 if d.get(k):
                     owner.setdefault(os.path.abspath(d[k]),
                                      f"{s['name']} (중복·동일 내용)")
-        for p in s.get("pdf_사본") or []:      # 같은 키 PDF의 다른 사본
+        for p in s.get("pdf_사본") or []:
             owner.setdefault(os.path.abspath(p), f"{s['name']} (같은 키 사본)")
         for k in ("pdf", "key"):
             if s.get(k + "_tie"):
@@ -3710,7 +2801,6 @@ def scan_diagnosis_text(root, config=None, specs=None, sets=None,
                                   "채점결과", "~$", ".")):
                     continue
                 files.append(os.path.join(dirpath, fn))
-    # 세트 토큰이 하나도 없는 PDF(대학 서류 등)는 연결 후보가 아니므로 접어 표시
     unrelated = [p for p in files
                  if os.path.splitext(p)[1].lower() == ".pdf"
                  and not set_tokens(os.path.basename(p))
@@ -3775,7 +2865,6 @@ def scan_diagnosis_text(root, config=None, specs=None, sets=None,
     lines.append("")
     lines.append("== 일정 슬롯 매칭 (전역 유일 배정: 한 세트는 한 슬롯) ==")
     if specs is None:
-        # 일정이 세트를 고정하지 않으므로 '알려진 이름' 표(식별 규칙)로 점검한다.
         specs = all_slot_specs()
     mapping = {k: v for k, v in _cfg_section(config, "_슬롯매핑").items()
                if isinstance(v, dict)}
@@ -3805,31 +2894,17 @@ def scan_diagnosis_text(root, config=None, specs=None, sets=None,
                      "(확장자 달라도 됨) 짝을 만들거나 [직접 선택]으로 지정하세요.")
     return "\n".join(lines)
 
-
-# ---------------------------------------------------------------------------
-# 자동 세트 선택 (재응시 세트 고르기) — GUI 없이 테스트 가능
-# ---------------------------------------------------------------------------
-
 def _record_date(r):
     try:
         return datetime.strptime(str(r.get("일시"))[:10], "%Y-%m-%d").date()
     except Exception:
         return None
 
-
 def set_exam_records(set_name, records):
-    """세트의 시험 모드(전체 응시) 기록 — 부분연습·오답재풀이 제외."""
     return [r for r in set_records(set_name, records)
             if r.get("mode") not in ("부분연습", "오답재풀이")]
 
-
 def pick_set_for_retry(sets, records, count=1, today=None, exclude=()):
-    """재응시 세트 자동 선택. [(세트, 이유)] count개 (서로 다른 세트).
-
-    우선순위: ① 응시 기록이 없는 신규 세트(폴더에 새로 넣은 세트 편입)
-    ② 기록상 최고점이 가장 낮은 세트 — 단, 최근 2일(오늘·어제) 응시한
-    세트는 제외 ③ 전부 제외되면 최저점 세트. exclude: 제외할 세트/이름.
-    """
     today = today or date.today()
     taken = set()
     for x in exclude:
@@ -3870,9 +2945,7 @@ def pick_set_for_retry(sets, records, count=1, today=None, exclude=()):
         taken.add(chosen.get("name"))
     return picks
 
-
 def load_auto_picks(day_tag, path=None):
-    """세트설정.json '_자동선택'에 저장된 오늘 자동 선택 [{세트, 이유}]."""
     cfg = load_set_config(path or SET_CONFIG_PATH)
     raw = _cfg_section(cfg, "_자동선택").get(day_tag) or []
     if not isinstance(raw, (list, tuple)):
@@ -3887,9 +2960,7 @@ def load_auto_picks(day_tag, path=None):
             out.append(None)
     return out
 
-
 def save_auto_picks(day_tag, picks, path=None):
-    """오늘의 자동 선택 결과 저장 (picks: [{세트, 이유} 또는 None])."""
     p = path or SET_CONFIG_PATH
     cfg = load_set_config(p)
     cfg.setdefault("_자동선택", {})[day_tag] = [
@@ -3897,15 +2968,8 @@ def save_auto_picks(day_tag, picks, path=None):
         for x in picks]
     return save_set_config(cfg, p)
 
-
 def resolve_day_sets(plan, sets, records=None, today=None, saved=None,
                      mapping=None):
-    """일정의 세트 슬롯 -> [(세트 or None, 이유)].
-
-    고정 슬롯은 저장된 직접 선택(mapping) → 전역 유일 배정(assign_slots) 순,
-    자동 슬롯은 저장된 선택(saved)을 우선 복원하고 없으면
-    pick_set_for_retry로 고릅니다. 슬롯끼리는 서로 다른 세트.
-    """
     slots = list(plan.get("세트") or [])
     out = [None] * len(slots)
     reasons = [""] * len(slots)
@@ -3914,10 +2978,10 @@ def resolve_day_sets(plan, sets, records=None, today=None, saved=None,
     objs = list(plan.get("세트객체") or [])
     whys = list(plan.get("슬롯사유") or [])
     assigned = None
-    for k, spec in enumerate(slots):          # ① 고정 세트
+    for k, spec in enumerate(slots):
         if spec != AUTO:
             s, how = None, ""
-            if k < len(objs) and objs[k]:            # 적응형 배정 세트
+            if k < len(objs) and objs[k]:
                 s = objs[k]
                 how = "적응형 배정 · " + (whys[k] if k < len(whys) and whys[k]
                                        else "배정")
@@ -3935,7 +2999,7 @@ def resolve_day_sets(plan, sets, records=None, today=None, saved=None,
             if s:
                 taken.add(s["norm"])
     saved = list(saved or [])
-    for k, spec in enumerate(slots):          # ② 저장된 자동 선택 복원
+    for k, spec in enumerate(slots):
         if spec == AUTO and k < len(saved) and saved[k]:
             s = next((x for x in sets if x["name"] == saved[k]["세트"]
                       and x["norm"] not in taken), None)
@@ -3943,7 +3007,7 @@ def resolve_day_sets(plan, sets, records=None, today=None, saved=None,
                 out[k] = s
                 reasons[k] = (saved[k].get("이유") or "이전 선택") + " (유지)"
                 taken.add(s["norm"])
-    for k, spec in enumerate(slots):          # ③ 새로 자동 선택
+    for k, spec in enumerate(slots):
         if spec == AUTO and out[k] is None:
             picks = pick_set_for_retry(
                 [s for s in sets if s["norm"] not in taken],
@@ -3955,13 +3019,7 @@ def resolve_day_sets(plan, sets, records=None, today=None, saved=None,
                 reasons[k] = "선택할 세트가 없습니다 (세트를 폴더에 넣어 주세요)"
     return list(zip(out, reasons))
 
-
-# ---------------------------------------------------------------------------
-# 오답 재풀이 (최신 채점 JSON의 오답 시트만 부분 채점) — GUI 없이 테스트 가능
-# ---------------------------------------------------------------------------
-
 def wrong_sheets_from_items(items):
-    """오답 항목 -> 오답이 있는 시트 목록 (등장 순, 중복 제거)."""
     out = []
     for it in items or []:
         sh = str((it or {}).get("sheet") or "").strip()
@@ -3969,22 +3027,14 @@ def wrong_sheets_from_items(items):
             out.append(sh)
     return out
 
-
 def make_retry_copy(problem, set_name, when=None):
-    """문제 파일 -> 오답재풀이_<세트>_<일시>.xlsm 사본."""
     when = when or datetime.now()
     stamp = when.strftime("%Y%m%d_%H%M")
     d = os.path.dirname(os.path.abspath(problem))
     return copy_as_macro_enabled(
         problem, _unique_stem(d, f"오답재풀이_{set_name}_{stamp}"))
 
-
 def retry_payload_for_set(s, minutes=15, json_path=None):
-    """세트의 최신 전체 채점 JSON(또는 json_path 로 지정한 채점 JSON)에서
-    오답 시트를 뽑아 재풀이 실행 정보로.
-
-    반환 ('retry', payload) / ('missing', {이유}) / ('info', {메시지, 자동완료}).
-    """
     jp = json_path if json_path and os.path.isfile(json_path) \
         else find_latest_result_json(s, full_only=True)
     if not jp:
@@ -4004,54 +3054,18 @@ def retry_payload_for_set(s, minutes=15, json_path=None):
                      "minutes": int(minutes), "mode": "오답재풀이",
                      "json": jp, "점수": data.get("total")}
 
-
-# ---------------------------------------------------------------------------
-# 적응형 일정 엔진 v6 — 기록(기록.json) 기준으로 매번 재계산 (웹 루틴과 동일 규격)
-#   · 하루 **추천** 1세트. 주말 2세트·밀림 승격·용량 확장·전 세트 완주 보장·
-#     '선택' 강등은 없다. 못 한 날은 그냥 지나가고 남은 학습일만 표시한다
-#     (경고 아님). v2.7.0: 응시 횟수 제한 없음 — 오늘 이미 응시했어도 배정은
-#     그대로 남고(추천), 하루에 몇 번이든 다른 세트를 시작할 수 있다.
-#   · 목표는 사다리 70 → 80 → 90 → 100. 현재 목표 = 아직 달성하지 못한 가장
-#     낮은 단계(전체 기록 최고점 기준). 100 달성이면 만점(tier "perfect").
-#   · 세트 선택 ① 미응시(이름순) ② 70점 미만(최고점 낮은 순, kind retry)
-#     ③ 현재 목표 미달(최고점 낮은 순, kind goal) ④ 그래도 날이 남으면 보유
-#     세트를 순서대로 다시 배정(kind goal — 오답 복습 후 재응시) ⑤ 전 세트가
-#     이미 현재 목표 이상이면 그 날은 비워 둔다(자유 복습 — 필수 과제 없음).
-#   · **고정 세트 슬롯은 없다.** 무엇을 푸는지는 사용자가 가진 세트로 정해진다
-#     (세트가 하나도 없으면 "문제·정답 파일을 넣어 주세요" 안내).
-#   학습 구간은 시험일 기준 D-7 ~ D-1 한 구간뿐이다. 7일이 안 남았으면 뒤에서
-#   부터 잘려 오늘 ~ D-1 만 남고, 7일보다 많이 남았으면 D-7 전은 자유 연습이다.
-# ---------------------------------------------------------------------------
-
-
 def study_segments(exam=None, today=None):
-    """시험일 -> 학습 구간 [{seg, seg_start, end, exam}] (D-7 ~ D-1 한 구간).
-
-    기준은 **가장 가까운 미래 시험일** 하나다(effective_exams). 시험일이
-    여러 개여도 구간은 언제나 하나고, 앞 시험일이 지나면 다음 시험일 기준으로
-    옮겨 간다. 시험일이 하나도 없으면 빈 목록."""
     ex = effective_exams(exam, today)
     if not ex:
         return []
     return [{"seg": 1, "seg_start": ex[0] - timedelta(days=ROUTINE_DAYS),
              "end": ex[0] - timedelta(days=1), "exam": ex[0]}]
 
-
 def next_segment_after(seg_no, exam=None, today=None):
-    """seg_no 다음 학습 구간 (없으면 None) — 미리보기(preview)용."""
     return next((sg for sg in study_segments(exam, today)
                  if sg["seg"] == seg_no + 1), None)
 
-
 def segment_for(today, exam=None):
-    """오늘 -> 구간 정보.
-
-    kind: unset(시험일 미설정) / free(D-7 이전 자유 연습) / week(D-7~D-1) /
-          exam(시험 당일) / after(마지막 시험일 이후).
-    `exam_no` 는 **전체 시험일 목록** 기준 순번이라 2번째 시험 당일이면 2다.
-    (3.1.0: 지난 시험일은 기준에서 빠지므로 옛 `between` 구간은 더 이상 나오지
-    않는다 — 앞 시험이 끝나면 곧바로 다음 시험일 기준 free/week 가 된다.)
-    """
     all_ex = _exams(exam)
     if not all_ex:
         return {"kind": "unset"}
@@ -4065,16 +3079,10 @@ def segment_for(today, exam=None):
     return {"kind": "week", "seg": sg["seg"], "seg_start": sg["seg_start"],
             "start": max(today, sg["seg_start"]), "end": sg["end"]}
 
-
 def base_capacity(d, seg_end):
-    """기본 용량: 언제나 추천 1세트. 마감일도 1(+실수 노트).
-
-    '용량'은 하루 **추천** 분량일 뿐 응시 횟수 제한이 아니다(v2.7.0)."""
     return DAILY_CAP
 
-
 def exam_records_by_set(sets, records):
-    """{norm: [시험 모드 기록(날짜 오름차순)]} — 부분연습·오답재풀이 제외."""
     out = {}
     for s in sets:
         recs = [r for r in set_exam_records(s["name"], records)
@@ -4083,43 +3091,24 @@ def exam_records_by_set(sets, records):
         out[s["norm"]] = recs
     return out
 
-
 def prioritized_sets(sets):
-    """세트를 첫응시 순서로 정렬 — **이름순**(결정적).
-
-    고정 우선순위 표는 없앴다(v3.0.0): 어떤 세트를 먼저 푸는지는 사용자가 가진
-    파일만으로 정해진다. 반환 [(세트, 라벨)] — 라벨은 표시용 순번.
-    """
     ordered = sorted(sets or [], key=lambda s: (str(s.get("name") or ""),
                                                 str(s.get("norm") or "")))
     return [(s, f"{i + 1}/{len(ordered)}") for i, s in enumerate(ordered)]
-
 
 def _best(recs):
     scores = [r["점수"] for r in recs
               if isinstance(r.get("점수"), (int, float))]
     return max(scores) if scores else None
 
-
 def _slot(kind, s, goal=None, why="", spec=None):
     return {"kind": kind, "set": s, "name": s["name"] if s else "자동 선택",
             "goal": goal, "auto": s is None, "why": why,
             "spec": spec or (s["name"] if s else AUTO)}
 
-
 NO_SETS_REASON = "세트 없음 — 문제·정답 파일을 넣어 주세요"
 
-
 def build_adaptive_plan(today, records, sets, exam=None):
-    """적응형 일정 계산 (결정적: 같은 입력이면 같은 출력).
-
-    반환 dict: kind, seg, start, end, days{날짜: [슬롯...]}, free{날짜: 빈 슬롯},
-    level, streak, attempts_left(= 남은 학습일), today_locked(항상 False —
-    하위 호환), passed_sets, total_sets, all_clear, missed_days, reason,
-    remaining, no_sets.
-    슬롯: {kind: first|retry|goal, set, name, goal, auto, why, spec}
-    (boost_days·demoted·warning·retry_target 은 폐지 — 규약 호환용 빈 값)
-    """
     ex = _exams(exam)
     seg = segment_for(today, ex)
     lv = level_info(records)
@@ -4143,7 +3132,6 @@ def build_adaptive_plan(today, records, sets, exam=None):
         elif seg["kind"] == "between":
             plan["reason"] = "2차 시험 대비 — 오답 복습과 실수 노트만 가볍게"
         return plan
-    # free(자유 연습): 오늘은 일정 밖이지만 앞으로 올 D-7~D-1 은 미리 보여 준다.
     seg_start, end = seg["seg_start"], seg["end"]
     start = seg.get("start", seg_start)
     plan.update({"start": start, "end": end, "seg_start": seg_start})
@@ -4153,9 +3141,8 @@ def build_adaptive_plan(today, records, sets, exam=None):
     for r in recs_all:
         by_date.setdefault(_record_date(r), []).append(r)
     plan["_recs_by_date"] = by_date
-    plan["today_locked"] = False        # v2.7.0: 응시 제한 없음 (하위 호환 필드)
+    plan["today_locked"] = False
 
-    # 학습일 · 용량 (하루 추천 1세트 — 오늘 이미 응시했어도 그대로 둔다)
     days = []
     d = start
     while d <= end:
@@ -4163,9 +3150,8 @@ def build_adaptive_plan(today, records, sets, exam=None):
             days.append(d)
         d += timedelta(days=1)
     cap = {dd: DAILY_CAP for dd in days}
-    plan["attempts_left"] = len(days)             # 남은 학습일 (오늘 포함)
+    plan["attempts_left"] = len(days)
 
-    # 풀 — ① 미응시(이름순) ② 70점 미만 ③ 현재 목표 미달
     goal = lv["current_goal"]
     ordered = prioritized_sets(sets)
     first_pool = [(s, lab) for s, lab in ordered if not by_set.get(s["norm"])]
@@ -4185,15 +3171,11 @@ def build_adaptive_plan(today, records, sets, exam=None):
                          if PASS_LINE <= _b(s) < goal), key=_key)
     retry_pool = [("retry", s) for s in below_pass] \
         + [("goal", s) for s in below_goal]
-    # 전 세트가 현재 목표 이상 (세트가 있을 때만 의미 있음)
     plan["all_clear"] = bool(sets) and not first_pool and not retry_pool
-    # 재응시 후보 대기줄 (앞이 1순위) — 표시·테스트용
     plan["retry_queue"] = [{"kind": k, "name": s["name"],
                             "norm": s.get("norm") or "",
                             "best": bests.get(s["norm"])}
                            for k, s in retry_pool]
-    # ④ 첫 응시도 재응시 후보도 동나면 보유 세트를 이름순으로 돌려 다시 배정한다
-    #    (세트 수가 일주일보다 적을 때 — 오답 복습 후 점수 올리기).
     round_pool = [] if plan["all_clear"] else [s for s, _lab in ordered]
 
     queue = [_slot("first", s, goal, f"첫 응시 · 보유 세트 {lab}",
@@ -4210,10 +3192,10 @@ def build_adaptive_plan(today, records, sets, exam=None):
                 cand = retry_pool[cursor % len(retry_pool)]
                 cursor += 1
                 if all(x["set"]["norm"] != cand[1]["norm"]
-                       for x in per_day[dd]):      # 같은 날 같은 세트 금지
+                       for x in per_day[dd]):
                     pick = cand
                     break
-            if pick is None and round_pool:        # ④ 보유 세트 순환 재응시
+            if pick is None and round_pool:
                 for _try in range(len(round_pool)):
                     cand = round_pool[rcursor % len(round_pool)]
                     rcursor += 1
@@ -4221,7 +3203,7 @@ def build_adaptive_plan(today, records, sets, exam=None):
                            for x in per_day[dd]):
                         pick = ("goal", cand)
                         break
-            if pick is None:                       # 배정할 세트 없음 → 자유 복습
+            if pick is None:
                 break
             kind, s = pick
             b = bests.get(s["norm"])
@@ -4234,7 +3216,6 @@ def build_adaptive_plan(today, records, sets, exam=None):
     plan["days"] = {dd: per_day[dd] for dd in days}
     plan["remaining"] = sum(len(v) for v in per_day.values())
 
-    # 응시 없이 지나간 날 (표시용 — 경고·재배치 아님)
     missed = []
     dd = seg_start
     while dd < min(today, end + timedelta(days=1)):
@@ -4254,12 +3235,7 @@ def build_adaptive_plan(today, records, sets, exam=None):
                           else f"현재 목표 {goal}점 · 남은 학습일 {left}일")
     return plan
 
-
 def adaptive_day_plan(adaptive, no, exam=None):
-    """적응형 결과 -> 일정 번호 no의 카드/단계 창용 plan dict.
-
-    adaptive가 없거나 해당 날짜가 계산 범위 밖이면 고정 일정표로 폴백.
-    """
     base = plan_for_day(no, exam=exam)
     if not adaptive or adaptive.get("kind") not in ("week", "free"):
         return base
@@ -4273,7 +3249,7 @@ def adaptive_day_plan(adaptive, no, exam=None):
     plan["특별"] = []
     plan["레벨"] = lv
     plan["남은학습일"] = adaptive.get("attempts_left", 0)
-    if d < adaptive["start"]:                          # 지난 날: 기록 요약
+    if d < adaptive["start"]:
         recs = adaptive.get("_recs_by_date", {}).get(d, [])
         plan.update({"종류": "지난", "세트": [], "세트객체": [], "스텝": [],
                      "목표들": []})
@@ -4290,7 +3266,7 @@ def adaptive_day_plan(adaptive, no, exam=None):
                           "되돌리지 않습니다 (경고 아님). 밀린 세트는 점수대 "
                           "보드에서 골라 언제든 다시 풀 수 있어요.")
         return plan
-    if d not in adaptive["days"]:                      # 계산 범위 밖
+    if d not in adaptive["days"]:
         plan.update({"종류": "안내", "세트": [], "세트객체": [], "스텝": [],
                      "제목": "범위 밖", "세트표시": [],
                      "할일": "기록을 반영해 다시 계산됩니다."})
@@ -4315,7 +3291,7 @@ def adaptive_day_plan(adaptive, no, exam=None):
         low = [r for r in recs
                if isinstance(r.get("점수"), (int, float))
                and r["점수"] < PASS_LINE]
-        if low:                            # 합격선 미달일 때만 안내 (강제 없음)
+        if low:
             plan["안내"] = (f"오늘 점수가 합격선 {PASS_LINE}점에 못 미쳤어요 — "
                           "리포트에서 틀린 부분만 확인해 두면 됩니다 (체크는 "
                           "필수 아님). 같은 세트를 지금 바로 다시 풀어 점수를 "
@@ -4347,14 +3323,11 @@ def adaptive_day_plan(adaptive, no, exam=None):
     plan["스텝"] = build_day_steps(plan, names)
     return plan
 
-
 STEP_DONE_MESSAGE = ("오늘 클리어! 완주 + 채점까지 끝났습니다 — 오답노트·오답 "
                      "재풀이·함수 퀴즈는 선택입니다. 채점 결과는 루틴 페이지"
                      "([루틴 열기])에 자동 반영되어 있습니다.")
 
-
 def sheet_names_of(path):
-    """엑셀 파일의 시트 이름 목록 (openpyxl 없이 zip에서 직접)."""
     try:
         import zipfile
         with zipfile.ZipFile(path) as zf:
@@ -4366,13 +3339,7 @@ def sheet_names_of(path):
     except Exception:
         return []
 
-
 def drill_sheet_name(path, number):
-    """드릴 워크북에서 n번 드릴 시트 이름 찾기.
-
-    이름에 번호가 들어간 시트 우선(드릴1, 1.판정 등), 없으면 순서상
-    n번째 시트. 못 찾으면 None.
-    """
     names = sheet_names_of(path)
     if not names:
         return None
@@ -4384,14 +3351,10 @@ def drill_sheet_name(path, number):
         return names[int(number) - 1]
     return None
 
-
 def _progress_key(day_tag, exam=None):
-    """'_진행' 저장 키 — 시험일마다 접두가 달라 이전 루틴 진행과 섞이지 않는다."""
     return f"{progress_ns(exam)}:{day_tag}"
 
-
 def load_step_progress(day_tag, path=None):
-    """세트설정.json '_진행'에서 완료 스텝 번호 집합 로드."""
     cfg = load_set_config(path or SET_CONFIG_PATH)
     raw = _cfg_section(cfg, "_진행").get(_progress_key(day_tag)) or []
     if isinstance(raw, dict):
@@ -4406,23 +3369,14 @@ def load_step_progress(day_tag, path=None):
             pass
     return out
 
-
 def save_step_progress(day_tag, done, path=None):
-    """완료 스텝 번호 집합을 세트설정.json '_진행'에 저장."""
     p = path or SET_CONFIG_PATH
     cfg = load_set_config(p)
     cfg.setdefault("_진행", {})[_progress_key(day_tag)] = \
         sorted(int(i) for i in done)
     return save_set_config(cfg, p)
 
-
 def resolve_step_action(step, sets, slot_sets=None):
-    """스텝 -> 실행 방법. ('info'|'practice'|'exam'|'review'|'retry'|
-    'missing', payload) 반환. GUI 없이 테스트 가능.
-
-    slot_sets: resolve_day_sets() 결과 [(세트, 이유)] — 스텝의 '슬롯'
-    번호로 세트를 찾습니다. 없으면 스텝의 '세트' 문구를 퍼지 매칭.
-    """
     kind = step.get("형", "안내")
 
     def slot_set():
@@ -4486,16 +3440,10 @@ def resolve_step_action(step, sets, slot_sets=None):
         return retry_payload_for_set(s, int(step.get("분", 15)))
     payload = {"메시지": step.get("설명") or step.get("이름") or ""}
     if step.get("웹탭"):
-        payload["웹탭"] = str(step["웹탭"])     # 루틴 페이지의 탭(#quiz 등)
+        payload["웹탭"] = str(step["웹탭"])
     return "info", payload
 
-
-# ---------------------------------------------------------------------------
-# 부분 연습 모드 (루틴 주차별 영역 연습)
-# ---------------------------------------------------------------------------
-
 PRACTICE_AREAS = [
-    # (영역명, 포함 시트, 권장 시간(분))
     ("기본작업", ["기본작업-1", "기본작업-2", "기본작업-3"], 8),
     ("계산작업", ["계산작업"], 15),
     ("분석작업", ["분석작업-1", "분석작업-2"], 7),
@@ -4508,25 +3456,19 @@ PRACTICE_PRESETS = [
     ("기타작업", ["기타작업"]),
 ]
 
-
 def sheets_for_areas(area_names):
-    """영역명 목록 -> 시트명 목록 (순서 유지)."""
     out = []
     for name, sheet_list, _min in PRACTICE_AREAS:
         if name in area_names:
             out.extend(sheet_list)
     return out
 
-
 def practice_minutes(area_names):
-    """영역명 목록 -> 권장 시간 합(분)."""
     total = sum(m for name, _s, m in PRACTICE_AREAS if name in area_names)
     return max(MIN_MINUTES, min(MAX_MINUTES, total)) if total else \
         DEFAULT_MINUTES
 
-
 def make_practice_copy(problem, set_name, area_label, when=None):
-    """문제 파일 -> 부분연습_<세트>_<영역>_<일시>.xlsm 사본."""
     when = when or datetime.now()
     stamp = when.strftime("%Y%m%d_%H%M")
     safe_area = re.sub(r"[\\/:*?\"<>|,\s]+", "", str(area_label))[:20]
@@ -4534,21 +3476,12 @@ def make_practice_copy(problem, set_name, area_label, when=None):
     return copy_as_macro_enabled(
         problem, _unique_stem(d, f"부분연습_{set_name}_{safe_area}_{stamp}"))
 
-
-# ---------------------------------------------------------------------------
-# 재응시 / 오답노트 모드 로직 (GUI 없이 테스트 가능)
-# ---------------------------------------------------------------------------
-
-
 def set_records(set_name, records=None):
-    """이 세트의 응시 기록 목록 ('(연습)' 접미 포함 매칭)."""
     records = records if records is not None else load_records()
     return [r for r in records
             if str(r.get("세트명", "")).startswith(str(set_name))]
 
-
 def problem_has_formula_traces(problem_path, sheet_name="계산작업"):
-    """원본 문제 파일의 계산작업 시트에 수식이 몇 개나 있는지 (오염 감지)."""
     try:
         import zipfile
         zf = zipfile.ZipFile(problem_path)
@@ -4571,13 +3504,7 @@ def problem_has_formula_traces(problem_path, sheet_name="계산작업"):
     except Exception:
         return 0
 
-
 def find_latest_result_json(set_info, full_only=False):
-    """세트의 최신 채점결과 JSON 경로 (없으면 None).
-
-    full_only=True면 부분 채점(mode: partial — 부분 연습·오답 재풀이) 결과는
-    건너뛰고 전체 응시 결과만 찾습니다.
-    """
     d = os.path.join(set_info["dir"], "채점결과")
     best = None
     if os.path.isdir(d):
@@ -4603,9 +3530,7 @@ def find_latest_result_json(set_info, full_only=False):
                 best = (mt, path)
     return best[1] if best else None
 
-
 def load_wrong_items(json_path):
-    """채점결과 JSON 로드 -> (전체 dict 또는 None, 오답 항목 목록)."""
     try:
         with open(json_path, encoding="utf-8") as f:
             data = json.load(f)
@@ -4615,9 +3540,7 @@ def load_wrong_items(json_path):
     except Exception:
         return None, []
 
-
 def find_latest_attempt(set_info):
-    """가장 최근 풀이_ 사본 경로 (없으면 None)."""
     best = None
     try:
         for fn in os.listdir(set_info["dir"]):
@@ -4631,18 +3554,14 @@ def find_latest_attempt(set_info):
         pass
     return best[1] if best else None
 
-
 def make_review_copy(source, set_name, when=None):
-    """이전 풀이를 오답연습_<세트>_<일시>.xlsm 사본으로 복사."""
     when = when or datetime.now()
     stamp = when.strftime("%Y%m%d_%H%M")
     d = os.path.dirname(os.path.abspath(source))
     return copy_as_macro_enabled(
         source, _unique_stem(d, f"오답연습_{set_name}_{stamp}"))
 
-
 def review_item_text(item):
-    """오답노트 항목 상세 텍스트 (패널 표시용)."""
     lines = [f"[{item.get('sheet', '?')}] {item.get('label', '?')}"
              + (f"  (-{item.get('lost', 0):g}점)" if item.get("lost") else "")]
     for c in item.get("cells") or []:
@@ -4672,9 +3591,7 @@ def review_item_text(item):
         lines.append(f"\n방법: {item['hint']}")
     return "\n".join(lines)
 
-
 def load_review_state(norm_key, json_name, path=SET_CONFIG_PATH):
-    """저장된 이해 체크 인덱스 집합."""
     cfg = load_set_config(path)
     rv = (cfg.get(norm_key) or {}).get("오답연습") or {}
     try:
@@ -4682,16 +3599,9 @@ def load_review_state(norm_key, json_name, path=SET_CONFIG_PATH):
     except Exception:
         return set()
 
-
 def record_review_state(norm_key, json_name, checks,
                         path=SET_CONFIG_PATH, count_up=False, total=None,
                         done=None):
-    """오답연습 체크 상태(+횟수)를 세트설정.json에 저장.
-    점수 기록(기록.json)에는 아무것도 남기지 않습니다.
-
-    total(오답 항목 수)을 주면 전부 체크됐을 때 '완료'[json_name]에 완료 일시를
-    남기고, 하나라도 풀리면 지웁니다(루틴 웹 ③ 오답노트 판정과 같은 저장소).
-    done=True/False 는 웹 토글처럼 완료 표식을 직접 켜고 끕니다."""
     cfg = load_set_config(path)
     ent = cfg.setdefault(norm_key, {})
     if not isinstance(ent.get("오답연습"), dict):
@@ -4716,11 +3626,8 @@ def record_review_state(norm_key, json_name, checks,
         rv["완료"].pop(str(json_name), None)
     return save_set_config(cfg, path)
 
-
 def review_done_state(norm_key, json_name, total=None, cfg=None,
                       path=SET_CONFIG_PATH):
-    """오답노트 완료 여부 → (done, when). 완료 표식이 있거나(웹 토글·전체 체크)
-    total 개 항목이 모두 체크되어 있으면 완료."""
     if cfg is None:
         cfg = load_set_config(path)
     rv = (cfg.get(norm_key) or {}).get("오답연습") or {}
@@ -4736,87 +3643,33 @@ def review_done_state(norm_key, json_name, total=None, cfg=None,
         return True, None
     return False, None
 
-
-# ---------------------------------------------------------------------------
-# 자동 업데이트 (공개 저장소) — v2.3.0 완전 자동
-# ---------------------------------------------------------------------------
-#
-# 흐름: 실행할 때마다(하루 1회 제한 없음, 같은 실행에서는 1회) 백그라운드
-# 스레드가 version.json(타임아웃 3초, 오프라인이면 조용히 건너뜀)을 확인하고
-#   - 새 버전이면 files(프로그램)+data_files(기대값 JSON)를 전부 .new로
-#     내려받아 검증(sha256 맵이 있으면 해시, .py/.pyw는 __version__ 표식 +
-#     py_compile, .json은 json.loads, 시험장.py의 __version__ == 새 버전)한 뒤
-#     메인 스레드에서 .bak 백업 → 교체(하나라도 실패하면 전체 롤백) →
-#     자동 재시작(새 프로세스를 먼저 띄우고 종료). 시험 진행 중이면 적용을
-#     미루고 시험 종료 후 적용합니다.
-#   - 버전이 같아도 data_files/set_files 중 로컬에 없거나 sha256이 다른
-#     파일은 내려받아 갱신(재시작 없음). 원격에서 사라진 파일은 지우지 않습니다.
-# 재시작된 새 인스턴스는 .update_applied.json을 읽어 "자동 업데이트됨" 띠를
-# 띄웁니다. 세트설정.json `_설정.자동업데이트`(기본 true)로 끌 수 있고,
-# [업데이트 확인] 버튼은 토글과 무관하게 즉시 확인·적용합니다.
-#
-# version.json 형식:
-#   {"version": "2.3.1", "notes": "...",
-#    "files":      {"시험장/시험장.py": "시험장.py", ...},      # 프로그램
-#    "data_files": {"기대값/코코모의고사1회_기대값.json": "기대값/..."},  # 기대값 JSON
-#    "set_files":  {"모의고사/코코모의고사1회_문제.xlsx": "모의고사/...",  # 세트(xlsx·pdf)
-#                   "시험장/루틴.html": "루틴.html"},                  # 루틴 페이지(2.4.0)
-#    "sha256":     {"시험장.py": "<hex>", "기대값/...json": "<hex>", ...}}
-# 루틴 페이지(HTML)도 set_files에 둡니다 — 2.3.0의 data_files 검증은 json.loads를
-# 요구해 HTML이 섞이면 2.3.0 사용자의 업데이트가 실패하지만, set_files는 2.3.0
-# 이하가 무시하고 2.3.1+는 sha256(+UTF-8 텍스트)만 검사해 <루트>/시험장/루틴.html
-# 에 내려받습니다(서버가 매 요청마다 파일을 읽어 재시작 없이 반영).
-# 2.2.3 이하의 apply_update는 files 항목에 __version__ 표식과 py_compile을
-# 요구하므로 JSON은 반드시 data_files에만 둡니다(구버전은 그 키를 무시).
-# 2.3.0의 data_files 검증은 UTF-8 디코드 + json.loads를 요구해 xlsx·pdf가
-# 섞이면 업데이트 전체가 실패하므로, 바이너리 세트 파일은 set_files(2.3.1+에서
-# 처리, 2.3.0 이하는 무시)에만 둡니다. set_files는 sha256(필수)만 검사하고
-# 설치 루트(기대값/의 상위)/모의고사/… 에 내려받습니다.
-
 UPDATE_BASE_URL = ("https://raw.githubusercontent.com/"
                    "xasmine02/cocomate-study-tools/main/")
-SET_FILES_KEY = "set_files"      # version.json: 세트 파일(xlsx·pdf) — 2.3.1+
+SET_FILES_KEY = "set_files"
 _BINARY_MAGIC = {".xlsx": b"PK\x03\x04", ".xlsm": b"PK\x03\x04", ".pdf": b"%PDF"}
 UPDATE_NOTICE_PATH = os.path.join(RECORDS_DIR, ".update_applied.json")
 AUTO_UPDATE_SETTING = "자동업데이트"
 _VERSION_MARK_RE = re.compile(r'^__version__\s*=\s*["\']([^"\']+)["\']',
                               re.MULTILINE)
 
-
 def _version_tuple(v):
     nums = re.findall(r"\d+", str(v or ""))
     return tuple(int(x) for x in nums[:3]) if nums else (0,)
 
-
 def auto_update_enabled(path=None):
-    """세트설정.json `_설정.자동업데이트` (기본 true)."""
     return bool(get_app_setting(AUTO_UPDATE_SETTING, True, path=path))
 
-
-# --- 첫 실행 자동 업데이트 동의 (v3.1.0) -----------------------------------
-# 남의 PC에 설치되는 프로그램이 묻지 않고 코드를 갈아 끼우면 안 되므로,
-# **첫 실행 때 동의 / 거절을 묻는다**(확인 하나짜리 고지였던 3.0.0 에서 바뀜).
-#   · 동의 → 실행할 때마다 자동으로 받아 적용.
-#   · 거절 → `_설정.자동업데이트 = false`. 프로그램은 그대로 돌고 [업데이트
-#            확인]으로 직접 받을 수 있다.
-#   · 창을 닫거나 응답이 없으면 **거절**로 본다 (안전한 기본값).
-# 선택은 저장되고 시작 화면 [설정]에서 언제든 바꿀 수 있다.
 FIRST_RUN_NOTICE_SETTING = "자동업데이트고지"
 
-
 def _repo_url(base_url=None):
-    """raw.githubusercontent.com 배포 주소 -> 사람이 여는 저장소 주소."""
     m = re.match(r"https://raw\.githubusercontent\.com/([^/]+)/([^/]+)/",
                  str(base_url or UPDATE_BASE_URL))
     return (f"https://github.com/{m.group(1)}/{m.group(2)}" if m
             else str(base_url or UPDATE_BASE_URL))
 
-
 UPDATE_REPO_URL = _repo_url()
 
-
 def first_run_notice_text(repo_url=UPDATE_REPO_URL):
-    """첫 실행 자동 업데이트 **동의** 문구 ([동의] / [거절] 두 버튼)."""
     return (
         "이 프로그램은 실행할 때마다 아래 저장소에서 최신 코드와 자료를 "
         "내려받아 적용할 수 있습니다. 자동 업데이트를 쓸지 지금 골라 "
@@ -4832,32 +3685,20 @@ def first_run_notice_text(repo_url=UPDATE_REPO_URL):
         f"고른 값은 세트설정.json 의 \"_설정\" → \"{AUTO_UPDATE_SETTING}\" 에 "
         "저장되고, 시작 화면 [설정]에서 언제든 바꿀 수 있습니다.")
 
-
 def first_run_notice_pending(path=None):
-    """첫 실행 동의를 아직 안 물었으면 True."""
     return not bool(get_app_setting(FIRST_RUN_NOTICE_SETTING, False, path=path))
 
-
 def mark_first_run_notice(path=None):
-    """첫 실행 동의를 물었다고 표시 (다음 실행부터는 안 뜬다)."""
     return set_app_setting(FIRST_RUN_NOTICE_SETTING, True, path=path)
 
-
 def apply_update_consent(agree, path=None):
-    """첫 실행 동의/거절을 설정에 반영. 반환: 실제로 저장된 값(bool).
-
-    거절(또는 창을 닫음·무응답)이면 `_설정.자동업데이트 = false` 로 자동
-    업데이트를 끈다. 프로그램은 그대로 돌고 [업데이트 확인]은 계속 쓸 수 있다.
-    """
     agree = bool(agree)
     set_app_setting(AUTO_UPDATE_SETTING, agree, path=path)
     mark_first_run_notice(path=path)
     return agree
 
-
 UPDATE_CONSENT_YES = "동의 — 자동으로 최신 버전 받기"
 UPDATE_CONSENT_NO = "거절 — 자동 업데이트 끄기"
-
 
 def _http_get(url, timeout):
     import urllib.request
@@ -4865,9 +3706,7 @@ def _http_get(url, timeout):
     with urllib.request.urlopen(req, timeout=timeout) as r:
         return r.read()
 
-
 def fetch_update_info(base_url=UPDATE_BASE_URL, timeout=3):
-    """version.json 조회. 실패/404/오프라인이면 None (조용히 스킵)."""
     try:
         info = json.loads(_http_get(base_url + "version.json", timeout)
                           .decode("utf-8"))
@@ -4880,15 +3719,12 @@ def fetch_update_info(base_url=UPDATE_BASE_URL, timeout=3):
         pass
     return None
 
-
 def update_available(info, current=None):
     return bool(info) and _version_tuple(info.get("version")) > \
         _version_tuple(current if current is not None else __version__)
 
-
 def sha256_hex(data):
     return hashlib.sha256(data).hexdigest()
-
 
 def file_sha256(path):
     try:
@@ -4897,46 +3733,32 @@ def file_sha256(path):
     except OSError:
         return None
 
-
 def version_marker(text):
-    """소스 텍스트의 `__version__ = "x.y.z"` 값 (없으면 None)."""
     m = _VERSION_MARK_RE.search(text or "")
     return m.group(1) if m else None
 
-
 def _safe_rel_parts(rel_key):
-    """version.json 의 상대 경로 키를 안전한 경로 조각으로 바꾼다.
-
-    자동 업데이트는 원격 version.json 이 시키는 위치에 파일을 씁니다. 그
-    키가 조작되면 설치 폴더 밖에 쓸 수 있으므로 여기서 한 번 걸러 냅니다.
-    슬래시만 구분자로 보면 Windows 에서 역슬래시 경로와 드라이브 문자가
-    그대로 통과하므로, 역슬래시도 구분자로 보고 콜론이 든 조각은 거부합니다.
-    """
     raw = str(rel_key).replace(chr(92), "/")
     parts = []
     for part in raw.split("/"):
         part = part.strip()
         if part in ("", ".", ".."):
             continue
-        if ":" in part or chr(0) in part:   # 드라이브 문자·대체 데이터 스트림
+        if ":" in part or chr(0) in part:
             raise RuntimeError(f"잘못된 경로 키: {rel_key!r}")
         parts.append(part)
     if not parts:
         raise RuntimeError(f"잘못된 경로 키: {rel_key!r}")
     return parts
 
-
 def _within(root, path):
-    """path 가 root 안에 있으면 그대로, 밖이면 RuntimeError."""
     r = os.path.abspath(root)
     a = os.path.abspath(path)
     if a != r and not a.startswith(r + os.sep):
         raise RuntimeError(f"설치 폴더 밖으로 나가는 경로: {path!r}")
     return a
 
-
 def _update_target_path(rel_key, base_dir=None):
-    """저장소 상대 경로('채점/grade.py') -> 내 설치 위치."""
     base_dir = base_dir or BASE_DIR
     root = os.path.dirname(base_dir)
     parts = _safe_rel_parts(rel_key)
@@ -4948,30 +3770,14 @@ def _update_target_path(rel_key, base_dir=None):
         return flat
     return cand if os.path.isdir(os.path.dirname(cand)) else flat
 
-
 def _data_target_path(rel_key, base_dir=None):
-    """데이터 상대 경로 -> 설치 위치 (폴더는 적용 시 생성).
-
-    '기대값/x_기대값.json' → 루트/기대값/x_기대값.json (expected_values_dir),
-    '모의고사/코코모의고사1회_문제.xlsx' → 루트/모의고사/… — 루트는 설치 구조에
-    따른 기대값 폴더의 상위(시험장/ 구조면 <루트>, 평면 구조면 그 폴더).
-    폴더 없는 키('x.json')는 기대값/으로.
-    """
     parts = _safe_rel_parts(rel_key)
     if len(parts) == 1:
         parts = [EXPECTED_DIR_NAME] + parts
     root = os.path.dirname(expected_values_dir(base_dir))
     return _within(root, os.path.join(root, *parts))
 
-
 def _verify_download(repo_rel, data, kind, info, expect_version=None):
-    """내려받은 내용 검증 (실패 시 RuntimeError). 반환: 디코드된 텍스트
-    (바이너리 세트 파일은 None).
-
-    .py/.pyw: sha256(있으면) + __version__ 표식 + (호출 쪽에서) py_compile.
-    .json: sha256(있으면) + json.loads. 그 밖의 확장자(xlsx·xlsm·pdf, v2.3.1
-    set_files): sha256 필수 + 파일 머리(PK/%PDF)만 확인 — 텍스트 검사 없음.
-    """
     expected = (info.get("sha256") or {}).get(repo_rel)
     if expected:
         got = sha256_hex(data)
@@ -4992,7 +3798,6 @@ def _verify_download(repo_rel, data, kind, info, expect_version=None):
     except UnicodeDecodeError as e:
         raise RuntimeError(f"{repo_rel}: UTF-8 텍스트가 아닙니다 ({e})")
     if kind != "code" and ext in (".html", ".htm"):
-        # 루틴 페이지(v2.4.0, set_files): sha256 필수 + UTF-8 텍스트면 통과
         if not expected:
             raise RuntimeError(f"{repo_rel}: sha256 항목이 없어 페이지 파일을 "
                                "검증할 수 없습니다")
@@ -5012,7 +3817,6 @@ def _verify_download(repo_rel, data, kind, info, expect_version=None):
             raise RuntimeError(f"{repo_rel}: JSON 형식 오류 ({e})")
     return text
 
-
 def _cleanup_staged(staged):
     for it in staged:
         for leftover in (it["tmp"], it["tmp"] + "c"):
@@ -5022,10 +3826,7 @@ def _cleanup_staged(staged):
             except OSError:
                 pass
 
-
 def _stage_items(items, info, base_url, timeout):
-    """items: [(rel_key, repo_rel, target, kind)] 다운로드 → 검증 → target.new.
-    실패하면 만든 .new를 모두 지우고 예외."""
     import py_compile
     import urllib.parse
     staged = []
@@ -5042,7 +3843,7 @@ def _stage_items(items, info, base_url, timeout):
             with open(tmp, "wb") as f:
                 f.write(data)
             staged.append({"target": target, "tmp": tmp, "kind": kind,
-                           "rel": repo_rel})   # 실패 시 정리 대상 등록 후 검증
+                           "rel": repo_rel})
             if kind == "code":
                 py_compile.compile(tmp, cfile=tmp + "c", doraise=True)
                 try:
@@ -5054,14 +3855,7 @@ def _stage_items(items, info, base_url, timeout):
         _cleanup_staged(staged)
         raise
 
-
 def stage_update(info, base_url=UPDATE_BASE_URL, base_dir=None, timeout=15):
-    """새 버전의 files(프로그램)+data_files(기대값)+set_files(세트 파일) 전부
-    다운로드·검증·스테이징.
-
-    반환: (성공 여부, 메시지, staged). 실패하면 .new를 정리하고 기존 파일은
-    건드리지 않습니다. 적용은 commit_staged().
-    """
     info = info or {}
     files = info.get("files") or {}
     data_files = _all_data_files(info)
@@ -5077,11 +3871,8 @@ def stage_update(info, base_url=UPDATE_BASE_URL, base_dir=None, timeout=15):
         return False, f"업데이트 실패(기존 버전 유지): {e}", []
     return True, f"{len(staged)}개 파일 검증 완료 (v{info.get('version')})", staged
 
-
 def commit_staged(staged, version=None):
-    """스테이징된 .new를 .bak 백업 후 교체. 하나라도 실패하면 전체 롤백.
-    반환: (성공 여부, 메시지)."""
-    replaced = []     # (target, 기존 파일 있었는지)
+    replaced = []
     try:
         for it in staged:
             target, tmp = it["target"], it["tmp"]
@@ -5116,20 +3907,13 @@ def commit_staged(staged, version=None):
                 pass
         return False, f"업데이트 실패(기존 버전 유지): {e}"
 
-
 def apply_update(info, base_url=UPDATE_BASE_URL, base_dir=None, timeout=15):
-    """모든 파일 다운로드 -> 검증 -> 원자 교체(.bak 1개). (구버전 호환 API)
-
-    반환: (성공 여부, 메시지). 어느 단계든 실패하면 기존 파일로 롤백.
-    """
     ok, msg, staged = stage_update(info, base_url, base_dir, timeout)
     if not ok:
         return False, msg
     return commit_staged(staged, (info or {}).get("version"))
 
-
 def _all_data_files(info):
-    """data_files(기대값 JSON) + set_files(세트 xlsx·pdf) 합친 {설치 키: 저장소 경로}."""
     out = {}
     for k in ("data_files", SET_FILES_KEY):
         v = (info or {}).get(k)
@@ -5137,11 +3921,7 @@ def _all_data_files(info):
             out.update(v)
     return out
 
-
 def data_files_to_sync(info, base_dir=None):
-    """로컬에 없거나 sha256이 다른 데이터 항목 [(rel_key, repo_rel, target)]
-    (기대값 JSON + 세트 파일). sha256 맵에 없는 항목은 로컬 파일이 없을 때만
-    내려받습니다."""
     out = []
     sha = (info or {}).get("sha256") or {}
     for rel_key, repo_rel in _all_data_files(info).items():
@@ -5157,10 +3937,7 @@ def data_files_to_sync(info, base_dir=None):
             out.append((rel_key, repo_rel, target))
     return out
 
-
 def sync_data_files(info, base_url=UPDATE_BASE_URL, base_dir=None, timeout=15):
-    """버전이 같아도 기대값(data_files)·세트 파일(set_files)만 갱신.
-    반환: (성공, 개수, 메시지)."""
     todo = data_files_to_sync(info, base_dir)
     if not todo:
         return True, 0, "기대값 파일이 모두 최신입니다."
@@ -5172,9 +3949,7 @@ def sync_data_files(info, base_url=UPDATE_BASE_URL, base_dir=None, timeout=15):
     ok, msg = commit_staged(staged)
     return ok, (len(staged) if ok else 0), msg
 
-
 def write_update_notice(prev, new, notes="", path=None):
-    """적용 직후 기록 — 재시작된 새 인스턴스가 읽어 안내 띠를 띄웁니다."""
     p = path or UPDATE_NOTICE_PATH
     try:
         os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -5186,7 +3961,6 @@ def write_update_notice(prev, new, notes="", path=None):
     except OSError:
         return False
 
-
 def read_update_notice(path=None):
     try:
         with open(path or UPDATE_NOTICE_PATH, encoding="utf-8") as f:
@@ -5195,10 +3969,7 @@ def read_update_notice(path=None):
     except Exception:
         return None
 
-
 def consume_update_notice(current=None, path=None):
-    """아직 안 보여 준 업데이트 안내가 있고 현재 버전이 그 버전이면 반환
-    (+ shown 표시). 없으면 None."""
     p = path or UPDATE_NOTICE_PATH
     d = read_update_notice(p)
     if not d or d.get("shown"):
@@ -5214,15 +3985,7 @@ def consume_update_notice(current=None, path=None):
         pass
     return d
 
-
 class UpdateCoordinator:
-    """자동 업데이트 상태 기계 (GUI 없이 테스트 가능).
-
-    check()는 워커 스레드에서: 토글·중복 확인 → version.json → 새 버전이면
-    stage_update(다운로드·검증)까지 하고 pending에 보관, 같은 버전이면
-    기대값(data_files)만 동기화. apply_pending()은 메인 스레드에서:
-    시험 중이면 미루고('deferred'), 아니면 commit_staged + 안내 기록.
-    """
 
     def __init__(self, base_url=UPDATE_BASE_URL, base_dir=None, enabled=None,
                  current=None, log=None, notice_path=None):
@@ -5232,13 +3995,13 @@ class UpdateCoordinator:
         self.current = current or __version__
         self.log = log or startup_log
         self.notice_path = notice_path or UPDATE_NOTICE_PATH
-        self.checked = False        # 같은 실행에서 중복 확인 방지
-        self.checking = False       # 워커 실행 중
+        self.checked = False
+        self.checking = False
         self.info = None
-        self.pending = None         # 검증 완료·적용 대기 staged 목록
-        self.state = None           # 마지막 check 결과
-        self.detail = ""            # 마지막 메시지(오류 상세 등)
-        self.data_synced = 0        # 마지막 check에서 갱신한 기대값 수
+        self.pending = None
+        self.state = None
+        self.detail = ""
+        self.data_synced = 0
         self.applied_version = None
 
     def enabled(self):
@@ -5248,9 +4011,6 @@ class UpdateCoordinator:
             return True
 
     def check(self, force=False, timeout=3, dl_timeout=15):
-        """확인 + (새 버전이면) 다운로드·검증. 상태 문자열 반환:
-        disabled / already / offline / latest / staged / data / failed / stuck
-        force: 수동 [업데이트 확인] — 토글과 중복 확인 제한 무시."""
         if not force:
             if not self.enabled():
                 self.log("자동 업데이트 꺼짐(세트설정 _설정.자동업데이트=false) — "
@@ -5313,7 +4073,6 @@ class UpdateCoordinator:
         return state
 
     def apply_pending(self, exam_running=False):
-        """스테이징된 업데이트 적용. 반환: applied / deferred / none / failed."""
         if not self.pending:
             return "none"
         if exam_running:
@@ -5333,47 +4092,25 @@ class UpdateCoordinator:
         self.log(f"업데이트 적용: {msg}")
         return "applied"
 
-
-# ---------------------------------------------------------------------------
-# 자동 재채점 (v2.6.0) — 이의제기가 인정되면 지난 기록 점수를 스스로 정정
-# ---------------------------------------------------------------------------
-#
-# 사용자가 버튼을 누를 필요가 없습니다. 프로그램이 시작될 때 백그라운드
-# 스레드에서 기록.json 을 훑어
-#   (a) 저장된 채점기 버전이 지금 grade.py 보다 낮거나 아예 없는 기록
-#   (b) 정답·문제·기대값 파일의 sha256 이 응시 당시와 달라진 기록
-# 을 찾아, 응시 때 만든 `풀이_*.xlsm` 사본이 그대로 있으면 다시 채점합니다.
-# 점수가 바뀌면 기록의 총점·리포트를 갱신하고 **원래 점수를 `정정이력` 에
-# 보관**한 뒤 시작 화면에 비모달 띠로 알립니다("이의제기 반영: … 86 → 95점").
-# 풀이 파일이 없어 다시 채점할 수 없는 기록은 업데이트로 배포되는
-# `정정/점수정정.json`(data_files) 의 항목으로 점수만 정정합니다.
-# 정정된 점수는 기록.json 에 그대로 들어가므로 레벨·연속 응시·합격 세트 수·
-# 일정 배정·웹 진행률이 다음 계산부터 자동으로 다시 맞춰집니다.
-
-CORRECTIONS_DIR_NAME = "정정"            # 자동 배포되는 점수 정정 데이터 폴더
+CORRECTIONS_DIR_NAME = "정정"
 CORRECTIONS_FILE_NAME = "점수정정.json"
-CORRECTIONS_DATA_KEY = "정정/점수정정.json"   # version.json data_files 키
-CORRECTION_HISTORY_FIELD = "정정이력"     # 기록에 보관하는 원점수 이력
-CORRECTION_KEY_FIELD = "키"              # 정정 항목 식별자 (중복 정정 방지)
-CORRECTION_BONUS_FIELD = "정정가산키"     # 현재 점수에 이미 얹힌 가산점 키들
+CORRECTIONS_DATA_KEY = "정정/점수정정.json"
+CORRECTION_HISTORY_FIELD = "정정이력"
+CORRECTION_KEY_FIELD = "키"
+CORRECTION_BONUS_FIELD = "정정가산키"
 REGRADE_EVIDENCE_FIELDS = ("채점기버전", "문제해시", "정답해시", "기대값해시",
                            "풀이경로")
-REGRADE_SUFFIX = "_재채점"               # 새 리포트 파일 이름 꼬리표
+REGRADE_SUFFIX = "_재채점"
 REGRADE_SKIP_MODES = ("부분연습", "오답재풀이", "수동")
-REGRADE_MAX = 60                        # 한 번에 다시 채점할 최대 건수(안전장치)
-_GRADER_VERSION_CACHE = {}              # grade.py 경로 → ((mtime, size), 버전)
-_SHA_CACHE = {}                         # 파일 경로 → ((mtime, size), sha256)
-
+REGRADE_MAX = 60
+_GRADER_VERSION_CACHE = {}
+_SHA_CACHE = {}
 
 def corrections_path(base_dir=None):
-    """정정 데이터 파일 경로 — <루트>/정정/점수정정.json (기대값 폴더와 같은 루트)."""
     root = os.path.dirname(expected_values_dir(base_dir))
     return os.path.join(root, CORRECTIONS_DIR_NAME, CORRECTIONS_FILE_NAME)
 
-
 def file_sha256_cached(path):
-    """file_sha256 + (mtime, size) 캐시 — 시작 때 같은 정답 파일을 여러 기록이
-    함께 확인하므로 한 번만 읽습니다."""
     if not path:
         return None
     try:
@@ -5388,12 +4125,7 @@ def file_sha256_cached(path):
     _SHA_CACHE[path] = (key, h)
     return h
 
-
 def grader_version(grade_py=None):
-    """grade.py 의 `__version__` (없으면 None).
-
-    grade.py 에는 `--print-version` 같은 조회 수단이 없어 파일 텍스트에서
-    상수를 직접 읽습니다((mtime, size) 캐시)."""
     p = grade_py or find_grade_py()
     if not p or not os.path.isfile(p):
         return None
@@ -5413,13 +4145,8 @@ def grader_version(grade_py=None):
     _GRADER_VERSION_CACHE[p] = (key, ver)
     return ver
 
-
 def grading_evidence(problem=None, answer=None, student=None, key=None,
                      grade_py=None):
-    """새 기록에 함께 저장할 채점 근거.
-
-    {채점기버전, 문제해시, 정답해시, 기대값해시, 풀이경로} — 구할 수 없는
-    항목은 넣지 않습니다(다음 실행이 다시 시도)."""
     out = {}
     ver = grader_version(grade_py)
     if ver:
@@ -5433,32 +4160,21 @@ def grading_evidence(problem=None, answer=None, student=None, key=None,
         out["풀이경로"] = os.path.abspath(student)
     return out
 
-
 def record_evidence_changes(rec, s, grade_py=None, student=None):
-    """기록에 저장할 채점 근거 중 **지금 값과 다른 것만** 돌려줍니다.
-
-    재채점이 필요 없거나 점수가 그대로여도 이 값을 갱신해 두어야 다음 실행이
-    같은 기록을 다시 채점하지 않습니다."""
     s = s or {}
     fresh = grading_evidence(problem=s.get("problem"), answer=s.get("answer"),
                              key=s.get("key"), student=student,
                              grade_py=grade_py)
     return {k: v for k, v in fresh.items() if (rec or {}).get(k) != v}
 
-
 def regrade_reason(rec, s, cur_version=None):
-    """기록 1건이 자동 재채점 대상인지 → 사유 문자열(대상 아니면 "").
-
-    (a) 저장된 채점기 버전이 없거나 지금보다 낮음 → "채점기 2.0.3 …"
-    (b) 정답·문제·기대값 파일의 sha256 이 응시 당시와 다름 → "정답 파일 정정"
-    """
     if not isinstance(rec, dict) or not isinstance(s, dict):
         return ""
     if str(rec.get("mode") or "시험") in REGRADE_SKIP_MODES:
         return ""
     score = rec.get("점수")
     if isinstance(score, bool) or not isinstance(score, (int, float)):
-        return ""        # 채점되지 않은(중단) 기록은 정정할 점수가 없음
+        return ""
     reasons = []
     old = rec.get("채점기버전")
     if cur_version:
@@ -5480,13 +4196,7 @@ def regrade_reason(rec, s, cur_version=None):
             reasons.append(f"{label} 정정")
     return " · ".join(reasons)
 
-
 def attempt_file_for(rec, s=None):
-    """기록의 풀이 파일 경로 (없으면 None).
-
-    `풀이경로` 가 있으면 그대로 쓰고, 그 필드가 없는 과거 기록은 세트 폴더
-    (또는 리포트 폴더의 상위)에서 응시 일시가 같은 `풀이_*.xlsm` 을 찾습니다.
-    """
     rec = rec or {}
     p = rec.get("풀이경로")
     if isinstance(p, str) and p and os.path.isfile(p):
@@ -5517,12 +4227,7 @@ def attempt_file_for(rec, s=None):
                 return os.path.join(d0, fn)
     return None
 
-
 def regrade_report_base(rec, s=None, when=None):
-    """재채점 리포트를 저장할 경로 어간 (확장자 없음).
-
-    원래 리포트가 있던 폴더를 그대로 쓰고, 없으면 풀이 파일 옆 `채점결과/`.
-    예전 리포트는 지우지 않으므로 파일 이름에 `_재채점` 을 붙입니다."""
     when = when or datetime.now()
     stamp = when.strftime("%Y%m%d_%H%M%S")
     name = record_set_name(rec)
@@ -5544,12 +4249,8 @@ def regrade_report_base(rec, s=None, when=None):
         _ensure_records_home()
     return os.path.join(out_dir, f"채점결과_{name}_{stamp}{REGRADE_SUFFIX}")
 
-
 def regrade_record(rec, s, grade_py=None, student=None, when=None,
                    timeout=600):
-    """기록 1건 다시 채점 → (결과 dict 또는 None, html 경로, json 경로, 오류문).
-
-    파일은 새로 쓰고 예전 리포트는 건드리지 않습니다."""
     grade_py = grade_py or find_grade_py()
     if not grade_py or not os.path.isfile(grade_py):
         return None, None, None, "grade.py 를 찾을 수 없습니다"
@@ -5568,17 +4269,13 @@ def regrade_record(rec, s, grade_py=None, student=None, when=None,
         return None, None, None, (detail[-300:] or f"채점 실패(rc={rc})")
     return result, html_path, json_path, ""
 
-
 def correction_entry(before, after, reason, when=None, source="재채점",
                      key=""):
-    """정정이력 1건."""
     return {"이전총점": before, "새총점": after, "사유": str(reason or ""),
             "일시": (when or datetime.now()).strftime("%Y-%m-%d %H:%M:%S"),
             "출처": source, CORRECTION_KEY_FIELD: str(key or "")}
 
-
 def correction_applied(rec, key):
-    """같은 정정을 이미 반영했는지 (중복 정정 방지)."""
     if not key:
         return False
     hist = (rec or {}).get(CORRECTION_HISTORY_FIELD)
@@ -5588,14 +4285,8 @@ def correction_applied(rec, key):
                and str(h.get(CORRECTION_KEY_FIELD) or "") == str(key)
                for h in hist)
 
-
 def apply_correction(rec, new_total, reason, when=None, source="재채점",
                      key="", report=None, result=None, evidence=None):
-    """기록 1건에 정정을 반영 (원본 dict 를 제자리에서 고칩니다).
-
-    점수가 바뀌면 원점수를 `정정이력` 에 넣고 총점·리포트·만점을 갱신합니다.
-    점수가 그대로여도 리포트·채점 근거는 갱신합니다(다음 실행이 또 채점하지
-    않도록). 반환: 정정이력 항목(점수가 바뀐 경우) 또는 None."""
     if not isinstance(rec, dict):
         return None
     if key and correction_applied(rec, key):
@@ -5617,11 +4308,9 @@ def apply_correction(rec, new_total, reason, when=None, source="재채점",
     if isinstance(evidence, dict):
         rec.update(evidence)
     if before == after:
-        return None                     # 점수 변화 없음 — 조용히 넘어감
+        return None
     rec["점수"] = after
     hist = rec.get(CORRECTION_HISTORY_FIELD)
-    # 얕은 복사본(dict(rec))으로 넘어온 기록의 이력 리스트를 제자리에서 늘리면
-    # 원본과 같은 객체라 "바뀐 항목"으로 잡히지 않는다 — 새 리스트로 만든다.
     hist = list(hist) if isinstance(hist, list) else []
     entry = correction_entry(before, after, reason, when=when, source=source,
                              key=key)
@@ -5629,19 +4318,7 @@ def apply_correction(rec, new_total, reason, when=None, source="재채점",
     rec[CORRECTION_HISTORY_FIELD] = hist
     return entry
 
-
 def load_corrections(path=None):
-    """정정 데이터(`정정/점수정정.json`) → 항목 목록.
-
-    형식: {"corrections": [{"report_id", "set", "reason",
-                            "new_total" 또는 "delta"}]}.
-
-    `new_total` 은 총점을 그 값으로 못박습니다 — 채점기가 손댈 수 없는
-    기록(풀이 파일이 사라진 경우 등)에 씁니다.
-    `delta` 는 채점 결과 **위에** 더하는 가산점입니다 — 문제지 쪽 결함처럼
-    채점기가 알 수 없는 사유에 씁니다. 다시 채점해도 가산점이 유지되도록
-    재채점 결과에 더해집니다.
-    파일이 없거나 깨졌거나 형식이 이상하면 조용히 [] (죽지 않습니다)."""
     p = path or corrections_path()
     try:
         with open(p, encoding="utf-8-sig") as f:
@@ -5667,29 +4344,18 @@ def load_corrections(path=None):
                     "reason": str(it.get("reason") or "이의제기 인정")})
     return out
 
-
 def correction_matches(it, rec):
-    """정정 항목의 `set` 조건이 이 기록과 맞는지."""
     if not it.get("set"):
         return True
     name = record_set_name(rec)
     return it["set"] in (name, norm_set_key(name))
 
-
 def correction_deltas(items, rid, rec):
-    """이 기록에 걸린 가산점 항목 [(점수, 사유)] — 재채점 결과에 더합니다."""
     return [(it["delta"], it["reason"]) for it in items
             if it["report_id"] == rid and it.get("delta")
             and correction_matches(it, rec)]
 
-
 def resolve_correction_target(by_id, wanted):
-    """정정 항목의 report_id 로 기록 찾기 → (실제 id, 기록) 또는 (wanted, None).
-
-    기록 id 는 일시 14자리(초까지)인데, 리포트에 적히는 시각은 분까지만
-    보이는 경우가 있어 초가 어긋날 수 있습니다. 정확히 같은 id 가 없으면
-    같은 '분'(앞 12자리) 의 기록이 딱 하나일 때만 그 기록으로 봅니다 —
-    한 세트를 같은 분에 두 번 제출하는 일은 없기 때문입니다."""
     rec = by_id.get(wanted)
     if rec is not None:
         return wanted, rec
@@ -5700,27 +4366,19 @@ def resolve_correction_target(by_id, wanted):
             if len(rid) == 14 and rid[:12] == wanted[:12]]
     return same[0] if len(same) == 1 else (wanted, None)
 
-
 def correction_delta_key(rid, delta):
-    """가산점 항목 식별자 — 부호를 포함해 `data:<기록id>:+5` 모양."""
     return f"data:{rid}:{delta:+g}"
 
-
 def correction_bonus_applied(rec, key):
-    """이 가산점이 지금 점수에 이미 얹혀 있는지."""
     keys = rec.get(CORRECTION_BONUS_FIELD)
     return isinstance(keys, list) and key in keys
 
-
 def correction_change_text(ch):
-    """정정 1건 문구: '코코 모의고사 1회 86 → 95점'."""
     before = ch.get("before")
     b = f"{before:g}" if isinstance(before, (int, float)) else "—"
     return f"{ch.get('name') or '?'} {b} → {ch.get('after'):g}점"
 
-
 def correction_summary_text(changes, limit=3):
-    """시작 화면 안내 띠 문구 — '이의제기 반영: 코코 1회 86 → 95점'."""
     changes = [c for c in (changes or []) if isinstance(c, dict)]
     if not changes:
         return ""
@@ -5733,17 +4391,7 @@ def correction_summary_text(changes, limit=3):
             + (f" 외 {more}건" if more > 0 else "")
             + " (클릭하면 자세히)")
 
-
 class RegradeCoordinator:
-    """지난 기록 자동 재채점 (GUI 없이 테스트 가능).
-
-    run() 은 워커 스레드에서 도는 것을 전제로 하며 Tk 를 전혀 만지지 않습니다.
-    진행은 progress(i, n, 세트명) 콜백으로 알리고, 끝나면 요약 dict 를 돌려
-    줍니다(GUI 는 그것을 after(0, …) 로 받아 띠를 띄웁니다).
-
-    요약: {"checked", "targets", "regraded", "changes"[], "errors"[],
-           "data_applied", "skipped"}
-    """
 
     def __init__(self, sets=None, grade_py=None, records_path=None,
                  corrections_file=None, progress=None, log=None, when=None,
@@ -5757,8 +4405,6 @@ class RegradeCoordinator:
         self.when = when
         self.timeout = timeout
         self.limit = limit
-
-    # -- 내부 -------------------------------------------------------------
 
     def log(self, msg):
         try:
@@ -5787,8 +4433,6 @@ class RegradeCoordinator:
         return None
 
     def _commit(self, patches):
-        """정정 결과를 기록.json 에 반영 — 쓰기 직전에 다시 읽어 병합합니다
-        (백그라운드로 도는 동안 새 응시 기록이 추가될 수 있음)."""
         if not patches:
             return False
         with _FILE_LOCK:
@@ -5818,10 +4462,7 @@ class RegradeCoordinator:
         routine_touch()
         return True
 
-    # -- 공개 -------------------------------------------------------------
-
     def plan(self, records=None):
-        """재채점 대상 [(rid, 기록, 세트, 사유, 풀이경로 or None)]."""
         records = load_records(self.records_path) if records is None \
             else records
         cur = grader_version(self.grade_py)
@@ -5841,7 +4482,7 @@ class RegradeCoordinator:
                    "errors": [], "data_applied": 0, "skipped": 0}
         try:
             records = load_records(self.records_path)
-        except Exception as e:          # load_records 는 예외를 안 내지만 방어
+        except Exception as e:
             log_error("자동 재채점 기록 읽기", e)
             return summary
         summary["checked"] = len(records)
@@ -5864,7 +4505,7 @@ class RegradeCoordinator:
                 result, html_p, json_p, err = regrade_record(
                     rec, s, grade_py=self.grade_py, student=student,
                     when=self.when, timeout=self.timeout)
-            except Exception as e:      # 한 건이 죽어도 나머지는 계속
+            except Exception as e:
                 log_error("자동 재채점 실행", e)
                 result, html_p, json_p, err = None, None, None, str(e)
             if result is None:
@@ -5874,8 +4515,6 @@ class RegradeCoordinator:
             patch = dict(rec)
             ev = record_evidence_changes(patch, s, grade_py=self.grade_py,
                                          student=student)
-            # 문제지 쪽 결함 등 채점기가 알 수 없는 가산점은 재채점 결과 위에
-            # 다시 얹는다 — 안 그러면 다음 재채점 때마다 인정한 점수가 날아간다.
             total = result.get("total")
             bonus = correction_deltas(data_items, rid, rec)
             reason = why
@@ -5883,8 +4522,6 @@ class RegradeCoordinator:
                 total = total + sum(d for d, _ in bonus)
                 reason = why + " + " + ", ".join(
                     f"{d:+g}점({r})" for d, r in bonus)
-            # 지금 점수에 얹힌 가산점을 기록해 둔다 — 정정 데이터 단계가
-            # 같은 가산점을 한 번 더 더하지 않도록.
             patch[CORRECTION_BONUS_FIELD] = [
                 correction_delta_key(rid, d) for d, _ in bonus]
             entry = apply_correction(
@@ -5913,9 +4550,6 @@ class RegradeCoordinator:
         return summary
 
     def _apply_data(self, records, patches, summary):
-        """정정 데이터 파일(`정정/점수정정.json`)로 점수만 정정.
-
-        다시 채점한 기록은 그 결과가 우선이라 건너뜁니다."""
         items = load_corrections(self.corrections_file)
         if not items:
             return 0
@@ -5923,7 +4557,6 @@ class RegradeCoordinator:
         n = 0
         for it in items:
             rid, rec = resolve_correction_target(by_id, it["report_id"])
-            # 이번에 다시 채점한 기록은 가산점까지 거기서 얹었다 — 건너뛴다.
             if rec is None or rid in patches:
                 continue
             if not correction_matches(it, rec):
@@ -5962,41 +4595,9 @@ class RegradeCoordinator:
                      f"({it['reason']})")
         return n
 
-
-# ---------------------------------------------------------------------------
-# 루틴 웹 연동 서버 (v2.4.0) — 규약: 문서/연동_API.md v2.4.1
-# ---------------------------------------------------------------------------
-#
-# 시험장이 시작될 때 127.0.0.1:<port>(기본 8765, 사용 중이면 빈 포트)에
-# ThreadingHTTPServer 를 데몬 스레드로 띄우고 시험장 폴더의 루틴.html 을
-# 서빙합니다. 프로그램이 상태의 유일한 원본이며, 루틴 페이지는 /api/state 를
-# 5초마다 읽어 그립니다(`generated` 가 바뀔 때만 다시 그림).
-#   - 서버 스레드는 파일(기록.json·세트설정.json·채점결과 JSON)과 메모리
-#     스냅샷(세트 목록·시험 진행 여부)만 읽습니다.
-#   - 쓰기(POST)와 프로그램 동작(시험 시작 등)은 큐를 통해 Tk 스레드에서
-#     실행되고, 핸들러는 결과를 짧게 기다렸다가 최신 상태로 응답합니다.
-#   - POST 는 세션 토큰(X-Coco-Token 헤더 또는 ?t=) 필수, GET 은 자유.
-#     Host 가 루프백이 아니면 거부(DNS 리바인딩 방지). 외부 접속 불가.
-#
-#   GET  /                    루틴 페이지 (doctype/html/head/body 골격으로 감쌈)
-#   GET  /api/state           전체 상태 JSON (5초 폴링)
-#   GET  /api/report/<id>     채점결과 HTML
-#   POST /api/check           {"key","value"}              → _웹체크 저장
-#   POST /api/score           {"date","set","total"}       → mode=수동 기록 추가
-#   POST /api/review          {"record_id","done"}         → 오답노트 완료 상태
-#   POST /api/exam_date       {"date","date2"}             → 시험일 저장 (v3.0.0)
-#   POST /api/action          {"action","set","record_id"} → 시험 시작·오답노트 등
-# 응답: 성공 200 {"ok": true, ...최신 state} / 논리 오류 200 {"ok": false,
-# "error"} / 토큰 401 / 본문·필드 400. JSON 은 ensure_ascii=False,
-# Cache-Control: no-store. 시작 로그에는 쓰기·페이지 요청 요약만 남깁니다
-# (/api/state 폴링은 건수만 셈).
-
 ROUTINE_PAGE_HEAD = ('<!doctype html><html lang="ko"><head><meta charset="utf-8">'
                      '<meta name="viewport" content="width=device-width, '
                      'initial-scale=1"></head><body>')
-# 골격 끝에 넣는 1줄 스크립트: URL 해시(#quiz 등)가 탭 id(tab-quiz)와 맞으면
-# 그 탭을 연다 — 단계 가이드 [웹에서 퀴즈 풀기]가 /?t=…#quiz 로 열기 위함.
-# 페이지가 자체 해시 처리를 갖춰도 같은 탭을 한 번 더 클릭할 뿐 무해.
 ROUTINE_PAGE_TAIL = ('<script>(function(){try{var h=(location.hash||"")'
                      '.replace(/^#/,"");if(!h){return;}var t=document.'
                      'getElementById("tab-"+h);if(t&&t.getAttribute("role")'
@@ -6004,16 +4605,13 @@ ROUTINE_PAGE_TAIL = ('<script>(function(){try{var h=(location.hash||"")'
                      '</body></html>')
 ROUTINE_ACTIONS = ("start_exam", "open_review", "start_retry", "open_report",
                    "open_pdf", "show")
-ROUTINE_BODY_LIMIT = 1024 * 1024        # POST 본문 상한 (1MB)
-ROUTINE_UI_TIMEOUT = 8.0                # 쓰기 작업의 Tk 스레드 응답 대기(초)
-ROUTINE_ACTION_TIMEOUT = 1.5            # 동작 요청 대기(초) — 대화상자가 뜨면 먼저 응답
+ROUTINE_BODY_LIMIT = 1024 * 1024
+ROUTINE_UI_TIMEOUT = 8.0
+ROUTINE_ACTION_TIMEOUT = 1.5
 _RECORD_STAMP_RE = re.compile(
     r"(\d{4})-?(\d{2})-?(\d{2})[ T]?(\d{2}):?(\d{2})(?::?(\d{2}))?")
 
-
 def routine_html_path(base_dir=None):
-    """루틴 페이지 파일 경로: <시험장 폴더>/루틴.html → 자동 업데이트 설치 위치
-    (_data_target_path('시험장/루틴.html')) 순으로 있는 것. 없으면 첫 후보."""
     base_dir = base_dir or BASE_DIR
     cands = [os.path.join(base_dir, ROUTINE_HTML_NAME)]
     try:
@@ -6027,17 +4625,12 @@ def routine_html_path(base_dir=None):
             return c
     return cands[0]
 
-
 def render_routine_page(text):
-    """루틴.html 내용 → 브라우저에 보낼 HTML. 아티팩트 규격 파일(doctype 없음)은
-    골격으로 감싸고, 이미 <!doctype 으로 시작하면 그대로."""
     if text.lstrip()[:9].lower().startswith("<!doctype"):
         return text
     return ROUTINE_PAGE_HEAD + text + ROUTINE_PAGE_TAIL
 
-
 def routine_missing_page(path):
-    """루틴.html 이 없을 때의 안내 페이지 (15초마다 다시 확인)."""
     import html as _html
     return (ROUTINE_PAGE_HEAD
             + '<meta http-equiv="refresh" content="15">'
@@ -6049,21 +4642,14 @@ def routine_missing_page(path):
             f'<p>찾는 위치: <code>{_html.escape(str(path))}</code></p></div>'
             '</body></html>')
 
-
-# --- 기록 → 규약 records[] ---
-
 def record_stamp_id(when):
-    """'2026-09-06 16:12(:36)' → '20260906161236' (초가 없으면 '00'). 실패 None."""
     m = _RECORD_STAMP_RE.search(str(when or ""))
     if not m:
         return None
     y, mo, d, h, mi, sec = m.groups()
     return f"{y}{mo}{d}{h}{mi}{sec or '00'}"
 
-
 def records_with_ids(records):
-    """[(id, 기록)] — 같은 기록은 항상 같은 id(일시 14자리). 같은 분의 두 번째
-    기록부터는 초 자리에 순번(01, 02…)을 넣어 유일하게 만듭니다."""
     used = set()
     out = []
     for i, r in enumerate(records or []):
@@ -6076,22 +4662,17 @@ def records_with_ids(records):
         out.append((rid, r))
     return out
 
-
 def _record_datetime(r):
     try:
         return datetime.strptime(str(r.get("일시"))[:16], "%Y-%m-%d %H:%M")
     except Exception:
         return None
 
-
 def record_set_name(r):
-    """기록의 세트명 (타이머 일시정지 표시 ' (연습)' 접미 제거)."""
     name = str((r or {}).get("세트명") or "?")
     return name[:-5] if name.endswith(" (연습)") else name
 
-
 def record_report_paths(r):
-    """기록의 리포트 경로 → (존재하는 HTML 경로 or None, 존재하는 JSON 경로 or None)."""
     html_p = (r or {}).get("리포트")
     if not html_p or not isinstance(html_p, str):
         return None, None
@@ -6099,12 +4680,10 @@ def record_report_paths(r):
     return (html_p if os.path.isfile(html_p) else None,
             json_p if os.path.isfile(json_p) else None)
 
-
 def _num(v, default=0):
     if isinstance(v, bool) or not isinstance(v, (int, float)):
         return default
     return int(v) if float(v).is_integer() else v
-
 
 def _category_of_sheet(sheet):
     head = str(sheet or "").split("-")[0].strip()
@@ -6112,14 +4691,9 @@ def _category_of_sheet(sheet):
         return "기타작업"
     return head or "기타작업"
 
-
-_RESULT_CACHE = {}      # 채점결과 JSON 경로 → ((mtime, size), 요약)
-
+_RESULT_CACHE = {}
 
 def load_result_summary(json_path):
-    """채점결과 JSON → {"sheets", "wrong_items", "count", "total"} (mtime 캐시).
-    sheets 는 {name, alloc, earned}, wrong_items 는 {label, category, lost, sheet}
-    만 남깁니다(웹은 category 문자열·lost 숫자가 있어야 오답으로 셈)."""
     try:
         st = os.stat(json_path)
     except OSError:
@@ -6144,12 +4718,7 @@ def load_result_summary(json_path):
     _RESULT_CACHE[json_path] = (key, summ)
     return summ
 
-
 def serialize_corrections(records, sets=None, limit=20):
-    """기록의 `정정이력` → 규약 corrections[] (최근 정정이 앞).
-
-    웹이 "이의제기 반영 +9점" 배지를 띄우는 데 씁니다. 손으로 고친 기록에
-    이상한 값이 들어 있어도 읽을 수 있는 항목만 살립니다."""
     by_name = {s.get("name"): s for s in sets or []}
     out = []
     for rid, r in records_with_ids(records):
@@ -6181,13 +4750,7 @@ def serialize_corrections(records, sets=None, limit=20):
     out.sort(key=lambda c: (c["when"], c["record_id"]), reverse=True)
     return out[:max(0, int(limit))]
 
-
 def serialize_records(records, sets, cfg=None):
-    """기록.json → (규약 records[], review{}, 색인{id: 정보}).
-
-    색인 정보: record(원본)·set(세트 dict or None)·norm·name·html·json·count(오답
-    수)·date·time·mode — 쓰기 요청(review/action)이 id 로 기록을 찾는 데 씁니다.
-    """
     by_name = {s.get("name"): s for s in sets or []}
     out, review, index = [], {}, {}
     for rid, r in records_with_ids(records):
@@ -6232,13 +4795,7 @@ def serialize_records(records, sets, cfg=None):
             review[rid] = {"done": done, "when": when}
     return out, review, index
 
-
 def serialize_sets(sets, records, index, review, board=None):
-    """세트 목록 → 규약 sets[] (attempts·best 는 시험·수동 기록, review_done·
-    retry_done 은 최근 시험 기록 기준).
-
-    board 를 주면(= score_board 결과의 sets[]) 점수대 보드 필드(band·scores·
-    last_date·prev_best·best_delta·improved·prev_band)를 함께 담습니다."""
     by_norm = {r["norm"]: r for r in (board or [])}
     out = []
     for s in sets or []:
@@ -6264,7 +4821,7 @@ def serialize_sets(sets, records, index, review, board=None):
             "review_done": review_done, "retry_done": retry_done,
         }
         bd = by_norm.get(row["norm"])
-        if bd:                     # 점수대 보드 (규약 records[] 기준 — 웹과 동일)
+        if bd:
             row.update({"band": bd["band"], "scores": list(bd["scores"]),
                         "last_date": bd["last_date"],
                         "prev_best": bd["prev_best"],
@@ -6279,27 +4836,16 @@ def serialize_sets(sets, records, index, review, board=None):
         out.append(row)
     return out
 
-
-# --- 적응형 일정 → 규약 plan ---
-
 def _iso(d):
     return d.isoformat() if isinstance(d, date) else None
 
-
 def _seg_end_for(d, exam=None, today=None):
-    """날짜가 속한 학습 구간의 마감일 (D-1). 구간 밖이면 그 날짜."""
     for sg in study_segments(exam, today):
         if sg["seg_start"] <= d <= sg["end"]:
             return sg["end"]
     return d
 
-
 def serialize_slot(sl, by_set):
-    """엔진 슬롯 → {kind, set{name,norm,pdf}|null, goal, why, best, counts_as_retry}.
-
-    kind: first(첫 응시) · retry(합격선 70 미달 재응시) · goal(현재 목표 도전).
-    redo 는 2.5.0에서 쓰지 않지만 값으로는 허용합니다(구 규약 호환).
-    """
     s = sl.get("set")
     kind = sl.get("kind") or "first"
     if kind not in ("first", "redo", "retry", "goal"):
@@ -6313,9 +4859,8 @@ def serialize_slot(sl, by_set):
         "why": str(sl.get("why") or ""),
         "best": _best(by_set.get(s["norm"], [])) if s else None,
         "counts_as_retry": bool(sl.get("counts_as_retry")),
-        "done": False, "record_id": None,          # (선택 — 웹은 무시)
+        "done": False, "record_id": None,
     }
-
 
 def _day_title(d, today, kind, slots, promoted, deadline, recs_by_date,
                exam=None):
@@ -6339,18 +4884,10 @@ def _day_title(d, today, kind, slots, promoted, deadline, recs_by_date,
         parts.append("실수 노트")
     return " + ".join(parts)
 
-
 def serialize_days(adaptive, today, recs_by_date, by_set, dates=None,
                    exam=None):
-    """D-7 ~ 시험일(2차가 있으면 그 날)까지를 규약 days[] 로.
-
-    dates 를 주면 그 날짜만. 시험일이 설정돼 있지 않으면 빈 목록.
-    kind: exam(시험 당일) > next(구간 밖) > past(오늘 이전) > mock(슬롯 있음) /
-    rest(슬롯 없음). past·exam·next 의 slots 는 []. review_day 는 규약 호환용
-    으로 남겨 두되 이 일정에서는 항상 false.
-    """
     all_ex = _exams(exam)
-    ex = effective_exams(all_ex, today)          # 일정 기준 = 다음 시험일
+    ex = effective_exams(all_ex, today)
     week = bool(adaptive) and adaptive.get("kind") in ("week", "free")
     end = adaptive.get("end") if week else None
     boost = set(adaptive.get("boost_days") or []) if week else set()
@@ -6392,7 +4929,6 @@ def serialize_days(adaptive, today, recs_by_date, by_set, dates=None,
         })
     return out
 
-
 def _recs_by_date(records):
     out = {}
     for r in records or []:
@@ -6403,12 +4939,7 @@ def _recs_by_date(records):
             out.setdefault(d, []).append(r)
     return out
 
-
 def serialize_plan(adaptive, today, records, sets, preview=None, exam=None):
-    """build_adaptive_plan 결과 → 규약 plan (date → ISO, 내부 키 제거, days[] 전체).
-
-    preview 는 다음 학습 구간이 있을 때만 채워지는데, 1주 커리큘럼은 단일
-    구간이라 언제나 null 이다(규약 호환용 필드)."""
     ex = _exams(exam if exam is not None else adaptive.get("exam_dates"))
     week = adaptive.get("kind") in ("week", "free")
     by_set = exam_records_by_set(sets or [], records or [])
@@ -6422,7 +4953,7 @@ def serialize_plan(adaptive, today, records, sets, preview=None, exam=None):
         "level": lv,
         "streak": stk,
         "attempts_left": int(adaptive.get("attempts_left") or 0),
-        "today_locked": False,        # v2.7.0: 응시 제한 폐지 (하위 호환 필드)
+        "today_locked": False,
         "passed_sets": int(adaptive.get("passed_sets") or 0),
         "total_sets": int(adaptive.get("total_sets") or len(sets or [])),
         "all_clear": bool(adaptive.get("all_clear")),
@@ -6465,14 +4996,8 @@ def serialize_plan(adaptive, today, records, sets, preview=None, exam=None):
         }
     return plan
 
-
 def build_state(sets, records=None, cfg=None, today=None, exam_running=False,
                 generated=None, exam=None):
-    """규약 GET /api/state 전체 (순수 함수 — 파일은 인자로 안 주면 읽음).
-
-    sets: 스캔된 세트 목록(스냅샷). records/cfg 를 생략하면 기록.json·세트설정.json
-    을 읽습니다. today 를 주면 그 날짜 기준(테스트용). exam 을 주면 그 시험일
-    기준(주지 않으면 cfg/세트설정.json 의 `_설정.시험일`)."""
     today = today or date.today()
     if records is None:
         records = load_records(RECORDS_PATH)
@@ -6490,7 +5015,7 @@ def build_state(sets, records=None, cfg=None, today=None, exam_running=False,
     preview = None
     nxt = next_segment_after(adaptive.get("seg") or 0, ex, today) \
         if adaptive.get("kind") in ("week", "free") else None
-    if nxt:                                   # 다음 학습 구간이 있을 때만 (지금은 없음)
+    if nxt:
         try:
             preview = build_adaptive_plan(nxt["seg_start"], records, sets, ex)
         except Exception as e:
@@ -6500,7 +5025,7 @@ def build_state(sets, records=None, cfg=None, today=None, exam_running=False,
     checks = {str(k): bool(v) for k, v in
               _cfg_section(cfg, WEB_CHECKS_KEY).items()}
     plan_json = serialize_plan(adaptive, today, records, sets, preview, ex)
-    board = score_board(sets, recs)     # 점수대 보드 (규약 records[] 기준)
+    board = score_board(sets, recs)
     return {
         "version": ROUTINE_API_VERSION,
         "app_version": __version__,
@@ -6539,42 +5064,32 @@ def build_state(sets, records=None, cfg=None, today=None, exam_running=False,
                      "exam_date2": (ex[1].isoformat() if len(ex) > 1 else None)},
     }
 
-
 def record_index(sets, records=None, cfg=None):
-    """{id: 정보} 색인만 (쓰기 요청이 record_id 로 기록을 찾을 때)."""
     if records is None:
         records = load_records(RECORDS_PATH)
     if cfg is None:
         cfg = load_set_config(SET_CONFIG_PATH)
     return serialize_records(records, sets, cfg)[2]
 
-
 class RoutineRequestError(Exception):
-    """규약의 오류 응답: status(200 논리 오류 / 400 본문·필드 / 401 토큰)."""
 
     def __init__(self, status, message):
         super().__init__(message)
         self.status = status
         self.message = message
 
-
 class _RoutineHTTPServer(http.server.ThreadingHTTPServer):
     daemon_threads = True
-    # Windows 의 SO_REUSEADDR 는 다른 프로세스가 듣고 있는 포트에도 bind 를 허용해
-    # '사용 중 → 대체 포트' 판정이 깨지므로 끕니다(리눅스는 TIME_WAIT 재사용용으로 켬).
     allow_reuse_address = sys.platform != "win32"
     routine = None
 
-
 class _RoutineHandler(http.server.BaseHTTPRequestHandler):
-    """경로 → RoutineServer 메서드 연결. 응답은 항상 JSON(페이지·리포트 제외)."""
     server_version = "CocoRoutine/" + __version__
     sys_version = ""
 
-    def log_message(self, fmt, *args):      # stderr 없는 pythonw 에서도 안전
+    def log_message(self, fmt, *args):
         pass
 
-    # --- 응답 도우미 ---
     def _send(self, status, body, ctype):
         data = body if isinstance(body, bytes) else body.encode("utf-8")
         self.send_response(status)
@@ -6623,7 +5138,6 @@ class _RoutineHandler(http.server.BaseHTTPRequestHandler):
             raise RoutineRequestError(400, "JSON 객체가 아닙니다")
         return body
 
-    # --- 요청 ---
     def do_HEAD(self):
         self.do_GET()
 
@@ -6700,19 +5214,7 @@ class _RoutineHandler(http.server.BaseHTTPRequestHandler):
             except Exception:
                 pass
 
-
 class RoutineServer:
-    """루틴 웹 연동 로컬 서버 (시험장 프로그램이 상태의 원본).
-
-    sets_fn(): 현재 세트 목록(읽기 전용 스냅샷)을 돌려주는 함수.
-    ui_call(fn): fn 을 Tk 스레드에서 실행하도록 넘기는 함수 — 없으면(테스트)
-        서버 스레드에서 바로 실행.
-    action_fn(action, set, record, norm, record_id): Tk 스레드에서 프로그램 동작
-        → (ok, 오류 문구). 없으면 동작은 받기만 하고 ok.
-    on_change(kind, info): 쓰기 반영 뒤 Tk 스레드에서 호출(화면 갱신용).
-    exam_running_fn(): 시험 진행 중 여부. today: 기준 날짜(date 또는 함수, 테스트용).
-    port: 우선 포트(기본 8765) — 사용 중이면 빈 포트. html_path: 루틴 페이지 파일.
-    """
 
     def __init__(self, sets_fn=None, ui_call=None, action_fn=None,
                  on_change=None, exam_running_fn=None, port=None,
@@ -6734,9 +5236,7 @@ class RoutineServer:
         self._fingerprint = None
         self._write_lock = threading.Lock()
 
-    # --- 수명 ---
     def start(self):
-        """포트 bind(우선 포트 → 빈 포트) 후 데몬 스레드로 serve_forever."""
         last = None
         cands = [self.preferred_port]
         if self.preferred_port != 0:
@@ -6782,7 +5282,6 @@ class RoutineServer:
             and self.thread.is_alive()
 
     def url(self, tab=None):
-        """페이지 주소 (토큰 포함). tab='quiz' 면 #quiz 로 그 탭을 엽니다."""
         u = f"http://127.0.0.1:{self.port}/?t={self.token}"
         return u + (f"#{tab}" if tab else "")
 
@@ -6796,7 +5295,6 @@ class RoutineServer:
         return t or date.today()
 
     def note(self, method, path, status, payload=None):
-        """시작 로그 요약 (폴링 제외). 오류 응답은 문구까지."""
         self.stats["requests"] += 1
         err = ""
         if isinstance(payload, dict) and payload.get("ok") is False:
@@ -6809,9 +5307,7 @@ class RoutineServer:
         except Exception:
             pass
 
-    # --- 읽기 ---
     def page(self):
-        """GET / → (status, HTML). 파일은 매 요청마다 읽어 갱신을 바로 반영."""
         hp = self.html_path()
         try:
             with open(hp, encoding="utf-8-sig") as f:
@@ -6820,7 +5316,6 @@ class RoutineServer:
             return 200, routine_missing_page(hp)
 
     def _touch_if_files_changed(self):
-        """GUI 밖에서(grade.py·손 편집) 기록·설정 파일이 바뀌어도 generated 갱신."""
         fp = []
         for p in (RECORDS_PATH, SET_CONFIG_PATH):
             try:
@@ -6843,16 +5338,13 @@ class RoutineServer:
         return 200, dict([("ok", True)] + list(st.items()))
 
     def report_file(self, rid):
-        """record_id → 존재하는 채점결과 HTML 경로 (기록에 있는 것만, 경로 탈출 불가)."""
         rid = str(rid or "").strip()
         if not rid or any(c in rid for c in "/\\") or ".." in rid:
             return None
         info = record_index(self.sets_fn()).get(rid)
         return info["html"] if info and info.get("html") else None
 
-    # --- Tk 스레드 실행 ---
     def _run_on_ui(self, fn, timeout):
-        """fn 을 Tk 스레드에서 실행하고 결과를 기다림 → (끝났는지, 결과)."""
         if self.ui_call is None:
             return True, fn()
         box = {}
@@ -6861,7 +5353,7 @@ class RoutineServer:
         def job():
             try:
                 box["r"] = fn()
-            except Exception as e:      # 로그는 호출 쪽에서
+            except Exception as e:
                 box["e"] = e
             finally:
                 ev.set()
@@ -6874,7 +5366,6 @@ class RoutineServer:
         return True, box.get("r")
 
     def _write(self, fn):
-        """쓰기 작업을 Tk 스레드에서 실행(요청끼리는 직렬화). 응답 없으면 논리 오류로."""
         try:
             with self._write_lock:
                 done, _r = self._run_on_ui(fn, ROUTINE_UI_TIMEOUT)
@@ -6893,7 +5384,6 @@ class RoutineServer:
             except Exception as e:
                 log_error(f"루틴 연동 반영({kind})", e)
 
-    # --- 쓰기 ---
     def api_check(self, body):
         key = body.get("key")
         if not isinstance(key, str) or not key.strip() or len(key) > 120 \
@@ -6920,12 +5410,6 @@ class RoutineServer:
         return self._write(job)
 
     def api_exam_date(self, body):
-        """시험일 저장 — 웹에서도 프로그램과 똑같이 바꿀 수 있다.
-
-        v3.1.0: {"dates": ["YYYY-MM-DD", ...]} 로 **목록 전체**를 바꾼다
-        (빈 목록이면 시험일 없음 = 자유 연습). 구 형식
-        {"date": ..., "date2": ...} 도 그대로 받는다(둘 중 하나만 보낼 것).
-        """
         if "dates" in body:
             raw = body.get("dates")
             if raw is None:
@@ -7065,15 +5549,12 @@ class RoutineServer:
             return 200, {"ok": False, "error": str(result[1] or "동작 실패")}
         return self._ok()
 
-
 def format_elapsed(seconds):
     seconds = max(0, int(seconds))
     m, s = divmod(seconds, 60)
     return f"{m}분 {s:02d}초"
 
-
 def beep(widget=None):
-    """알림음: winsound 우선, 폴백 bell."""
     try:
         import winsound
         winsound.Beep(880, 180)
@@ -7087,15 +5568,9 @@ def beep(widget=None):
     except Exception:
         pass
 
-
-# ---------------------------------------------------------------------------
-# GUI
-# ---------------------------------------------------------------------------
-
 if HAS_TK:
 
     class CollapsibleErrorDialog(tk.Toplevel):
-        """오류 메시지 + 접을 수 있는 상세(stderr) 표시."""
 
         def __init__(self, master, title, message, detail=""):
             super().__init__(master)
@@ -7134,7 +5609,6 @@ if HAS_TK:
                     + self._detail).strip()
 
         def copy_error(self):
-            """메시지+상세를 클립보드로 (채팅에 붙여넣어 진단용)."""
             try:
                 self.clipboard_clear()
                 self.clipboard_append(self.copy_text())
@@ -7157,15 +5631,9 @@ if HAS_TK:
                 self._text = None
                 self._toggle_btn.configure(text="자세히 보기")
 
-
-    _LAST_ERROR_DIALOG = [None]   # 스모크/진단용: 마지막 오류 대화상자
+    _LAST_ERROR_DIALOG = [None]
 
     def _tk_report_callback_exception(root, exc, val, tb):
-        """tkinter 콜백 예외 전역 처리: 로그 append + 접이식 오류 대화상자.
-
-        pythonw에서는 stderr가 없어 예외가 조용히 사라지므로 반드시 흔적을
-        남기고 사용자에게 보여 줍니다.
-        """
         text = log_error("tk callback", (exc, val, tb))
         try:
             dlg = CollapsibleErrorDialog(
@@ -7183,21 +5651,13 @@ if HAS_TK:
 
     tk.Tk.report_callback_exception = _tk_report_callback_exception
 
-    # Tk 변수(BooleanVar/IntVar…) 강한 참조 보관.
-    # 창을 닫아 변수가 쓰레기가 되면 파이썬 GC 가 아무 스레드에서나 __del__ 을
-    # 돌리는데, 그 안의 Tcl 호출이 메인 스레드 밖이면 _tkinter 가 최대 10초를
-    # 기다린다 — 하필 루틴 연동 서버 스레드에서 걸리면 그 요청이 통째로
-    # 멈춘다(응답 없음). 변수는 프로그램이 끝날 때까지 들고 있는다(개수가
-    # 적고 하나에 수백 바이트라 비용이 없다).
     _TK_VARS = []
 
     def keep_var(var):
         _TK_VARS.append(var)
         return var
 
-
     class ResultWindow(tk.Toplevel):
-        """채점 결과 창: 큰 점수 + 시트별 점수 + 리포트 열기."""
 
         def __init__(self, master, result, html_path, folder=None,
                      copied=False, goal=None, linked=False, progress=None):
@@ -7239,7 +5699,6 @@ if HAS_TK:
                          text=f"합격선 {PASS_LINE}점 기준: {verdict}{delta_txt}",
                          bg=BG, fg=INK,
                          font=UI_FONT_BOLD).pack(pady=(0, 8))
-                # 합격선 대비 게이지 (단계 채우기 — 과하지 않은 연출)
                 self.score_gauge = tk.Canvas(frm, height=16, width=360, bg=BG,
                                              bd=0, highlightthickness=0)
                 self.score_gauge.pack(fill="x", pady=(0, 4))
@@ -7318,10 +5777,9 @@ if HAS_TK:
                       padx=14, pady=4, command=self.destroy).pack(
                 side="left", padx=6)
 
-        STEPS = 14              # 게이지 채우기 단계 (약 0.4초)
+        STEPS = 14
 
         def _animate_gauge(self):
-            """합격선 대비 게이지를 단계적으로 채웁니다 (애니메이션은 여기까지)."""
             cv = getattr(self, "score_gauge", None)
             if cv is None or not cv.winfo_exists():
                 return
@@ -7335,7 +5793,7 @@ if HAS_TK:
                 cv.create_rectangle(
                     0, 0, max(2, int(w * frac)), h,
                     fill=BRAND if self._gauge_passed else AMBER, outline="")
-            x = int(w * PASS_LINE / 100)      # 합격선 눈금 + 글자
+            x = int(w * PASS_LINE / 100)
             cv.create_line(x, 0, x, h, fill=INK, width=2)
             cv.create_text(min(w - 22, x + 22), h // 2, text=str(PASS_LINE),
                            fill=INK, font=("Malgun Gothic", 8))
@@ -7343,7 +5801,6 @@ if HAS_TK:
                 self.after(30, self._animate_gauge)
 
         def _render_progress(self, frm, prog, total):
-            """티어 승급 · 새 도전 과제 (색만이 아니라 글자로도 구분)."""
             ups = prog.get("tier_up") or []
             if ups:
                 top = max(ups)
@@ -7371,20 +5828,9 @@ if HAS_TK:
                                f"{prog.get('badges_total', 0)} 달성",
                      bg=BG, fg=SUB, font=("Malgun Gothic", 9)).pack()
 
-
     class TimerOverlay(tk.Toplevel):
-        """실제 시험장처럼 화면 **우측 상단**에 항상 떠 있는 작은 타이머.
 
-        테두리 없는(overrideredirect) 항상 위 창이라 문제지·Excel 위에 얹혀
-        남은 시간만 크게 보여 줍니다. 가리는 자리에 걸리면 마우스로 끌어서
-        옮길 수 있고, 옮긴 자리는 `_설정.타이머오버레이위치` 에 저장해 다음
-        응시 때 그 자리에 다시 띄웁니다.
-
-        시간 경고(색·문구)는 여기서 다시 정하지 않고 타이머 창이 이미 쓰는
-        규칙(TimerWindow._color / ALERTS)을 그대로 넘겨받아 보여 줍니다.
-        """
-
-        _live = []          # 떠 있는 오버레이 (유령 창 방지용 목록)
+        _live = []
 
         def __init__(self, master, head="", monitor_index=None,
                      monitors=None, saved=None):
@@ -7393,7 +5839,7 @@ if HAS_TK:
             self._moved = False
             self.monitors = list(monitors or [])
             try:
-                self.withdraw()          # 자리를 잡기 전에는 보이지 않게
+                self.withdraw()
             except Exception:
                 pass
             for setup in (lambda: self.overrideredirect(True),
@@ -7423,15 +5869,13 @@ if HAS_TK:
             self.place_self(monitor_index, saved)
             for show in (self.deiconify, self.lift,
                          lambda: self.attributes("-topmost", True)):
-                try:                 # 창을 띄우고 '항상 위'를 한 번 더 굳힌다
-                    show()            # (overrideredirect 뒤 풀리는 창 관리자 대비)
+                try:
+                    show()
                 except Exception:
                     pass
             TimerOverlay._live.append(self)
 
-        # --- 자리 잡기 ---
         def _size(self):
-            """지금 크기 (아직 그려지기 전이면 기본 크기로 어림)."""
             w = h = 0
             try:
                 self.update_idletasks()
@@ -7441,14 +5885,13 @@ if HAS_TK:
             return (max(int(w), OVERLAY_SIZE[0]), max(int(h), OVERLAY_SIZE[1]))
 
         def place_self(self, monitor_index=None, saved=None):
-            """우측 상단(또는 저장된 자리)에 배치. 반환 (x, y) 또는 None."""
             size = self._size()
             pos = None
             try:
                 if self.monitors:
                     pos = overlay_position(self.monitors, monitor_index,
                                            size=size, saved=saved)
-                else:              # 모니터를 못 읽는 환경 — tk가 아는 화면으로
+                else:
                     pos = overlay_position_for_screen(
                         self.winfo_screenwidth(), self.winfo_screenheight(),
                         size=size, saved=saved)
@@ -7462,7 +5905,6 @@ if HAS_TK:
                 return None
             return (int(pos[0]), int(pos[1]))
 
-        # --- 끌어서 옮기기 ---
         def _grab(self, event):
             try:
                 self._drag = (event.x_root - self.winfo_x(),
@@ -7483,7 +5925,6 @@ if HAS_TK:
             return "break"
 
         def _drop(self, event=None):
-            """손을 뗀 자리를 화면 안으로 다듬어 설정에 저장."""
             self._drag = None
             if not self._moved:
                 return None
@@ -7498,9 +5939,7 @@ if HAS_TK:
                 log_error("타이머 오버레이 위치 저장", e)
             return None
 
-        # --- 표시 ---
         def update_time(self, text, color=None, note=None):
-            """타이머 창이 1초마다 넘겨 주는 남은 시간·색·문구를 그대로 반영."""
             try:
                 self.time_lbl.configure(text=text,
                                         **({"fg": color} if color else {}))
@@ -7510,9 +5949,7 @@ if HAS_TK:
                 pass
             return text
 
-        # --- 정리 (유령 창 방지) ---
         def close(self):
-            """닫기 — 시험이 끝나는 모든 경로에서 불립니다."""
             try:
                 TimerOverlay._live.remove(self)
             except ValueError:
@@ -7528,11 +5965,6 @@ if HAS_TK:
 
         @classmethod
         def close_all(cls):
-            """떠 있는 오버레이를 전부 닫는다. 반환: 닫은 개수.
-
-            타이머 창을 거치지 않고 시험이 끝난 경우(오류·강제 종료)에도
-            빈 타이머만 남지 않도록 시작 화면 쪽에서 한 번 더 부릅니다.
-            """
             gone = 0
             for ov in list(cls._live):
                 try:
@@ -7543,16 +5975,14 @@ if HAS_TK:
             cls._live = []
             return gone
 
-
     class TimerWindow(tk.Toplevel):
-        """항상 위 소형 타이머 창."""
 
-        ALERTS = (600, 300, 60)  # 10분/5분/1분
+        ALERTS = (600, 300, 60)
 
         def __init__(self, app, exam):
             super().__init__(app)
             self.app = app
-            self.exam = exam            # 진행 중 시험 정보 dict
+            self.exam = exam
             self.total_seconds = exam["minutes"] * 60
             self.remaining = self.total_seconds
             self.paused = False
@@ -7615,20 +6045,11 @@ if HAS_TK:
             self._open_overlay(head)
             self._tick()
 
-        # --- 우측 상단 타이머 오버레이 (v3.2.0) ---
         def _open_overlay(self, head):
-            """실제 시험장처럼 우측 상단에 남은 시간을 띄운다.
-
-            `_설정.타이머오버레이` 로 끌 수 있고, 모니터가 여러 대면
-            `_설정.타이머모니터` 에서 고른 화면에 띄웁니다. 오버레이를 만들지
-            못해도(창 관리자 제약·모니터 열거 실패 등) 타이머 창은 그대로
-            돌아갑니다.
-            """
             self.overlay = None
             try:
                 if not timer_overlay_enabled():
                     return None
-                # 시험 시작 때 이미 정한 배치가 있으면 그대로 쓴다(다시 열거 X)
                 layout = (self.exam or {}).get("monitor_layout") or {}
                 mons = layout.get("monitors") or list_monitors()
                 index = layout.get("timer")
@@ -7644,7 +6065,6 @@ if HAS_TK:
             return self.overlay
 
         def _sync_overlay(self):
-            """오버레이에 지금 남은 시간·색·상태를 옮긴다 (색 규칙은 _color)."""
             ov = getattr(self, "overlay", None)
             if ov is None:
                 return None
@@ -7663,8 +6083,6 @@ if HAS_TK:
                 return None
 
         def close_overlay(self):
-            """오버레이 정리. 시험이 끝나는 모든 경로(제출·중단·시간 종료·
-            창 닫기)가 destroy()를 지나므로 유령 창이 남지 않습니다."""
             ov = getattr(self, "overlay", None)
             self.overlay = None
             if ov is None:
@@ -7680,7 +6098,6 @@ if HAS_TK:
             return super().destroy()
 
         def reopen_file(self):
-            """풀이 파일을 Excel로 다시 열기 (창이 사라졌을 때 언제든)."""
             self.app.reopen_student(self.exam)
 
         def _fmt(self):
@@ -7689,10 +6106,10 @@ if HAS_TK:
 
         def _color(self):
             if self.remaining <= 300:
-                return "#FF8B80"      # 빨강 계열
+                return "#FF8B80"
             if self.remaining <= 600:
-                return "#F2B24C"      # 호박 계열
-            return "#7BD59A"          # 초록 계열
+                return "#F2B24C"
+            return "#7BD59A"
 
         def _tick(self):
             if self.finished:
@@ -7786,20 +6203,14 @@ if HAS_TK:
                                    on_done=self._grading_done)
 
         def _grading_done(self):
-            self.close_overlay()          # 채점이 끝나면 우측 상단 표시부터
+            self.close_overlay()
             try:
                 self.destroy()
             except Exception:
                 pass
             self.app.exam_closed()
 
-
     class ExcelWarnWindow(tk.Toplevel):
-        """Excel 창이 확인되지 않을 때 뜨는 비모달 안내 창 (타이머 위).
-
-        사용자의 흐름을 막지 않도록 grab 없이 항상 위에 띄우고, [다시
-        열기(Excel 직접)] [기본 프로그램으로 열기] [폴더 열기]를 제공합니다.
-        """
 
         def __init__(self, app, exam, detail=""):
             super().__init__(app)
@@ -7885,12 +6296,7 @@ if HAS_TK:
             self._status(f"폴더를 열었습니다: {folder}" if ok
                          else f"폴더를 열지 못했습니다: {err}")
 
-
     class ReviewWindow(tk.Toplevel):
-        """오답노트 모드 패널: 틀린 항목 리스트 + 상세 + 이해 체크.
-
-        타이머 없음, 기록.json에 아무것도 남기지 않음.
-        """
 
         def __init__(self, app, set_info, json_path, items, note=None):
             super().__init__(app)
@@ -8016,12 +6422,7 @@ if HAS_TK:
             self.destroy()
             self.app.start_exam()
 
-
     class PracticeDialog(tk.Toplevel):
-        """부분 연습 영역 선택 대화상자.
-
-        확인 시 self.result = {"sheets": [...], "label": "...", "minutes": n}
-        """
 
         def __init__(self, app):
             super().__init__(app)
@@ -8109,7 +6510,6 @@ if HAS_TK:
                 self.minutes_var.set(practice_minutes(areas))
 
         def selection(self):
-            """(시트 목록, 영역 라벨). 개별 시트 체크가 있으면 우선."""
             sheets = [sh for sh, v in self.sheet_vars.items() if v.get()]
             if sheets:
                 label = "+".join(sheets) if len(sheets) <= 2 \
@@ -8132,9 +6532,7 @@ if HAS_TK:
                            "minutes": minutes}
             self.destroy()
 
-
     class DiagnosisWindow(tk.Toplevel):
-        """세트 인식 진단 결과 표시 + 클립보드 복사."""
 
         def __init__(self, app, text, title=None, hint=None):
             super().__init__(app)
@@ -8175,18 +6573,12 @@ if HAS_TK:
             except Exception:
                 return False
 
-
     class UpdateConsentDialog(tk.Toplevel):
-        """첫 실행 자동 업데이트 **동의 / 거절** 창 (v3.1.0).
-
-        창을 닫거나(✕·Esc) 응답이 없으면 거절로 본다 — 남의 PC 에서 묻지 않고
-        코드를 갈아 끼우지 않기 위한 안전한 기본값이다.
-        """
 
         def __init__(self, app, text=None):
             super().__init__(app)
             self.app = app
-            self.agreed = False          # 닫으면 거절 (안전한 기본값)
+            self.agreed = False
             self.answered = False
             self.title(f"{APP_TITLE} - 자동 업데이트 동의")
             self.configure(bg=BG)
@@ -8228,15 +6620,7 @@ if HAS_TK:
             self.destroy()
             return False
 
-
     class ExamDateDialog(tk.Toplevel):
-        """시험일 목록 — 첫 실행 때 한 번 뜨고, [시험일 설정]으로 언제든 다시.
-
-        v3.1.0: 시험일을 **여러 개** 넣고 개별로 지울 수 있다(0개도 허용).
-        일정(D-7 ~ D-1)은 언제나 가장 가까운 미래 시험일 기준이고, 지난
-        시험일은 목록에 남지만 기준에서 빠진다. 날짜는 YYYY-MM-DD 로 넣거나
-        [-1일]/[+1일]/[+7일] 버튼으로 맞춘다(표준 tkinter 만 쓴다).
-        """
 
         def __init__(self, app, on_save=None, first_run=False):
             super().__init__(app)
@@ -8247,7 +6631,7 @@ if HAS_TK:
             self.title(f"{APP_TITLE} - 시험일 설정")
             self.configure(bg=BG)
             self.resizable(False, False)
-            self.dates = list(exam_dates())        # 화면에서 편집 중인 목록
+            self.dates = list(exam_dates())
             frm = tk.Frame(self, bg=BG, padx=16, pady=12)
             frm.pack(fill="both", expand=True)
             head = ("시험 날짜를 넣으세요. 그 날 기준으로 "
@@ -8326,8 +6710,6 @@ if HAS_TK:
             except Exception:
                 pass
 
-        # --- 목록 편집 (순수 로직은 add_exam_date/remove_exam_date 와 같은 규칙) ---
-
         def _shift(self, days):
             base = parse_iso_date(self.var.get()) or date.today()
             self.var.set((base + timedelta(days=days)).isoformat())
@@ -8354,7 +6736,6 @@ if HAS_TK:
                 b.configure(state="normal" if st else "disabled")
 
         def values(self):
-            """저장될 시험일 목록 (ISO 문자열)."""
             return [d.isoformat() for d in _norm_date_list(self.dates)]
 
         def add(self, value=None):
@@ -8398,7 +6779,6 @@ if HAS_TK:
             return True
 
         def validate(self):
-            """(목록, 오류문구) — 시험일 0개도 정상(자유 연습)."""
             return _norm_date_list(self.dates), ""
 
         def save(self):
@@ -8415,16 +6795,7 @@ if HAS_TK:
             self.destroy()
             return True
 
-
     class SettingsDialog(tk.Toplevel):
-        """[설정] — 스캔 폴더 · 세트 숨기기 · 모니터 배치 · 타이머 · 자동 업데이트.
-
-        v3.1.0에서 생겼다. 세트를 찾을 폴더를 GUI 에서 고르고(설정에 저장되어
-        다음 실행에도 유지), 인식된 세트를 개별로 숨길 수 있다. 숨김은 파일도
-        기록도 지우지 않고 목록·일정·점수대 보드에서만 뺀다.
-        v3.2.0: 모니터가 **2대 이상일 때만** 모니터 배치 칸이 생기고(1대면
-        조용히 숨김), 우측 상단 타이머 표시를 켜고 끌 수 있다.
-        """
 
         MONITOR_ROWS = (("pdf", "문제지(PDF)를 띄울 화면"),
                         ("excel", "Excel(풀이 파일)을 띄울 화면"),
@@ -8433,8 +6804,8 @@ if HAS_TK:
         def __init__(self, app):
             super().__init__(app)
             self.app = app
-            self.rows = []                # 목록 순서대로의 세트 dict
-            self.mon_vars = {}            # 모니터 배치 콤보 상자 (2대 이상일 때)
+            self.rows = []
+            self.mon_vars = {}
             self.mon_msg = None
             self.overlay_msg = None
             try:
@@ -8449,7 +6820,6 @@ if HAS_TK:
             frm = tk.Frame(self, bg=BG, padx=16, pady=12)
             frm.pack(fill="both", expand=True)
 
-            # --- 세트 스캔 폴더 ---
             tk.Label(frm, text="세트 스캔 폴더", bg=BG, fg=INK,
                      font=UI_FONT_BOLD).pack(anchor="w")
             tk.Label(frm, text="이 폴더와 하위 폴더에서 '<이름>_문제.xlsx' + "
@@ -8479,7 +6849,6 @@ if HAS_TK:
                       padx=12, pady=3, command=self.app.refresh_all).pack(
                 side="left", padx=6)
 
-            # --- 세트 숨기기 ---
             tk.Label(frm, text="세트 숨기기", bg=BG, fg=INK,
                      font=UI_FONT_BOLD).pack(anchor="w")
             tk.Label(frm, text="숨긴 세트는 세트 목록 · 오늘의 학습 일정 · "
@@ -8514,11 +6883,9 @@ if HAS_TK:
                                      font=("Malgun Gothic", 9))
             self.hide_msg.pack(side="left", padx=8)
 
-            # --- 모니터 배치 (모니터가 2대 이상일 때만 보임) ---
             if monitor_ui_visible(self.monitors):
                 self._build_monitor_section(frm)
 
-            # --- 기타 토글 ---
             tf = tk.Frame(frm, bg=BG)
             tf.pack(fill="x")
             self.overlay_var = tk.BooleanVar(value=timer_overlay_enabled())
@@ -8560,9 +6927,7 @@ if HAS_TK:
             except Exception:
                 pass
 
-        # --- 모니터 배치 (v3.2.0) ---
         def _window_height(self):
-            """설정 창 높이 — 모니터 칸이 붙으면 더 높게, 화면보다는 낮게."""
             h = 760 if monitor_ui_visible(self.monitors) else 620
             try:
                 h = min(h, max(460, int(self.winfo_screenheight()) - 80))
@@ -8571,10 +6936,6 @@ if HAS_TK:
             return int(h)
 
         def _build_monitor_section(self, frm):
-            """문제지·Excel·타이머를 어느 화면에 띄울지 고르는 칸.
-
-            모니터가 1대면 아예 만들지 않습니다(고를 것이 없으므로).
-            """
             tk.Label(frm, text="모니터 배치", bg=BG, fg=INK,
                      font=UI_FONT_BOLD).pack(anchor="w")
             tk.Label(frm, text="실제 시험장처럼 한 화면에는 문제지, 다른 화면에는 "
@@ -8614,7 +6975,6 @@ if HAS_TK:
             self.mon_msg.pack(side="left", padx=8)
 
         def _monitor_choice(self, key):
-            """콤보 상자에서 고른 모니터 번호 (못 고르면 None)."""
             var = self.mon_vars.get(key)
             if var is None:
                 return None
@@ -8625,7 +6985,6 @@ if HAS_TK:
             return None
 
         def apply_monitors(self):
-            """고른 배치를 설정에 저장. 반환: 저장된 {"pdf","excel","timer"}."""
             saved = save_monitor_assignment(
                 **{k: self._monitor_choice(k) for k, _t in self.MONITOR_ROWS})
             startup_log(f"모니터 배치 저장: 문제지={saved.get('pdf')} · "
@@ -8636,7 +6995,6 @@ if HAS_TK:
             return saved
 
         def reset_monitors(self):
-            """배치를 기본값(Excel=주 모니터, 문제지=남는 화면)으로 되돌림."""
             clear_monitor_assignment()
             cur = resolve_monitor_assignment(self.monitors)
             for key, _t in self.MONITOR_ROWS:
@@ -8648,7 +7006,6 @@ if HAS_TK:
                 self.mon_msg.configure(text="기본값으로 되돌렸습니다")
             return cur
 
-        # --- 우측 상단 타이머 (v3.2.0) ---
         def _toggle_overlay(self):
             on = set_timer_overlay_enabled(self.overlay_var.get())
             startup_log(f"우측 상단 타이머 {'켜짐' if on else '꺼짐'} "
@@ -8659,13 +7016,11 @@ if HAS_TK:
             return on
 
         def reset_overlay_pos(self):
-            """끌어다 놓은 자리를 잊고 다시 우측 상단에서 시작."""
             save_overlay_pos(None, None)
             if self.overlay_msg is not None:
                 self.overlay_msg.configure(text="다음 응시부터 우측 상단")
             return None
 
-        # --- 스캔 폴더 ---
         def refresh_root_label(self):
             cur = self.app.scan_root
             tag = ("기본값 (시험장.py 상위 폴더)" if os.path.abspath(cur) ==
@@ -8707,7 +7062,6 @@ if HAS_TK:
                                 f"{applied}", seconds=8)
             return applied
 
-        # --- 세트 숨기기 ---
         def refresh_sets_list(self):
             hidden = hidden_set_keys()
             rows = list(self.app.sets) + list(
@@ -8759,7 +7113,6 @@ if HAS_TK:
                                 seconds=6)
             return True
 
-        # --- 토글 ---
         def _toggle_auto_update(self):
             on = bool(self.auto_update_var.get())
             try:
@@ -8776,18 +7129,7 @@ if HAS_TK:
                 pass
             return self.app._toggle_routine_auto_open()
 
-
-
-
     class ScoreBoardWindow(tk.Toplevel):
-        """점수대 세트 보드 (v2.7.0) — 세트를 점수대(밴드)로 묶어 보여 주고
-        고른 세트를 [이 세트 응시]로 바로 다시 풀 수 있게 한다.
-
-        밴드 순서는 규약 SCORE_BANDS 그대로: 미응시·미달을 위, 만점을 아래.
-        각 세트 줄에 최고점 · 밴드 · 응시 횟수 · 마지막 응시일 · 점수 이력
-        (58 → 76)을 쓰고, 최고점이 오른 세트는 '최고 58 → 76 (+18)'을 덧붙인다.
-        색만으로 구분하지 않도록 밴드 이름 글자를 언제나 함께 쓴다.
-        """
 
         BAND_COLORS = {
             "none": (BG, SUB), "fail": ("#FDECEA", RED),
@@ -8798,8 +7140,8 @@ if HAS_TK:
         def __init__(self, app):
             super().__init__(app)
             self.app = app
-            self.rows = []                 # [(norm, 세트 dict)] — 선택 순서
-            self.selected = None           # 선택한 세트 norm
+            self.rows = []
+            self.selected = None
             self.title(f"{APP_TITLE} - 점수대 보드")
             self.configure(bg=BG)
             self.geometry("620x560")
@@ -8812,7 +7154,6 @@ if HAS_TK:
                 frm, text="", bg=BG, fg=SUB, font=("Malgun Gothic", 9),
                 anchor="w", justify="left", wraplength=580)
             self.sum_lbl.pack(fill="x", pady=(2, 6))
-            # 스크롤 영역 (세트가 많아도 잘리지 않게)
             wrap = tk.Frame(frm, bg=CARD, highlightbackground=LINE,
                             highlightthickness=1)
             wrap.pack(fill="both", expand=True)
@@ -8848,7 +7189,6 @@ if HAS_TK:
             super().destroy()
 
         def refresh(self):
-            """기록을 다시 읽어 보드를 그린다."""
             try:
                 board = self.app.current_board()
             except Exception as e:
@@ -8951,9 +7291,7 @@ if HAS_TK:
                 return
             self.app.start_set_now(s)
 
-
     class SetChooserDialog(tk.Toplevel):
-        """[다른 세트로 바꾸기] — 슬롯을 고르고 목록에서 세트 선택."""
 
         def __init__(self, guide, sets, slot_count, on_apply):
             super().__init__(guide)
@@ -9007,15 +7345,7 @@ if HAS_TK:
             self.on_apply(int(self.slot_var.get()) - 1, self.sets[sel[0]])
             self.destroy()
 
-
     class StepGuideWindow(tk.Toplevel):
-        """오늘 일정 단계 가이드 — 필수 '완주 → 채점'(여기까지가 클리어) +
-        선택 '오답노트 확인 · 오답 재풀이 · 함수 퀴즈'.
-
-        세트 슬롯(고정/자동 선택)을 창을 열 때 확정해 위쪽에 이유와 함께
-        표시하고, [다른 세트로 바꾸기]로 바꿀 수 있습니다. 진행 상태는
-        세트설정.json '_진행'에 날짜 키(d01~)로 저장되어 이어집니다.
-        """
 
         def __init__(self, app, plan):
             super().__init__(app)
@@ -9049,7 +7379,6 @@ if HAS_TK:
                 relief="groove", padx=8, pady=2, command=self.change_set)
             if plan.get("세트"):
                 self.change_btn.pack(side="right")
-            # 미발견 슬롯: 빨간 안내 + [직접 선택] [파일명 안내] (항상 살아 있는 버튼)
             self.missing_frame = tk.Frame(frm, bg=BG)
             self.missing_frame.pack(fill="x")
             self.missing_rows = []
@@ -9088,7 +7417,6 @@ if HAS_TK:
                 fg=BRAND_DARK, activebackground="#CFE9DA", relief="flat",
                 padx=12, pady=4, command=self.toggle_check)
             self.check_btn.pack(side="left", padx=6)
-            # ⑤ 함수 퀴즈 단계에서만 보이는 [웹에서 퀴즈 풀기] (루틴 페이지 퀴즈 탭)
             self.web_btn = tk.Button(
                 bf, text="웹에서 퀴즈 풀기", font=UI_FONT_BOLD, bg="#1F5FBF",
                 fg="white", activebackground="#174A96", relief="flat",
@@ -9100,27 +7428,18 @@ if HAS_TK:
             self.refresh(select=self.current_index())
 
         def web_tab_of(self, i=None):
-            """스텝의 루틴 페이지 탭(#quiz 등). 없으면 None."""
             i = self.selected_index() if i is None else i
             if i is None or i >= len(self.steps):
                 return None
             return self.steps[i].get("웹탭") or None
 
         def open_web_step(self):
-            """[웹에서 퀴즈 풀기] — 루틴 페이지의 해당 탭을 브라우저로 엽니다."""
             tab = self.web_tab_of()
             if not tab:
                 return None
             return self.app.open_routine_page(tab=tab)
 
-        # --- 세트 슬롯 ---
-
         def _resolve_slots(self, save=False):
-            """세트 슬롯 확정 (직접 선택 매핑/자동 선택 복원 → 매칭 → 저장).
-
-            해석 중 예외가 나도 창은 살아 있어야 하므로 실패 슬롯은
-            None + 사유로 두고 오류 로그에 남깁니다.
-            """
             plan = self.plan
             if plan.get("세트"):
                 try:
@@ -9129,7 +7448,7 @@ if HAS_TK:
                     self.slot_sets = resolve_day_sets(
                         plan, self.app.sets, load_records(), saved=saved,
                         mapping=load_slot_mapping())
-                    for s, _r in self.slot_sets:   # 매핑으로 만든 직접 세트 편입
+                    for s, _r in self.slot_sets:
                         if s is not None:
                             self.app.add_set_to_list(s)
                     if save and self.day_tag and AUTO in plan["세트"]:
@@ -9158,7 +7477,6 @@ if HAS_TK:
                 pass
 
         def pick_text(self):
-            """세트 선택 결과·이유 표시 문구 (한 줄에 슬롯 하나)."""
             lines = []
             for k, ((s, reason), spec) in enumerate(
                     zip(self.slot_sets, self.plan["세트"])):
@@ -9180,7 +7498,6 @@ if HAS_TK:
             self._render_missing_rows()
 
         def missing_slots(self):
-            """세트를 찾지 못한 슬롯 번호 목록."""
             return [k for k, (s, _r) in enumerate(self.slot_sets) if s is None]
 
         def _render_missing_rows(self):
@@ -9225,7 +7542,6 @@ if HAS_TK:
                 parent=self)
 
         def direct_select_slot(self, k):
-            """미발견 슬롯 -> 파일 선택 대화상자로 문제/정답 지정."""
             spec = self.plan["세트"][k]
             try:
                 problem = filedialog.askopenfilename(
@@ -9251,7 +7567,6 @@ if HAS_TK:
                     parent=self)
 
         def apply_direct_slot(self, k, s):
-            """직접 선택한 세트를 슬롯 k에 적용 + 매핑 저장 + 목록 편입."""
             spec = self.plan["세트"][k]
             if spec != AUTO:
                 try:
@@ -9273,7 +7588,6 @@ if HAS_TK:
             self.refresh(select=self.selected_index())
 
         def change_set(self):
-            """[다른 세트로 바꾸기] 대화상자."""
             if not self.plan.get("세트"):
                 return
             if not self.app.sets:
@@ -9285,7 +7599,6 @@ if HAS_TK:
                              self.apply_set_change)
 
         def apply_set_change(self, slot, s):
-            """슬롯 seat를 세트 s로 교체 (같은 세트가 다른 슬롯에 있으면 맞교환)."""
             if not (0 <= slot < len(self.slot_sets)):
                 return
             new = list(self.slot_sets)
@@ -9308,22 +7621,14 @@ if HAS_TK:
             self._render_header()
             self.refresh(select=self.selected_index())
 
-        # --- 상태 ---
-
         def _required_steps(self):
-            """클리어에 필요한 필수 스텝 번호 (선택 단계 제외)."""
             return mandatory_step_indexes(self.steps)
 
         def _all_done(self):
-            """오늘 클리어 여부 = 필수 스텝(완주·채점) 전부 완료.
-
-            선택 단계(오답노트 확인·오답 재풀이·함수 퀴즈)는 조건이 아닙니다.
-            """
             req = self._required_steps()
             return bool(req) and all(i in self.done for i in req)
 
         def current_index(self):
-            """첫 미완료 스텝 (전부 완료면 마지막)."""
             for i in range(len(self.steps)):
                 if i not in self.done:
                     return i
@@ -9334,7 +7639,6 @@ if HAS_TK:
             return sel[0] if sel and sel[0] < len(self.steps) else None
 
         def refresh(self, select=None):
-            """목록·진행 라벨 갱신. select 지정 시 그 스텝 선택."""
             if select is None:
                 select = self.selected_index()
             cur = self.current_index()
@@ -9419,10 +7723,7 @@ if HAS_TK:
                 self.web_btn.pack_forget()
             self.detail_lbl.configure(text="\n".join(lines))
 
-        # --- 동작 ---
-
         def _auto_steps_for(self, i):
-            """채점 완료 시 함께 체크할 스텝: 자신 + 바로 뒤의 '채점' 스텝."""
             out = [i]
             if i + 1 < len(self.steps) and \
                     self.steps[i + 1].get("형") == "채점":
@@ -9430,7 +7731,6 @@ if HAS_TK:
             return out
 
         def start_step(self):
-            """[이 단계 시작] — 어떤 예외도 조용히 죽지 않고 안내로 표시."""
             i = self.selected_index()
             if i is None:
                 return
@@ -9452,7 +7752,7 @@ if HAS_TK:
             kind, payload = resolve_step_action(st, self.app.sets,
                                                 self.slot_sets)
             if kind == "info":
-                if (payload or {}).get("웹탭"):        # 함수 퀴즈 → 루틴 페이지 탭
+                if (payload or {}).get("웹탭"):
                     self.app.open_routine_page(tab=payload["웹탭"])
                     return
                 messagebox.showinfo(f"{APP_TITLE} - {st['이름']}",
@@ -9525,12 +7825,10 @@ if HAS_TK:
             else:
                 self.done.add(i)
             self._persist()
-            # 다음 미완료 스텝으로 자동 포커스
             self.refresh(select=self.current_index())
             self.maybe_celebrate()
 
         def mark_step_done(self, idx):
-            """외부(채점 완료)에서 스텝 자동 체크."""
             if 0 <= idx < len(self.steps) and idx not in self.done:
                 self.done.add(idx)
                 self._persist()
@@ -9552,9 +7850,7 @@ if HAS_TK:
             elif not self._all_done():
                 self._celebrated = False
 
-
     class ExamApp(tk.Tk):
-        """시작 화면."""
 
         def __init__(self, scan_root=None, auto_update=True):
             super().__init__()
@@ -9562,36 +7858,36 @@ if HAS_TK:
             self.configure(bg=BG)
             self.minsize(680, 520)
             self.scan_root = scan_root or configured_scan_root()
-            self.scan_root_fixed = bool(scan_root)   # --scan-root 로 못박음
+            self.scan_root_fixed = bool(scan_root)
             self.sets = []
-            self.hidden_sets = []      # 숨긴 세트 (목록에서 뺀 것 — 파일은 그대로)
-            self.settings_win = None   # 설정 창 (열려 있으면)
+            self.hidden_sets = []
+            self.settings_win = None
             self.grade_py = find_grade_py()
             self.exam_running = False
             self._grade_state = None
-            self.auto_update = auto_update      # False: 시작 시 확인 안 함(테스트)
+            self.auto_update = auto_update
             self.updater = UpdateCoordinator()
-            self._update_state = None           # 워커 결과 (메인 스레드 폴링)
-            self._update_progress = None        # 수동 확인 진행 창
-            self._poll_token = 0                # 폴링 세대 (중복 폴링 방지)
+            self._update_state = None
+            self._update_progress = None
+            self._poll_token = 0
             self._toast_after = None
-            self._toast_click = None     # 안내 띠 클릭 동작 (상세 창)
-            self._regrade_summary = None  # 마지막 자동 재채점 결과
-            self.status_card = None       # 게임형 상태 카드 (티어·배지)
+            self._toast_click = None
+            self._regrade_summary = None
+            self.status_card = None
             self._gauge_goal = GOAL_TIERS[-1]
             self._gauge_frac = 0.0
-            self.board_win = None         # 점수대 보드 창 (열려 있으면)
-            self._warned_dirty = set()   # 원본 오염 경고를 이미 띄운 세트
-            self.plan_no = routine_day_no()   # 오늘의 학습 일정 번호
-            self.adaptive = None              # 적응형 일정 (recompute_plan)
+            self.board_win = None
+            self._warned_dirty = set()
+            self.plan_no = routine_day_no()
+            self.adaptive = None
             self._pending_plan = None
-            self.step_guide = None            # 단계 가이드 창 (열려 있으면)
-            self._current_exam = None         # 진행 중 시험 dict
-            self._excel_warn = None           # Excel 확인 안내 창
-            self.routine = None               # 루틴 웹 연동 서버 (RoutineServer)
-            self.routine_error = ""           # 서버를 못 띄운 이유 (화면 표시용)
-            self._routine_jobs = queue.Queue()   # 서버 스레드 → Tk 스레드 작업 큐
-            self.exam_date_win = None         # 시험일 입력 창 (열려 있으면)
+            self.step_guide = None
+            self._current_exam = None
+            self._excel_warn = None
+            self.routine = None
+            self.routine_error = ""
+            self._routine_jobs = queue.Queue()
+            self.exam_date_win = None
             self._build_ui()
             self.refresh_sets()
             self.refresh_records()
@@ -9612,21 +7908,15 @@ if HAS_TK:
             if auto_update and not first_run_notice_pending():
                 self._begin_update_check()
             elif auto_update:
-                # 첫 실행: 동의를 묻기 전에는 확인도 하지 않는다 (거절할 수 있게)
                 startup_log("첫 실행 — 자동 업데이트 동의를 받은 뒤에 확인합니다")
             if auto_update:
-                # 지난 기록 자동 재채점 (이의제기 반영) — 백그라운드, 사용자 조작 없음
                 self.after(600, self._start_regrade)
             if auto_update and self.routine_auto_open_var.get() \
                     and self.routine is not None:
-                self.after(900, self.open_routine_page)   # 시작 시 자동 열기
-            # 첫 실행: ① 자동 업데이트 동의/거절 ② 시험일 입력 (없으면)
+                self.after(900, self.open_routine_page)
             self.after(150, self._first_run_flow)
 
-        # ---------------- 첫 실행 ----------------
-
         def _begin_update_check(self):
-            """백그라운드 업데이트 확인 시작 (동의한 뒤에만 부른다)."""
             startup_log("업데이트 확인 시작 (백그라운드, 타임아웃 3초)")
             self._poll_token += 1
             tok = self._poll_token
@@ -9635,9 +7925,6 @@ if HAS_TK:
             return tok
 
         def ask_update_consent(self):
-            """첫 실행 자동 업데이트 동의 창 — 반환: 동의했으면 True.
-
-            창을 닫거나 응답이 없으면 거절로 보고 자동 업데이트를 끈다."""
             startup_log("첫 실행 자동 업데이트 동의 창 표시")
             agreed = False
             try:
@@ -9664,7 +7951,6 @@ if HAS_TK:
             return agreed
 
         def _first_run_flow(self):
-            """첫 실행 동의 → 시험일 입력. 둘 다 끝났으면 아무것도 안 한다."""
             try:
                 if first_run_notice_pending():
                     agreed = self.ask_update_consent()
@@ -9676,8 +7962,6 @@ if HAS_TK:
                 log_error("첫 실행 안내", e)
 
         def open_settings(self):
-            """[설정] — 스캔 폴더 · 세트 숨기기 · 모니터 배치(2대 이상) ·
-            우측 상단 타이머 · 자동 업데이트 · 루틴 자동 열기."""
             win = getattr(self, "settings_win", None)
             if win is not None and win.winfo_exists():
                 win.lift()
@@ -9687,7 +7971,6 @@ if HAS_TK:
             return self.settings_win
 
         def open_exam_date_dialog(self, first_run=False):
-            """[시험일 설정] — 시험 날짜 입력 창."""
             win = getattr(self, "exam_date_win", None)
             if win is not None and win.winfo_exists():
                 win.lift()
@@ -9705,7 +7988,6 @@ if HAS_TK:
             routine_touch()
 
         def destroy(self):
-            """창 종료 시 루틴 서버도 내림 (재시작하는 새 프로세스가 포트를 쓰도록)."""
             srv, self.routine = self.routine, None
             if srv is not None:
                 try:
@@ -9713,8 +7995,6 @@ if HAS_TK:
                 except Exception:
                     pass
             super().destroy()
-
-        # ---------------- UI 구성 ----------------
 
         def _build_ui(self):
             header = tk.Frame(self, bg=BRAND)
@@ -9725,7 +8005,6 @@ if HAS_TK:
             tk.Label(header, text="컴활 2급 실기 모의고사 런처", bg=BRAND,
                      fg="#CFE9DA", font=UI_FONT).pack(side="left")
 
-            # 비모달 안내 띠 (자동 업데이트 결과 등) — show_toast()가 pack
             self.toast = tk.Frame(self, bg="#FFF4D6", padx=12, pady=6,
                                   highlightbackground="#E5C87A",
                                   highlightthickness=1, cursor="hand2")
@@ -9742,7 +8021,6 @@ if HAS_TK:
             self.toast_lbl.bind("<Button-1>", self._on_toast_click)
             self.toast.bind("<Button-1>", self._on_toast_click)
 
-            # 오늘의 학습 카드 (날짜 기반 루틴 일정)
             plan_card = tk.Frame(self, bg=BRAND_SOFT, padx=14, pady=8)
             plan_card.pack(fill="x", padx=16, pady=(10, 0))
             self.plan_card = plan_card
@@ -9832,7 +8110,6 @@ if HAS_TK:
                 fg=SUB, font=UI_FONT, justify="left", anchor="nw",
                 padx=10, pady=8, wraplength=230)
             self.info_lbl.pack(fill="both", expand=True)
-            # 문제지 PDF 회차 충돌 경고 (충돌 시에만 표시)
             self.pdf_warn_lbl = tk.Label(
                 infofrm, text="", bg="#FDECEA", fg=RED,
                 font=("Malgun Gothic", 9, "bold"), justify="left",
@@ -9914,8 +8191,6 @@ if HAS_TK:
             self.records_lbl.grid(row=4, column=0, columnspan=2,
                                   sticky="ew", pady=(4, 0))
 
-        # ---------------- 데이터 갱신 ----------------
-
         def refresh_all(self):
             self.refresh_sets()
             self.refresh_records()
@@ -9937,7 +8212,7 @@ if HAS_TK:
                 self.listbox.selection_set(0)
                 self._show_info()
             if getattr(self, "plan_title_lbl", None) is not None:
-                self.recompute_plan()      # 세트 편입/자동 선택/재배치 반영
+                self.recompute_plan()
             self._sync_hidden_note()
             win = getattr(self, "settings_win", None)
             if win is not None and win.winfo_exists():
@@ -9949,10 +8224,10 @@ if HAS_TK:
         def refresh_records(self):
             records = load_records()
             if getattr(self, "plan_title_lbl", None) is not None:
-                self.recompute_plan()      # 새 기록 반영 (일정 재계산)
-            self._sync_start_btn()         # [시험 시작] 문구 갱신
-            self._render_status_card(records)   # 티어·연속·도전 과제
-            self.refresh_board()           # 점수대 보드 (열려 있으면)
+                self.recompute_plan()
+            self._sync_start_btn()
+            self._render_status_card(records)
+            self.refresh_board()
             if not records:
                 self.records_lbl.configure(text="아직 응시 기록이 없습니다.")
                 return
@@ -9977,10 +8252,6 @@ if HAS_TK:
             return self.sets[sel[0]]
 
         def _sync_start_btn(self):
-            """[시험 시작] 버튼 문구 갱신 (v2.7.0: 응시 횟수 제한 없음).
-
-            기록이 있는 세트면 '재응시 (점수 갱신)' 로만 바뀌고, 잠기지
-            않습니다 — 예습·복습을 위해 하루에 몇 번이든 시작할 수 있습니다."""
             btn = getattr(self, "start_btn", None)
             if btn is None or self.exam_running:
                 return
@@ -10019,7 +8290,6 @@ if HAS_TK:
             if up:
                 lines.append(up + " 갱신")
             self.info_lbl.configure(text="\n".join(lines), fg=INK)
-            # 문제지 회차·형·연도가 세트와 다르면(또는 달라서 무시했으면) 경고
             warn = ""
             if pdf and pdf_conflicts_with_set(s):
                 warn = PDF_MISMATCH_WARNING
@@ -10033,14 +8303,7 @@ if HAS_TK:
             else:
                 self.pdf_warn_lbl.pack_forget()
 
-        # ---------------- 루틴 웹 연동 (v2.4.0) ----------------
-
         def _build_routine_bar(self, parent):
-            """루틴 웹페이지로 가는 길 (v3.1.0) — 프로그램 안에서 바로 연다.
-
-            루틴 페이지는 따로 내려받아 여는 물건이 아니라 이 프로그램이 띄우는
-            로컬 서버의 화면이다. 서버가 안 떴으면 왜 못 여는지와 대안(파일로
-            열기 = 폴백 모드)을 여기서 바로 알려 준다."""
             bar = tk.Frame(parent, bg="#EAF1FB", padx=14, pady=8,
                            highlightbackground="#B9D0EF", highlightthickness=1)
             self.routine_bar = bar
@@ -10070,7 +8333,6 @@ if HAS_TK:
             return bar
 
         def routine_bar_text(self):
-            """루틴 바 문구 (서버 상태에 따라). 반환: (문구, 정상 여부)."""
             if self.routine_alive():
                 return ("오늘 할 일 · 날짜별 일정 · 실수 노트 · 함수 퀴즈를 "
                         "브라우저에서 봅니다. 시험장이 켜져 있는 동안 점수·"
@@ -10087,7 +8349,6 @@ if HAS_TK:
                     "다시 실행해 보세요.", False)
 
         def _sync_routine_bar(self):
-            """루틴 바 문구·버튼 상태 갱신."""
             lbl = getattr(self, "routine_bar_lbl", None)
             if lbl is None:
                 return
@@ -10102,7 +8363,6 @@ if HAS_TK:
                 btn.configure(text="루틴 열기" if ok else "루틴 (서버 꺼짐)")
 
         def _sync_hidden_note(self):
-            """목록 위 '숨긴 세트 N개' 표시 갱신."""
             lbl = getattr(self, "hidden_note_lbl", None)
             if lbl is None:
                 return
@@ -10111,10 +8371,6 @@ if HAS_TK:
                           if n else "")
 
         def open_routine_file(self):
-            """폴백: 루틴 페이지 파일을 브라우저로 직접 엽니다(연동 없음).
-
-            서버가 안 떴을 때의 대안이라, 페이지는 브라우저에 저장된 값으로만
-            돌고 시험장의 기록과는 오가지 않습니다."""
             hp = routine_html_path()
             if not os.path.isfile(hp):
                 messagebox.showwarning(
@@ -10139,8 +8395,6 @@ if HAS_TK:
             return url if ok else None
 
         def _start_routine_server(self):
-            """로컬 연동 서버 기동: 8765 → 저장된 포트 → 빈 포트. 실패해도 프로그램은
-            계속 뜨고(연동 기능만 꺼짐), 실제 포트는 `_설정.루틴포트`에 저장."""
             prefer = ROUTINE_PORT_DEFAULT
             srv = None
             try:
@@ -10168,7 +8422,6 @@ if HAS_TK:
             return srv
 
         def _routine_pump(self):
-            """서버 스레드가 넘긴 작업을 Tk 스레드에서 실행 (100ms 주기)."""
             try:
                 while True:
                     job = self._routine_jobs.get_nowait()
@@ -10193,8 +8446,6 @@ if HAS_TK:
             return self.routine.url(tab) if self.routine_alive() else None
 
         def open_routine_page(self, tab=None):
-            """[루틴 열기] — 기본 브라우저로 루틴 페이지(토큰 포함 주소) 열기.
-            tab='quiz' 면 함수 퀴즈 탭. 반환: 연 주소(실패 None)."""
             if not self.routine_alive():
                 why = getattr(self, "routine_error", "") or "알 수 없는 이유"
                 if messagebox.askyesno(
@@ -10237,7 +8488,6 @@ if HAS_TK:
             return on
 
         def bring_to_front(self):
-            """시험장 창을 앞으로 (웹에서 동작을 요청했을 때)."""
             try:
                 self.deiconify()
                 self.lift()
@@ -10248,8 +8498,6 @@ if HAS_TK:
                 pass
 
         def _web_pending_plan(self, s, step_kind):
-            """웹에서 시작한 시험/재풀이가 오늘 단계 가이드의 어느 스텝인지 찾아
-            채점 완료 시 자동 체크되도록 _pending_plan 을 만듭니다."""
             no = routine_day_no()
             plan = {"day": plan_day_tag(no), "목표": None, "step": None,
                     "done_steps": []}
@@ -10275,13 +8523,11 @@ if HAS_TK:
             return plan
 
         def routine_action(self, action, s, rec, norm, record_id):
-            """(Tk 스레드) 웹의 /api/action 실행 → (ok, 오류 문구)."""
             self.bring_to_front()
             if action == "show":
                 return True, None
             if action in ("start_exam", "start_retry") and self.exam_running:
                 return False, "시험 진행 중"
-            # v2.7.0: 하루 1회 제한 없음 — 진행 중일 때만 막는다(예습·복습 자유).
             if action == "start_exam":
                 if s is None:
                     picks = pick_set_for_retry(self.sets, load_records(), 1)
@@ -10333,8 +8579,6 @@ if HAS_TK:
             return False, "알 수 없는 action"
 
         def on_routine_changed(self, kind, info):
-            """(Tk 스레드) 웹 쓰기 반영 뒤 화면 갱신. 오늘의 ⑤ 함수 퀴즈 체크는
-            단계 가이드의 '(선택) 함수 퀴즈' 스텝과 동기화합니다."""
             info = info or {}
             if kind == "score":
                 self.refresh_records()
@@ -10355,7 +8599,6 @@ if HAS_TK:
                 self._sync_quiz_step(bool(info.get("value")))
 
         def _sync_quiz_step(self, on):
-            """웹 ⑤ 체크 ↔ 오늘 단계 가이드의 함수 퀴즈 스텝 완료 표시."""
             no = routine_day_no()
             day_tag = plan_day_tag(no)
             if not day_tag:
@@ -10387,13 +8630,7 @@ if HAS_TK:
                 log_error("웹 퀴즈 체크 동기화", e)
                 return False
 
-        # ---------------- 자동 업데이트 ----------------
-
         def show_toast(self, text, seconds=8, on_click=None, tone=None):
-            """비모달 안내 띠(시작 화면 위쪽). seconds 뒤 자동으로 사라지고
-            (0이면 유지) ✕를 누르면 바로 닫힙니다. on_click 을 주면 띠를
-            클릭했을 때 닫는 대신 그 함수를 부릅니다(정정 상세 창 등).
-            tone="good" 이면 초록 띠(안내), 기본은 노랑 띠."""
             self._toast_click = on_click
             bg, fg, line = (("#E3F2E8", "#0B5D31", "#9ED3B4") if tone == "good"
                             else ("#FFF4D6", "#5A4300", "#E5C87A"))
@@ -10430,7 +8667,6 @@ if HAS_TK:
                 self.toast.pack_forget()
 
         def _on_toast_click(self, _event=None):
-            """띠 클릭: 상세 동작이 걸려 있으면 그것을, 아니면 닫기."""
             cb = self._toast_click
             if cb is None:
                 self.hide_toast()
@@ -10440,10 +8676,7 @@ if HAS_TK:
             except Exception as e:
                 log_error("안내 띠 상세", e)
 
-        # ---------------- 자동 재채점 (이의제기 반영) ----------------
-
         def _start_regrade(self):
-            """시작 직후 백그라운드로 지난 기록 재채점 — 사용자 조작 없음."""
             if getattr(self, "_regrade_running", False):
                 return
             self._regrade_running = True
@@ -10468,9 +8701,8 @@ if HAS_TK:
             threading.Thread(target=worker, daemon=True).start()
 
         def _regrade_progress(self, i, n, name):
-            """(워커 스레드) 진행 표시 — Tk 갱신은 after(0, …) 로."""
             if n < 2:
-                return          # 한 건이면 굳이 띠를 띄우지 않음
+                return
             try:
                 self.after(0, lambda: self.show_toast(
                     f"지난 기록 다시 채점 중 {i}/{n} — {name}", seconds=0))
@@ -10478,7 +8710,6 @@ if HAS_TK:
                 pass
 
         def _regrade_done(self, summary):
-            """(Tk 스레드) 재채점 결과 반영 + 안내 띠."""
             self._regrade_running = False
             self._regrade_summary = summary
             changes = [c for c in (summary or {}).get("changes") or []
@@ -10498,14 +8729,13 @@ if HAS_TK:
                                      f"{c['after']}점 ({c['reason']})"
                                      for c in changes))
             try:
-                self.refresh_records()      # 레벨·연속·일정·진행률 재계산
+                self.refresh_records()
             except Exception as e:
                 log_error("자동 재채점 후 갱신", e)
             self.show_toast(correction_summary_text(changes), seconds=0,
                             on_click=self.show_corrections, tone="good")
 
         def corrections_report_text(self, changes=None):
-            """정정 상세 텍스트 (상세 창·복사용)."""
             summary = self._regrade_summary or {}
             changes = changes if changes is not None else (
                 summary.get("changes") or [])
@@ -10537,7 +8767,6 @@ if HAS_TK:
             return "\n".join(lines)
 
         def show_corrections(self):
-            """안내 띠 클릭 → 정정 상세 창."""
             changes = (self._regrade_summary or {}).get("changes") or []
             if not changes:
                 self.hide_toast()
@@ -10548,12 +8777,7 @@ if HAS_TK:
                 hint="채점기·정답 파일이 바뀌어 지난 기록을 다시 채점했습니다. "
                      "원래 점수는 기록.json 의 정정이력에 남아 있습니다.")
 
-        # ---------------- 게임형 상태 카드 (티어·게이지·연속·배지) ----------------
-
         def _build_status_card(self, parent):
-            """목표 티어 · 게이지 · 연속 응시 · 도전 과제 · 점수대 요약.
-
-            색만으로 상태를 구분하지 않도록 '달성'·'○' 같은 글자를 함께 씁니다."""
             card = tk.Frame(parent, bg=CARD, highlightbackground=LINE,
                             highlightthickness=1, padx=14, pady=9)
             self.status_card = card
@@ -10594,7 +8818,7 @@ if HAS_TK:
             self.badge_row = tk.Frame(card, bg=CARD)
             self.badge_row.pack(fill="x", pady=(6, 0))
             self.badge_chips = []
-            cols = 6            # 좁은 창에서도 넘치지 않게 6칸씩 두 줄 고정
+            cols = 6
             for i in range(cols):
                 self.badge_row.columnconfigure(i, weight=1, uniform="badge")
             for i, a in enumerate(ACHIEVEMENT_DEFS):
@@ -10606,7 +8830,6 @@ if HAS_TK:
                           sticky="ew")
                 chip.bind("<Button-1>", lambda e: self.show_achievements())
                 self.badge_chips.append((a["id"], chip))
-            # 점수대 요약 줄 + [점수대 보드] (미완성 세트를 바로 다시 풀기)
             band_row = tk.Frame(card, bg=CARD)
             band_row.pack(fill="x", pady=(7, 0))
             self.band_lbl = tk.Label(
@@ -10620,7 +8843,6 @@ if HAS_TK:
             return card
 
         def _draw_status_gauge(self, frac=None):
-            """티어 게이지 (최고점 / 현재 목표). frac 을 주면 그 비율로."""
             cv = getattr(self, "gauge", None)
             if cv is None or not cv.winfo_exists():
                 return
@@ -10634,7 +8856,6 @@ if HAS_TK:
             if frac > 0:
                 cv.create_rectangle(0, 0, max(2, int(w * frac)), h,
                                     fill=BRAND, outline="")
-            # 지나온 단계 눈금 (게이지는 0 ~ 현재 목표, 웹 히어로와 같은 규칙)
             goal = getattr(self, "_gauge_goal", GOAL_TIERS[-1]) or GOAL_TIERS[-1]
             for g in GOAL_TIERS:
                 if g >= goal:
@@ -10643,7 +8864,6 @@ if HAS_TK:
                                fill=CARD)
 
         def _render_status_card(self, records=None, ser=None):
-            """상태 카드 다시 그리기 (기록이 바뀔 때마다)."""
             if getattr(self, "status_card", None) is None:
                 return
             try:
@@ -10700,15 +8920,11 @@ if HAS_TK:
                     text=(("✓ " if on else "· ") + str(a.get("icon") or "")))
             self._apply_band_line(ser)
 
-        # ---------------- 점수대 세트 보드 (v2.7.0) ----------------
-
         def current_board(self, records=None):
-            """지금 기록으로 계산한 점수대 보드 (규약 records[] 기준)."""
             recs = records if records is not None else load_records()
             return score_board(self.sets, serialize_records(recs, self.sets)[0])
 
         def _board_row(self, s):
-            """세트 하나의 보드 행 (없으면 None)."""
             if not s:
                 return None
             try:
@@ -10720,7 +8936,6 @@ if HAS_TK:
             return next((r for r in board["sets"] if r["norm"] == norm), None)
 
         def _apply_band_line(self, ser=None):
-            """상태 카드의 점수대 요약 줄: '미응시 3 · 미달 2 · 합격 1'."""
             lbl = getattr(self, "band_lbl", None)
             if lbl is None:
                 return
@@ -10738,7 +8953,6 @@ if HAS_TK:
             lbl.configure(text="점수대 " + band_summary_text(bands) + tail)
 
         def show_score_board(self):
-            """점수대 보드 창 열기 (이미 열려 있으면 앞으로)."""
             win = getattr(self, "board_win", None)
             if win is not None and win.winfo_exists():
                 win.refresh()
@@ -10748,7 +8962,6 @@ if HAS_TK:
             self.board_win = ScoreBoardWindow(self)
 
         def refresh_board(self):
-            """열려 있는 점수대 보드 새로 그리기 (기록이 바뀔 때마다)."""
             win = getattr(self, "board_win", None)
             if win is not None and win.winfo_exists():
                 try:
@@ -10757,7 +8970,6 @@ if HAS_TK:
                     log_error("점수대 보드 갱신", e)
 
         def start_set_now(self, s):
-            """보드에서 [이 세트 응시] — 오늘 배정과 무관하게 바로 시작."""
             if self.exam_running:
                 messagebox.showinfo(APP_TITLE, "이미 시험이 진행 중입니다.",
                                     parent=self)
@@ -10771,7 +8983,6 @@ if HAS_TK:
             self.start_exam()
 
         def show_achievements(self):
-            """도전 과제 상세 창 (달성/미달성 · 달성 일시)."""
             try:
                 ser = serialize_records(load_records(), self.sets)[0]
                 summ = achievement_summary(ser)
@@ -10809,7 +9020,6 @@ if HAS_TK:
             return on
 
         def _bg_update_check(self, force=False):
-            """(워커 스레드) 확인·다운로드·검증. 결과는 _update_state로 전달."""
             try:
                 self._update_state = self.updater.check(force=force)
             except Exception as e:
@@ -10817,11 +9027,10 @@ if HAS_TK:
                 self._update_state = "failed"
 
         def _update_poll(self, token=None, tries=0, manual=False):
-            """(메인 스레드) 워커 결과 폴링 — 최대 5분(느린 회선 다운로드)."""
             if token is None:
                 token = self._poll_token
             if token != self._poll_token:
-                return                      # 새 확인이 시작되어 이 폴링은 종료
+                return
             state = self._update_state
             if state is None:
                 if tries < 600:
@@ -10870,7 +9079,6 @@ if HAS_TK:
             return state
 
         def _apply_update_now(self, manual=False):
-            """스테이징된 새 버전 적용(시험 중이면 연기) → 재시작."""
             r = self.updater.apply_pending(exam_running=self.exam_running)
             ver = (self.updater.info or {}).get("version")
             if r == "applied":
@@ -10898,8 +9106,6 @@ if HAS_TK:
             return r
 
         def _busy_for_restart(self):
-            """재시작을 미뤄야 하는 상태: 시험 중, 모달 대화상자, 열려 있는
-            보조 창(결과·오답노트 등; 단계 가이드는 제외)."""
             if self.exam_running:
                 return True
             try:
@@ -10919,11 +9125,8 @@ if HAS_TK:
             return False
 
         def _restart_when_idle(self, tries=0):
-            """열린 창이 없을 때 재시작 (결과 창을 보는 중이면 닫을 때까지
-            2초 간격으로 기다림). 파일은 이미 교체되어 있어 언제 다시 시작해도
-            새 버전이 뜹니다."""
             if self.exam_running:
-                return False          # exam_closed → _apply_update_now 경유
+                return False
             if self._busy_for_restart():
                 if tries == 0:
                     startup_log("재시작 대기: 열린 창·대화상자가 닫히면 재시작")
@@ -10932,14 +9135,8 @@ if HAS_TK:
             return self._try_restart()
 
         def _try_restart(self):
-            """새 프로세스를 먼저 띄운 뒤 현재 창 종료 (성공 여부 반환).
-
-            os.execl은 Windows에서 새 프로세스를 띄우고 현재 프로세스를 즉시
-            끝내는 방식이라 자식이 부모 종료·콘솔 문제를 겪을 수 있어
-            분리된 Popen으로 대체. 실패하면 직접 실행 안내.
-            """
             if self.exam_running:
-                return False  # 시험 중에는 재시작하지 않음
+                return False
             args, kwargs = restart_command()
             try:
                 subprocess.Popen(args, **kwargs)
@@ -10959,12 +9156,11 @@ if HAS_TK:
             return True
 
         def manual_update_check(self):
-            """[업데이트 확인] — 자동 업데이트 토글과 무관하게 즉시 확인·적용."""
             if self.updater.checking or self._update_progress is not None:
                 messagebox.showinfo(APP_TITLE, "이미 업데이트를 확인하는 중입니다.",
                                     parent=self)
                 return None
-            if self.updater.pending:          # 시험 중이라 미뤄 둔 업데이트
+            if self.updater.pending:
                 return self._apply_update_now(manual=True)
             prog = tk.Toplevel(self)
             prog.title(APP_TITLE)
@@ -10981,8 +9177,6 @@ if HAS_TK:
                              kwargs={"force": True}, daemon=True).start()
             self.after(300, lambda: self._update_poll(tok, manual=True))
             return prog
-
-        # ---------------- 시험 흐름 ----------------
 
         def connect_pdf(self):
             s = self._selected_set()
@@ -11065,14 +9259,12 @@ if HAS_TK:
             return False
 
         def start_exam(self, practice=None):
-            """시험 시작. practice={"label","sheets","minutes"}면 부분 연습."""
             day_plan = getattr(self, "_pending_plan", None)
             self._pending_plan = None
             if self.exam_running:
                 messagebox.showinfo(APP_TITLE, "이미 시험이 진행 중입니다.",
                                     parent=self)
                 return
-            # v2.7.0: 하루 1회 제한 없음 — 예습·복습으로 몇 번이든 시작 가능.
             s = self._selected_set()
             if not s:
                 messagebox.showinfo(APP_TITLE, "먼저 세트를 선택하세요.",
@@ -11086,7 +9278,6 @@ if HAS_TK:
                     return
             if not self._ensure_grade_py():
                 return
-            # 재응시: 새 깨끗한 사본으로 시작함을 명시 (시험 모드만)
             if not practice and set_records(s["name"]) \
                     and not messagebox.askokcancel(
                     APP_TITLE,
@@ -11094,7 +9285,6 @@ if HAS_TK:
                     "시작합니다.\n이전 풀이는 풀이_*.xlsx 파일로 그대로 "
                     "보관됩니다.\n계속할까요?", parent=self):
                 return
-            # 원본 오염 감지 (세트당 경고 1회)
             if s.get("norm") not in self._warned_dirty:
                 traces = problem_has_formula_traces(s["problem"])
                 if traces:
@@ -11106,7 +9296,6 @@ if HAS_TK:
                             "깨끗한 원본이 아니면 채점 기준(diff)이 "
                             "왜곡됩니다 — 그대로 진행할까요?", parent=self):
                         return
-            # 매크로 안내 (세트당 1회, 매크로작업 포함 시)
             needs_macro = practice is None or any(
                 "매크로" in str(sh) for sh in (practice.get("sheets") or []))
             if needs_macro and s.get("norm"):
@@ -11158,11 +9347,9 @@ if HAS_TK:
             }
             self._current_exam = exam
             self.exam_running = True
-            routine_touch()                    # 루틴 페이지: 시험 진행 중 표시
+            routine_touch()
             self.start_btn.configure(state="disabled", text="진행 중")
-            # 모니터가 2대 이상이면 문제지·Excel을 고른 화면에 띄운다(v3.2.0)
             layout = self._plan_monitor_layout(exam)
-            # 문제지 PDF를 먼저 열고 → 잠시 후 Excel (Excel 창이 맨 앞에 오게)
             delay = 0
             if s.get("pdf"):
                 before = top_level_windows() if layout.get("pdf") else []
@@ -11176,14 +9363,7 @@ if HAS_TK:
             self.after(delay, lambda: self._launch_workbook(exam))
             TimerWindow(self, exam)
 
-        # ---------------- 다중 모니터 배치 (v3.2.0) ----------------
-
         def _plan_monitor_layout(self, exam=None):
-            """이번 응시에 쓸 모니터 배치를 정한다.
-
-            모니터가 1대이거나 열거를 못 하면(Windows 밖·API 실패) 빈 dict —
-            그러면 창을 하나도 옮기지 않고 예전과 똑같이 진행됩니다.
-            """
             layout = {}
             try:
                 mons = list_monitors()
@@ -11205,11 +9385,6 @@ if HAS_TK:
             return layout
 
         def _place_excel_window(self, exam, tries=0):
-            """Excel 본 창(XLMAIN)을 고른 모니터로 옮기고 최대화.
-
-            바로 못 찾으면(아직 뜨는 중) 몇 번 더 보고, 끝내 못 찾으면 시작
-            로그에만 남기고 조용히 넘어갑니다.
-            """
             if exam.get("closed"):
                 return False
             mon = (exam.get("monitor_layout") or {}).get("excel")
@@ -11232,12 +9407,6 @@ if HAS_TK:
             return False
 
         def _place_pdf_window(self, exam, before, tries=0):
-            """문제지 뷰어 창을 고른 모니터로.
-
-            무엇으로 열릴지(Edge·Acrobat·Chrome…) 알 수 없어 새로 뜬 창을
-            잠시 지켜봅니다. 끝내 못 잡으면 **억지로 옮기지 않고** 한 줄만
-            안내합니다 — 시험은 그대로 진행됩니다.
-            """
             if exam.get("closed"):
                 return False
             mon = (exam.get("monitor_layout") or {}).get("pdf")
@@ -11264,8 +9433,6 @@ if HAS_TK:
 
         def _launch_workbook(self, exam, prefer_excel=True, verify=True,
                              source="시험 시작"):
-            """풀이 파일을 Excel로 열고 로그 + (verify면) 5초 뒤 실행 확인.
-            반환 (성공, 방법, 오류)."""
             student = exam.get("student") or ""
             if not student or not os.path.isfile(student):
                 err = f"풀이 파일이 없습니다: {student or '(경로 없음)'}"
@@ -11290,8 +9457,6 @@ if HAS_TK:
             return True, method, err
 
         def _verify_excel(self, exam, tries):
-            """Excel 실행 후 확인: 잠금 파일/EXCEL.EXE 프로세스. 두 번(5초+3초)
-            확인해도 없으면 안내 창 (Windows 외에서는 판단하지 않음)."""
             if exam.get("closed") or not exam.get("student"):
                 return
             try:
@@ -11318,15 +9483,12 @@ if HAS_TK:
             return self._excel_warn
 
         def reopen_student(self, exam, prefer_excel=True):
-            """[풀이 파일 열기]/[다시 열기]: 언제든 풀이 파일 재오픈.
-            반환 (성공, 방법, 오류)."""
             return self._launch_workbook(
                 exam, prefer_excel=prefer_excel, verify=True,
                 source="다시 열기(Excel 직접)" if prefer_excel
                 else "기본 프로그램으로 열기")
 
         def show_startup_log(self):
-            """[시작 로그 보기] — 시작 로그 텍스트 창 + 클립보드 복사."""
             return DiagnosisWindow(
                 self, read_startup_log(),
                 title=f"{APP_TITLE} - 시작 로그",
@@ -11341,7 +9503,7 @@ if HAS_TK:
             if exam is not None:
                 exam["closed"] = True
             self._current_exam = None
-            try:                       # 우측 상단 타이머가 남지 않도록 한 번 더
+            try:
                 TimerOverlay.close_all()
             except Exception:
                 pass
@@ -11353,15 +9515,12 @@ if HAS_TK:
                     pass
             self._excel_warn = None
             self.start_btn.configure(state="normal", text="시험 시작")
-            self.refresh_records()         # 점수대 보드·상태 카드도 여기서 갱신
+            self.refresh_records()
             self._show_info()
-            if self.updater.pending:      # 시험 중 미뤄 둔 업데이트 → 지금 적용
+            if self.updater.pending:
                 self.after(500, self._apply_update_now)
 
-        # ---------------- 오늘의 학습 ----------------
-
         def plan_for(self, no):
-            """일정 번호 -> 적응형 plan (계산 실패/범위 밖이면 기본 일정)."""
             try:
                 return adaptive_day_plan(self.adaptive, no)
             except Exception as e:
@@ -11369,7 +9528,6 @@ if HAS_TK:
                 return plan_for_day(no)
 
         def recompute_plan(self):
-            """[일정 다시 계산] — 기록·세트를 다시 읽어 적응형 일정 재계산."""
             try:
                 self.adaptive = build_adaptive_plan(
                     date.today(), load_records(), self.sets)
@@ -11421,12 +9579,12 @@ if HAS_TK:
             self.plan_start_btn.configure(
                 text="오늘 일정 시작" if self.plan_no == today_no
                 else "이 일정 시작")
-            if not exam_date_set():          # 시험일 미설정이면 그것부터
+            if not exam_date_set():
                 self.plan_todo_lbl.configure(text=EXAM_UNSET_TODO)
-            elif not self.sets:              # 세트 없음 = 제일 먼저 풀 문제
+            elif not self.sets:
                 self.plan_todo_lbl.configure(
                     text=NO_SETS_REASON + "\n" + set_intake_help(self.scan_root))
-            try:  # 신뢰 위치 미등록이면 1줄 안내
+            try:
                 if get_app_setting("신뢰위치등록"):
                     self.trust_hint_lbl.pack_forget()
                 else:
@@ -11457,7 +9615,6 @@ if HAS_TK:
             self._render_plan_card()
 
         def add_set_to_list(self, s):
-            """세트를 목록에 편입 (같은 norm이 있으면 무시). 직접 선택 세트용."""
             if not s or not s.get("norm"):
                 return False
             for x in self.sets:
@@ -11470,7 +9627,6 @@ if HAS_TK:
             return True
 
         def show_scan_diagnosis(self):
-            """[세트 인식 진단] — 텍스트 표 + 클립보드 복사."""
             try:
                 text = scan_diagnosis_text(
                     self.scan_root, sets=self.sets,
@@ -11491,10 +9647,8 @@ if HAS_TK:
             return False
 
         def start_today_plan(self):
-            """오늘(또는 미리보기 중인) 일정의 단계 가이드 창 열기."""
             plan = self.plan_for(self.plan_no)
             if not plan.get("스텝"):
-                # 스텝이 없는 날(시험일/루틴 종료)은 안내만
                 messagebox.showinfo(f"{APP_TITLE} - {plan['제목']}",
                                     plan["할일"], parent=self)
                 return
@@ -11506,8 +9660,6 @@ if HAS_TK:
                     return
                 g.destroy()
             self.step_guide = StepGuideWindow(self, plan)
-
-        # ---------------- 부분 연습 모드 ----------------
 
         def open_practice_dialog(self):
             if self.exam_running:
@@ -11524,12 +9676,8 @@ if HAS_TK:
             if dlg.result:
                 self.start_exam(practice=dlg.result)
 
-        # ---------------- 오답노트 모드 ----------------
-
         def open_review_mode(self, full_only=False, json_path=None,
                              set_info=None):
-            """오답노트 모드. json_path 를 주면 그 채점결과(웹 [오답노트 열기]),
-            아니면 선택 세트의 최신 채점결과."""
             s = set_info or self._selected_set()
             if not s:
                 messagebox.showinfo(APP_TITLE, "먼저 세트를 선택하세요.",
@@ -11555,7 +9703,6 @@ if HAS_TK:
                     "오답 항목이 없습니다. 복습할 내용이 없어요!",
                     parent=self)
                 return
-            # 이전 풀이 사본 -> 오답연습 사본으로 열기
             note = None
             src = find_latest_attempt(s)
             if not src:
@@ -11575,8 +9722,6 @@ if HAS_TK:
                 load_review_state(s.get("norm") or "", os.path.basename(jp)),
                 count_up=True)
             ReviewWindow(self, s, jp, items, note=note)
-
-        # ---------------- 채점 ----------------
 
         def start_grading(self, exam, elapsed_seconds, practice, on_done):
             stamp = datetime.now().strftime("%Y%m%d_%H%M")
@@ -11622,9 +9767,6 @@ if HAS_TK:
             poll()
 
         def _copy_result_to_clipboard(self, result):
-            """결과 JSON을 클립보드에 복사 — 루틴 웹 원클릭 연동용.
-
-            실패(클립보드 잠김 등)는 조용히 무시하고 False 반환."""
             try:
                 payload = json.dumps(result, ensure_ascii=False,
                                      separators=(",", ":"))
@@ -11647,7 +9789,6 @@ if HAS_TK:
             return ok, log
 
         def _show_result_window(self, record, prev_records, show, html_path):
-            """채점 결과 창 — 직전 최고점 대비 증감 · 티어 승급 · 새 배지까지."""
             prog = None
             try:
                 sets = self.sets
@@ -11672,7 +9813,6 @@ if HAS_TK:
                         "지금 설치할까요? (인터넷 필요)", parent=self):
                     ok, log = self._install_with_progress()
                     if ok and state.get("runner"):
-                        # 설치 성공 -> 자동 재시도
                         result, out2, err2, rc2 = state["runner"]()
                         state["rc"] = rc2
                         combined = ((err2 or "") + "\n" + (out2 or "")).strip()
@@ -11701,7 +9841,7 @@ if HAS_TK:
                 show = {"result": result,
                         "copied": self._copy_result_to_clipboard(result),
                         "goal": (exam.get("plan") or {}).get("목표")}
-            prev_records = load_records()      # 결과 연출용 (직전 최고점·배지)
+            prev_records = load_records()
             pinfo = exam.get("practice_info")
             record = {
                 "일시": exam["started"].strftime("%Y-%m-%d %H:%M"),
@@ -11712,7 +9852,7 @@ if HAS_TK:
                 "리포트": html_path if os.path.isfile(html_path) else None,
                 "mode": (pinfo.get("mode") or "부분연습") if pinfo else "시험",
             }
-            try:        # 채점 근거 (자동 재채점 판단용, v2.6.0)
+            try:
                 record.update(grading_evidence(
                     problem=exam["set"].get("problem"),
                     answer=exam["set"].get("answer"),
@@ -11731,19 +9871,18 @@ if HAS_TK:
                     record["만점"] = result.get("max_total")
             day_tag = (exam.get("plan") or {}).get("day")
             if day_tag:
-                record["day"] = day_tag        # 새 체계 d01~d07
-                record["루틴"] = routine_tag()  # 시험일마다 다른 루틴 세대
+                record["day"] = day_tag
+                record["루틴"] = routine_tag()
             try:
                 append_record(record)
             except OSError as e:
                 messagebox.showwarning(
                     APP_TITLE, f"기록.json 저장에 실패했습니다: {e}",
                     parent=self)
-            if show is not None:       # 기록을 남긴 뒤 결과 창 (승급·새 배지 계산)
+            if show is not None:
                 self._show_result_window(record, prev_records, show, html_path)
                 if os.path.isfile(html_path):
                     open_file(html_path)
-            # 단계 가이드에서 시작한 스텝: 채점 완료 시 자동 체크
             plan_info = exam.get("plan") or {}
             step_idx = plan_info.get("step")
             done_steps = plan_info.get("done_steps") or (
@@ -11753,7 +9892,7 @@ if HAS_TK:
                     g = getattr(self, "step_guide", None)
                     if g is not None and g.winfo_exists() \
                             and g.day_tag == day_tag:
-                        for idx in done_steps:      # 시험 + 채점 스텝 자동 체크
+                        for idx in done_steps:
                             g.mark_step_done(int(idx))
                     else:
                         done = load_step_progress(day_tag)
@@ -11763,15 +9902,8 @@ if HAS_TK:
                 except Exception:
                     pass
 
-
-# ---------------------------------------------------------------------------
-# main
-# ---------------------------------------------------------------------------
-
-
 def run_smoke():
-    """GUI 스모크 테스트: 창 생성 -> 위젯 렌더 -> 타이머 창 -> destroy."""
-    app = ExamApp(auto_update=False)     # 네트워크 확인 없이
+    app = ExamApp(auto_update=False)
     app.update_idletasks()
     app.update()
     exam = {"set": {"name": "스모크테스트", "dir": BASE_DIR,
@@ -11782,7 +9914,6 @@ def run_smoke():
     app.update()
     assert timer.time_lbl.cget("text") == "40:00"
     assert app.listbox is not None
-    # v3.2.0: 우측 상단 타이머 오버레이 (설정으로 켜고 끌 수 있음)
     _ov_before = timer_overlay_enabled()
     if _ov_before and timer.overlay is not None:
         app.update_idletasks()
@@ -11803,11 +9934,10 @@ def run_smoke():
         app.update_idletasks()
         app.update()
         assert timer.overlay is None and not ov.winfo_exists()
-        assert TimerOverlay.close_all() == 0        # 남은 유령 창 없음
-        timer._open_overlay("스모크테스트")           # 다시 열어 두고 이어서
+        assert TimerOverlay.close_all() == 0
+        timer._open_overlay("스모크테스트")
         app.update_idletasks()
         app.update()
-    # 오답노트 패널 스모크
     items = [{"sheet": "계산작업", "label": "계산 문제 1", "lost": 8,
               "cells": [{"coord": "J3", "got": "#VALUE!", "expected": "본선",
                          "formula": "=IF(OR(...),\"본선\",\"\")",
@@ -11819,13 +9949,12 @@ def run_smoke():
     app.update_idletasks()
     app.update()
     assert "계산 문제 1" in review.listbox.get(0)
-    review.checks = set()        # 이전 스모크가 저장한 체크 상태 무시(결정성)
+    review.checks = set()
     review._refresh_list()
     review.listbox.selection_set(0)
     review.toggle_check()
-    assert review.retake_btn.cget("state") == "normal"  # 1/1 체크 완료
+    assert review.retake_btn.cget("state") == "normal"
     review.destroy()
-    # 부분 연습 대화상자 스모크 (부분 연습 모드는 일정 밖 기능으로 유지)
     dlg = PracticeDialog(app)
     app.update_idletasks()
     app.update()
@@ -11837,8 +9966,7 @@ def run_smoke():
     sheets, label = dlg.selection()
     assert sheets == ["기본작업-1", "기본작업-2", "기본작업-3"]
     dlg.destroy()
-    # 오늘의 학습 카드 + 미리보기 화살표 (시험일은 사용자 설정값 — 스모크에서 넣는다)
-    smoke_exam = date.today() + timedelta(days=5)      # 오늘 = D-5
+    smoke_exam = date.today() + timedelta(days=5)
     save_exam_dates(smoke_exam, None)
     assert exam_dates() == [smoke_exam], exam_dates()
     app.plan_no = routine_day_no()
@@ -11861,7 +9989,7 @@ def run_smoke():
         today_plan = app.plan_for(routine_day_no())
         assert today_plan.get("적응형") is True
         if today_plan.get("스텝"):
-            gA = StepGuideWindow(app, today_plan)   # 적응형 plan으로 단계 창
+            gA = StepGuideWindow(app, today_plan)
             app.update_idletasks()
             app.update()
             assert gA.listbox.size() == len(today_plan["스텝"])
@@ -11872,10 +10000,9 @@ def run_smoke():
     app._shift_plan(1)
     assert "Day 4" in app.plan_title_lbl.cget("text")
     app.plan_no = ROUTINE_DAYS
-    app._shift_plan(1)                       # Day 7(D-1) 다음은 시험일 (시간순)
+    app._shift_plan(1)
     assert app.plan_no == PLAN_EXAM1
     assert "시험일" in app.plan_title_lbl.cget("text")
-    # 시험일 목록 창 (첫 실행·[시험일 설정]) — 추가/제거/전체 비우기
     dlg_e = ExamDateDialog(app)
     app.update_idletasks()
     app.update()
@@ -11892,7 +10019,6 @@ def run_smoke():
     assert dlg_e.validate() == ([], ""), "시험일 0개도 정상"
     dlg_e.add(smoke_exam.isoformat())
     assert dlg_e.save() is True and exam_dates() == [smoke_exam]
-    # 첫 실행 자동 업데이트 동의 창 (동의 / 거절 — 닫으면 거절)
     assert UPDATE_REPO_URL in first_run_notice_text()
     assert "동의" in first_run_notice_text() and "거절" in first_run_notice_text()
     _au_saved = auto_update_enabled()
@@ -11906,7 +10032,6 @@ def run_smoke():
         and auto_update_enabled() is False and not first_run_notice_pending()
     assert apply_update_consent(True) is True and auto_update_enabled() is True
     set_app_setting(AUTO_UPDATE_SETTING, _au_saved)
-    # [설정] 창 — 스캔 폴더 · 세트 숨기기
     dlg_s = app.open_settings()
     app.update_idletasks()
     app.update()
@@ -11915,7 +10040,6 @@ def run_smoke():
     assert dlg_s.reset_root() == default_scan_root()
     assert scan_root_is_default() is True
     dlg_s.destroy()
-    # 단계 가이드 창 — 하루 1세트(Day 3): 필수 ①② + 선택 ③④⑤ = 5스텝
     save_step_progress("d03", set())
     guide = StepGuideWindow(app, plan_for_day(3))
     app.update_idletasks()
@@ -11928,15 +10052,15 @@ def run_smoke():
     assert "세트:" in guide.pick_lbl.cget("text"), guide.pick_lbl.cget("text")
     guide.listbox.selection_clear(0, "end")
     guide.listbox.selection_set(0)
-    guide.toggle_check()          # ① 완주 체크
+    guide.toggle_check()
     assert 0 in guide.done and "필수 1/2" in guide.progress_lbl.cget("text")
     assert guide.selected_index() == 1, "다음 미완료 스텝 자동 포커스"
     assert "[v]" in guide.listbox.get(0) and "▶" in guide.listbox.get(1)
     _orig_info = messagebox.showinfo
     _cleared = []
-    messagebox.showinfo = lambda *a, **k: _cleared.append(a)   # 축하 모달 차단
+    messagebox.showinfo = lambda *a, **k: _cleared.append(a)
     try:
-        guide.mark_step_done(1)   # ② 채점 자동 체크 → 필수 완료 = 클리어
+        guide.mark_step_done(1)
     finally:
         messagebox.showinfo = _orig_info
     assert "필수 2/2" in guide.progress_lbl.cget("text")
@@ -11944,13 +10068,12 @@ def run_smoke():
     assert _cleared and "클리어" in _cleared[0][1], _cleared
     assert load_step_progress("d03") == {0, 1}, "진행 상태 저장"
     guide.destroy()
-    guide2 = StepGuideWindow(app, plan_for_day(3))   # 재시작 후 이어하기
+    guide2 = StepGuideWindow(app, plan_for_day(3))
     app.update_idletasks()
     app.update()
     assert guide2.done == {0, 1} and guide2.current_index() == 2
     guide2.destroy()
     save_step_progress("d03", set())
-    # [이 단계 시작] -> start_exam 배선 (start_exam은 스텁으로 대체)
     fake_s = {"name": "2024년 상시1회 2급", "norm": "smoke상시1", "dir": BASE_DIR,
               "problem": "p", "answer": "a", "key": None, "pdf": None}
     fake_s2 = {"name": "코코모의고사 2회", "norm": "smoke코코2", "dir": BASE_DIR,
@@ -11965,11 +10088,11 @@ def run_smoke():
         (practice, app._pending_plan))
     save_step_progress("d01", set())
     guide3 = StepGuideWindow(app, dict(plan_for_day(1),
-                                       세트=[fake_s["name"]]))   # 세트 지정 슬롯
+                                       세트=[fake_s["name"]]))
     assert guide3.slot_sets[0][0] is fake_s, guide3.pick_text()
     assert "일정 지정" in guide3.pick_lbl.cget("text")
     guide3.listbox.selection_clear(0, "end")
-    guide3.listbox.selection_set(0)          # 모의 스텝
+    guide3.listbox.selection_set(0)
     guide3.start_step()
     assert len(calls) == 1, "모의 스텝 -> start_exam 호출"
     practice_arg, pend = calls[0]
@@ -11979,7 +10102,6 @@ def run_smoke():
     assert app.minutes_var.get() == 40
     guide3.destroy()
     save_step_progress("d01", set())
-    # 자동 선택 날(Day 10): 기록 없음 -> 신규 세트 우선 + 이유 표시 + 세트 바꾸기
     save_step_progress("d05", set())
     save_auto_picks("d05", [])
     guide4 = StepGuideWindow(app, plan_for_day(5))
@@ -12005,8 +10127,6 @@ def run_smoke():
     save_step_progress("d05", set())
     app.sets, app.start_exam = saved_sets, saved_start
     app._pending_plan = None
-    # v2.1.1: 2슬롯 plan(합성) 한 슬롯만 미발견 -> 다른 슬롯 정상 시작 + 직접 선택
-    #  (2.5.0은 하루 1세트이므로 2슬롯 처리 경로만 합성 plan으로 확인)
     fake_s2r = {"name": "2024년 상시2회 2급", "norm": "smoke상시2", "dir": BASE_DIR,
                 "problem": "p3", "answer": "a3", "key": None, "pdf": None}
     fake_A = {"name": "컴활2급 A형", "norm": "smokeA", "dir": BASE_DIR,
@@ -12027,7 +10147,7 @@ def run_smoke():
     _plan2 = dict(plan_for_day(3), 세트=["2024 A형", "2024 상시 2회"],
                   목표들=[70, 70])
     _plan2["스텝"] = build_day_steps(_plan2)
-    assert len(_plan2["스텝"]) == 9, len(_plan2["스텝"])   # 4×2 + 퀴즈
+    assert len(_plan2["스텝"]) == 9, len(_plan2["스텝"])
     guide5 = StepGuideWindow(app, _plan2)
     app.update_idletasks()
     app.update()
@@ -12038,22 +10158,22 @@ def run_smoke():
     assert "찾지 못함" in guide5.pick_text() and \
         guide5.pick_lbl.cget("fg") == RED
     guide5.listbox.selection_clear(0, "end")
-    guide5.listbox.selection_set(0)          # 미발견 슬롯의 모의 스텝
+    guide5.listbox.selection_set(0)
     _orig_info = messagebox.showinfo
     infos = []
-    messagebox.showinfo = lambda *a, **k: infos.append(a)   # 모달 차단 방지
+    messagebox.showinfo = lambda *a, **k: infos.append(a)
     try:
-        guide5.start_step()                  # -> missing 안내, 예외 없음
+        guide5.start_step()
     finally:
         messagebox.showinfo = _orig_info
     assert calls == [], "미발견 슬롯은 시작되지 않음"
     assert infos and "다른 세트로 바꾸기" in infos[0][1], infos
     guide5.listbox.selection_clear(0, "end")
-    guide5.listbox.selection_set(4)          # 슬롯 2(상시 2회) 모의 스텝
+    guide5.listbox.selection_set(4)
     guide5.start_step()
     assert len(calls) == 1 and calls[0][1]["step"] == 4, "정상 슬롯은 시작"
     assert app._selected_set() is fake_s2r
-    guide5.apply_direct_slot(0, fake_A)      # 미발견 슬롯 직접 선택 대체
+    guide5.apply_direct_slot(0, fake_A)
     assert guide5.missing_slots() == [] and not guide5.missing_rows
     assert guide5.steps[0]["이름"].startswith("컴활2급 A형")
     assert load_slot_mapping()["2024 A형"]["name"] == "컴활2급 A형", "매핑 저장"
@@ -12063,7 +10183,6 @@ def run_smoke():
     guide5.start_step()
     assert len(calls) == 2 and app._selected_set() is fake_A
     guide5.destroy()
-    # 스텝 시작 중 예외 -> 사용자 메시지 + 로그, 창 생존
     guide6 = StepGuideWindow(app, plan_for_day(3))
     _orig_msg = messagebox.showerror
     shown = []
@@ -12077,12 +10196,11 @@ def run_smoke():
     guide6.destroy()
     cfg_after = load_set_config()
     cfg_after.pop("_슬롯매핑", None)
-    cfg_after.pop("smokeA", None)            # remember_set 잔여 제거
+    cfg_after.pop("smokeA", None)
     save_set_config(cfg_after)
     save_step_progress("d03", set())
     app.sets, app.start_exam = saved_sets, saved_start
     app._pending_plan = None
-    # 전역 콜백 예외 처리: 로그 append + 오류 대화상자(복사 버튼)
     log_before = os.path.getsize(ERROR_LOG_PATH) \
         if os.path.isfile(ERROR_LOG_PATH) else 0
     _LAST_ERROR_DIALOG[0] = None
@@ -12100,7 +10218,6 @@ def run_smoke():
         f.seek(log_before)
         tail = f.read()
     assert "ZeroDivisionError" in tail and "tk callback" in tail, tail[-200:]
-    # 세트 인식 진단 창
     diag = DiagnosisWindow(app, scan_diagnosis_text(
         app.scan_root, sets=app.sets,
         hidden_sets=getattr(app, "hidden_sets", [])))
@@ -12108,7 +10225,6 @@ def run_smoke():
     app.update()
     assert "일정 슬롯 매칭" in diag.text_value and diag.copy() is True
     diag.destroy()
-    # v2.2.1: 시작 로그 창 / Excel 확인 안내 창 / 타이머 [풀이 파일 열기]
     startup_log("스모크 테스트 줄")
     logw = app.show_startup_log()
     app.update_idletasks()
@@ -12122,21 +10238,20 @@ def run_smoke():
     assert warn.winfo_exists() and "테스트 상세" in warn.detail_lbl.cget("text")
     assert [b.cget("text") for b in warn.buttons] == [
         "다시 열기(Excel 직접)", "기본 프로그램으로 열기", "폴더 열기"]
-    assert app._show_excel_warning(exam, "갱신") is warn      # 창 재사용
+    assert app._show_excel_warning(exam, "갱신") is warn
     assert "갱신" in warn.detail_lbl.cget("text")
     _orig_warn = messagebox.showwarning
     warned = []
     messagebox.showwarning = lambda *a, **k: warned.append(a)
     try:
-        ok_re, _m, err_re = app.reopen_student(exam)      # student="" → 안내만
+        ok_re, _m, err_re = app.reopen_student(exam)
     finally:
         messagebox.showwarning = _orig_warn
     assert ok_re is False and "풀이 파일이 없습니다" in err_re and warned
     app._current_exam = exam
-    app.exam_closed()                       # 안내 창 정리 + closed 표시
+    app.exam_closed()
     assert exam["closed"] is True and not warn.winfo_exists()
-    app._verify_excel(exam, 0)              # closed면 아무것도 안 함
-    # 세트 정보 패널: 문제지 회차 충돌 경고
+    app._verify_excel(exam, 0)
     bad = {"name": "2024년 상시2회 2급", "norm": "smoke상시2회", "dir": BASE_DIR,
            "problem": "p", "answer": "a", "key": None,
            "pdf": os.path.join(BASE_DIR, "2024 상시1회 문제지.pdf")}
@@ -12160,7 +10275,6 @@ def run_smoke():
     app.listbox.delete(0, "end")
     for s_ in app.sets:
         app.listbox.insert("end", " " + s_["name"])
-    # v2.3.0: 안내 띠 / 자동 업데이트 토글 / 확인 결과 처리 (네트워크 없이)
     assert not app.toast.winfo_manager()
     app.show_toast("스모크 안내", seconds=0)
     app.update_idletasks()
@@ -12175,8 +10289,8 @@ def run_smoke():
     app.auto_update_var.set(True)
     assert app._toggle_auto_update() is True and auto_update_enabled() is True
     set_app_setting(AUTO_UPDATE_SETTING, _au_before)
-    assert app._apply_update_now() == "none"          # 대기 중 업데이트 없음
-    assert app._on_update_checked("latest") == "latest"  # 자동 경로: 대화상자 없음
+    assert app._apply_update_now() == "none"
+    assert app._on_update_checked("latest") == "latest"
     app._on_update_checked("failed")
     assert "자동 업데이트 실패" in app.toast_lbl.cget("text")
     app.hide_toast()
@@ -12184,7 +10298,7 @@ def run_smoke():
     app._on_update_checked("data")
     assert "기대값 파일 2개" in app.toast_lbl.cget("text")
     app.hide_toast()
-    assert app._busy_for_restart() is True            # 타이머 창 열림 → 대기
+    assert app._busy_for_restart() is True
     timer.withdraw()
     app.update_idletasks()
     app.update()
@@ -12192,30 +10306,26 @@ def run_smoke():
     _dw = DiagnosisWindow(app, "x")
     app.update_idletasks()
     app.update()
-    assert app._busy_for_restart() is True            # 보조 창 열림 → 재시작 대기
+    assert app._busy_for_restart() is True
     _dw.destroy()
     app.update_idletasks()
     app.update()
     assert app._busy_for_restart() is False
-    timer.deiconify()                                 # (실제 재시작은 호출 안 함)
-    # 재시작 명령은 만들기만 (실행하지 않음)
+    timer.deiconify()
     r_args, r_kw = restart_command(argv=["시험장.py"])
     assert r_args[0] == sys.executable and r_args[1].endswith("시험장.py") \
         and r_kw["cwd"] == BASE_DIR, (r_args, r_kw)
-    # 스텝 실행 매핑 (세트 없는 환경 -> 모의는 missing, 채점은 info)
     kind, _p = resolve_step_action(plan_for_day(1)["스텝"][0], saved_sets)
     assert kind in ("exam", "missing")
     kind, _p = resolve_step_action(plan_for_day(1)["스텝"][1], saved_sets)
     assert kind == "info"
     kind, _p = resolve_step_action(plan_for_day(0)["스텝"][0], saved_sets)
     assert kind == "info"
-    # 클립보드 브리지 라운드트립
     fake = {"total": 87, "mode": "full", "graded_sheets": ["계산작업"]}
     assert app._copy_result_to_clipboard(fake) is True
     back = app.clipboard_get()
     import json as _json
     assert _json.loads(back) == fake, back[:80]
-    # v2.4.0: 루틴 웹 연동 서버 — 기동·상태 조회·[루틴 열기]/[웹에서 퀴즈 풀기]
     import urllib.request as _ur
     assert app.routine is not None and app.routine.running, "루틴 서버 기동"
     assert app.routine_btn.cget("text") == "루틴 열기"
@@ -12232,7 +10342,6 @@ def run_smoke():
                      timeout=5) as _resp:
         _page = _resp.read().decode("utf-8")
     assert _page.lstrip().lower().startswith("<!doctype html>"), _page[:40]
-    # 쓰기: 토큰 없으면 401, 토큰 있으면 Tk 스레드(펌프)에서 저장 후 최신 상태
     _req = _ur.Request(f"http://127.0.0.1:{app.routine.port}/api/check",
                        data=b'{"key":"smoke|quiz","value":true}',
                        headers={"Content-Type": "application/json"})
@@ -12257,7 +10366,7 @@ def run_smoke():
     _t.start()
     _deadline = time.time() + 10
     while _t.is_alive() and time.time() < _deadline:
-        app.update()                       # 펌프(after)가 작업을 실행하도록
+        app.update()
         time.sleep(0.05)
     assert _box.get("r", {}).get("ok") is True, _box
     assert _box["r"]["checks"].get("smoke|quiz") is True
@@ -12265,7 +10374,6 @@ def run_smoke():
     assert _cfg.get(WEB_CHECKS_KEY, {}).get("smoke|quiz") is True, "_웹체크 저장"
     _cfg.get(WEB_CHECKS_KEY, {}).pop("smoke|quiz", None)
     save_set_config(_cfg)
-    # 단계 가이드: 마지막(함수 퀴즈) 스텝에서만 [웹에서 퀴즈 풀기] 표시
     save_step_progress("d03", set())
     g7 = StepGuideWindow(app, plan_for_day(3))
     app.update_idletasks()
@@ -12277,19 +10385,17 @@ def run_smoke():
     assert g7.web_btn.winfo_manager() and g7.web_tab_of() == "quiz"
     _opened = []
     app.open_routine_page = lambda tab=None: _opened.append(tab)
-    g7.start_step()                                  # 퀴즈 스텝 → 웹 탭 열기
+    g7.start_step()
     assert _opened == ["quiz"], _opened
     g7.destroy()
     save_step_progress("d03", set())
     del app.open_routine_page
-    # 채점 결과 창: 연동 중이면 '자동 반영' 문구
     rw = ResultWindow(app, {"total": 80, "pass_line": 70, "sheets": []}, "",
                       linked=True)
     app.update_idletasks()
     app.update()
     assert "자동 반영" in rw.link_lbl.cget("text")
     rw.destroy()
-    # v2.6.0 게임형 결과 연출: 큰 점수 + 합격선 게이지 + 티어 승급 + 새 배지
     _ser_before = [{"id": "20260903100000", "date": "2026-09-03",
                     "time": "10:00", "mode": "시험", "total": 72,
                     "set": {"name": "스모크", "norm": "스모크"},
@@ -12310,12 +10416,11 @@ def run_smoke():
     assert any("80점 달성! 숙련 단계" in t for t in _texts), _texts
     assert any("직전 최고 72점 대비 +12점" in t for t in _texts), _texts
     assert rw2._gauge_target == 0.84 and rw2.score_gauge.winfo_exists()
-    for _ in range(ResultWindow.STEPS + 6):   # 단계 채우기 애니메이션 끝까지
+    for _ in range(ResultWindow.STEPS + 6):
         app.update()
         time.sleep(0.04)
     assert rw2._gauge_step == ResultWindow.STEPS, rw2._gauge_step
     rw2.destroy()
-    # 게임형 상태 카드: 티어 배지·게이지·연속·도전 과제 칩
     app._render_status_card([], ser=_ser_after)
     app.update_idletasks()
     app.update()
@@ -12325,7 +10430,7 @@ def run_smoke():
     assert "도전 과제" in app.badge_count_lbl.cget("text")
     assert len(app.badge_chips) == len(ACHIEVEMENT_DEFS) == 12
     assert app.badge_chips[0][1].cget("text").startswith("✓")
-    app.show_achievements()                   # 상세 창 (달성/미달성 목록)
+    app.show_achievements()
     app.update_idletasks()
     app.update()
     _ach_win = [w for w in app.winfo_children()
@@ -12335,13 +10440,12 @@ def run_smoke():
     assert _ach_win and "[도전 과제 " in _txt and "○ 미달성" in _txt \
         and all(a["name"] in _txt for a in ACHIEVEMENT_DEFS), _txt[:200]
     assert "점수대" in app.band_lbl.cget("text"), app.band_lbl.cget("text")
-    # 점수대 보드 창: 밴드 묶음 · 세트 선택 · [이 세트 응시] 활성화
     app.show_score_board()
     app.update_idletasks()
     app.update()
     _bw = app.board_win
     assert _bw is not None and _bw.winfo_exists()
-    assert str(_bw.start_btn["state"]) == "disabled"     # 고르기 전엔 비활성
+    assert str(_bw.start_btn["state"]) == "disabled"
     if _bw.rows:
         _bw._select(_bw.rows[0][0])
         app.update()
@@ -12352,7 +10456,6 @@ def run_smoke():
     _bw.destroy()
     app.update()
     assert app.board_win is None
-    # 동작 브리지: 시험 중이면 오류, show 는 ok
     app.exam_running = True
     assert app.routine_action("start_exam", None, None, None, None) == \
         (False, "시험 진행 중")
@@ -12360,7 +10463,6 @@ def run_smoke():
     assert app.routine_action("show", None, None, None, None) == (True, None)
     assert app.routine_action("open_pdf", {"name": "x", "pdf": None}, None,
                               "x", None)[0] is False
-    # v3.2.0: 설정 창 — 모니터가 2대 이상일 때만 모니터 배치 칸이 보인다
     _pos0, _pick0, _ov0 = (saved_overlay_pos(), monitor_assignment(),
                            timer_overlay_enabled())
     _sd = SettingsDialog(app)
@@ -12381,7 +10483,7 @@ def run_smoke():
     assert _sd._toggle_overlay() is _ov0
     assert _sd.reset_overlay_pos() is None and saved_overlay_pos() is None
     _sd.destroy()
-    save_overlay_pos(*(_pos0 or (None, None)))          # 스모크 전 상태로 복구
+    save_overlay_pos(*(_pos0 or (None, None)))
     save_monitor_assignment(**_pick0)
     timer.finished = True
     timer.destroy()
@@ -12397,9 +10499,7 @@ def run_smoke():
           "(밴드 묶음·세트 선택·이 세트 응시)/결과 연출"
           "(승급·새 배지·합격선 게이지)/파괴 정상")
 
-
 def _notify_no_tk():
-    """tkinter가 없을 때 안내: 콘솔이 있으면 print, 없으면(pythonw) 메시지 창."""
     msg = ("tkinter를 사용할 수 없습니다.\n"
            "Windows용 Python 설치 시 'tcl/tk and IDLE' 옵션을 포함해 주세요.\n"
            "(리눅스: sudo apt install python3-tk)")
@@ -12417,10 +10517,7 @@ def _notify_no_tk():
         except Exception:
             pass
 
-
 def _show_fatal(title, msg):
-    """치명적 시작 오류 표시: tkinter messagebox → ctypes MessageBoxW → stderr.
-    (pythonw에서는 stderr가 없어 창으로 보여 주지 않으면 아무것도 안 보임)"""
     shown = False
     if HAS_TK:
         try:
@@ -12444,13 +10541,11 @@ def _show_fatal(title, msg):
         except Exception:
             pass
 
-
 def _platform_text():
     try:
         return platform.platform()
     except Exception:
         return sys.platform
-
 
 def main():
     ap = argparse.ArgumentParser(description=APP_TITLE)
@@ -12487,7 +10582,6 @@ def main():
         return 1
     startup_log("정상 종료")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

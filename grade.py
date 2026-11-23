@@ -1,219 +1,4 @@
 # -*- coding: utf-8 -*-
-"""
-컴활 2급 실기 자동 채점 프로그램 (diff 기반)
-
-사용법:
-    python grade.py --problem 문제.xlsm --answer 정답.xlsm --student 내풀이.xlsm \
-                    [--key 기대값.json] [--html report.html]
-
-원리:
-    문제 파일과 정답 파일의 차이(diff)를 채점 항목으로 자동 추출한 뒤,
-    학생 파일이 정답과 일치하는지 검사합니다.
-
-의존성: Python 3.8+ / openpyxl (표준 라이브러리 외 유일한 의존성)
-
-변경 이력:
-    2.2.0  **채점기는 1차 의견, 최종 판정은 사용자** — 리포트에 면책 문구와
-           자가 채점을 넣었다. 이 채점기는 이의제기 41건 중 25건(61%)이
-           오탐이었던 이력이 있다. 배포판에는 이의를 제기해 전달할 곳이
-           없으니, 틀렸다고 본 판정을 **쓰는 사람이 직접 뒤집게** 했다.
-           - 면책: 점수 바로 아래에 "채점기에 오류가 있을 수 있습니다.
-             참고용으로 봐 주세요." + 실제 시험 채점과 다를 수 있다는 한 줄.
-             콘솔 출력에도 같은 문구 한 줄.
-           - 자가 채점: 오답노트 카드마다 [내가 보기엔 맞음] 토글. 켜면 그
-             항목의 감점이 취소되고 점수가 즉시 다시 계산된다. 점수는
-             '채점기 N점 (1차)' 와 '내가 매긴 점수 M점 (최종)' 를 나란히
-             표기하고, [점수 복사]·[전체 되돌리기] 를 둔다.
-           - '확인 필요'(v2.0.8 보류) 항목은 **자가 채점과 별개**로 표기한다.
-             보류 = 채점기가 판단하지 못한 항목(기본은 점수에서 뺌),
-             자가 채점 = 사용자가 채점기의 판정을 뒤집은 항목. 보류 항목에는
-             [맞음]/[틀림]/[채점 제외로 두기] 를 둬 직접 판정하면 그 배점이
-             분모로 돌아온다.
-           - 선택은 localStorage 에 리포트별로 저장한다
-             (`kocoSelfGrade:<리포트 식별자>` — 식별자는 응시 시각 기반
-             attempt_report_id, 없으면 풀이 파일 이름 해시). 리포트마다 키가
-             갈려 다른 회차의 선택이 섞이지 않는다.
-           - --json 에 self_grading(식별자·저장소 키·1차 점수·재계산 식·
-             카드/보류 id 목록)을 **추가**한다. 기존 키는 그대로 — 시험장이
-             읽는 total·wrong_items·review_* 는 채점기의 1차 판정이다.
-    2.1.0  리포트에서 **이의제기 기능을 들어냈다**(오픈 소스 전환).
-           카드별 [이의제기] 버튼·입력란, 상단 고정 바(건수 + [이의제기
-           복사하기]), 복사 폴백 모달, "이의제기 안내" 카드, 관련 JS
-           (buildAppealText·APPEAL_META·APPEAL_DATA·localStorage
-           `kocoAppeal:*`)와 CSS 를 전부 지웠다. 이의를 제기해 **전달하는
-           경로**만 없앤 것이고 오답노트·취약점 진단·해설은 그대로다.
-           채점이 틀린 것 같으면 이 저장소를 포크해 직접 고치거나(세트별
-           기대값 JSON 의 points·groups·exclude 로 코드를 안 고치고도 조정
-           가능) 이슈·PR 로 알려 주면 된다 — MIT 라 자기 사본만 고쳐 써도
-           된다. `채점/이의제기_로그.md` 는 지금까지 반영한 42건의 근거
-           문서로 그대로 남는다.
-    2.0.8  오탐(맞은 답을 틀렸다고 감점)을 구조적으로 차단 — "모르면 감점 금지"
-           이 채점기의 기본값은 '정답 파일과 다르면 오답'이라, 파일에서
-           무언가를 읽어 내는 데 실패하면 그 실패가 그대로 감점으로 흘렀다.
-           파서가 못 읽으면 '없음'이 되고, 우리가 모르는 Excel 저장 형태는
-           '다름'이 됐다 — 무지가 전부 감점 방향으로 흘렀다.
-           - UNKNOWN 센티널: 추출 함수가 실패하면 빈 값([]/{}/""/None) 대신
-             Unknown 을 돌려준다. "읽어 보니 없더라"와 "못 읽었다"를 가른다.
-             적용: cfb_streams, vba_module_sources, Book.vba_modules/vba_units,
-             Book.form_controls/drawing_shapes/sheet_xml/sheet_rels/
-             sheet_rel_targets/chart_parts_for_sheet/sheet_has_drawing,
-             chart_features, cf_rules_detail, defined_names_for_sheet,
-             macro_objects, fmt_signature/fmt_signature_m, merge_maps,
-             cell_raw_m, format_diff_items(지시 추출 실패).
-             Unknown 은 falsy·빈 컨테이너처럼 굴어 기존 소비자 코드를 깨지
-             않지만, Unknown == Unknown 은 거짓이라 '모르는 값끼리 우연히
-             통과'하지도 않는다 (예전 fmt_signature 의 "?" 는 "?"끼리 같다고
-             판정됐다).
-           - 채점부는 Unknown 을 만나면 감점하지 않고 '확인 필요'로 보류한다
-             (add_hold). 보류한 배점은 만점에서 빼고 나머지로 환산한다 —
-             감점도 가점도 아니다. 채점기가 예외로 죽은 시트도 통째로 보류.
-           - 리포트: 총점 옆 '확인 필요 N건', 본문 [확인 필요] 섹션에 무엇을
-             왜 판정하지 못했는지와 점수 계산식을 적는다. --json 에
-             review_count/review_points/review_items/scoring 과 시트별 held/
-             gradable/review_items 를 추가(기존 키는 그대로).
-           - 실제 Excel 마크업 대응(합성 픽스처만 보던 사각지대):
-             (a) 시트 <controls> 의 앵커를 <xdr:col>/<xdr:row> 접두사까지
-                 읽고, 연결 매크로를 <controlPr macro="[0]!평균"> 에서 읽는다.
-                 예전에는 접두사를 못 넘어 앵커가 '?' 가 되고 매크로는
-                 ctrlProps(formControlPr)에서만 찾아 컨트롤이 통째로 버려졌다.
-             (b) 자동 필터·최신 함수가 만드는 예약 이름(_xlnm._FilterDatabase,
-                 _xleta.*)은 '정의된 이름' 채점에서 제외 — 정답 파일(openpyxl
-                 산)에는 없고 Excel 로 푼 학생 파일에만 생겨 허위 감점이 됐다.
-    2.0.7  이의제기 1건 반영 (24년 개정판 2급 실기 모의고사 리포트)
-           - 양식 컨트롤 단추의 캡션을 못 읽던 버그. Excel 은 캡션을
-             `<v:textbox><div><font>평균<br/></font></div>` 처럼 적으면서
-             글자 뒤에 <br/> 를 붙이는데, 태그를 넘지 못하는 정규식
-             (`<font[^>]*>([^<]*)</font>`)으로 뽑고 있어 **텍스트가 있는 단추가
-             전부 '(없음)'** 으로 읽혔다. textbox 안의 태그를 걷어낸 뒤 공백을
-             정리해 읽는다(`_vml_textbox_text`).
-    2.0.6  이의제기 3건 반영 (컴활 2급 상시 = 사용자 '상시기출2회' 리포트)
-           - 테두리 표기 기준: 격자 선(edge)은 위아래 두 셀이 공유한다. 지금까지
-             늘 아래/오른쪽 셀을 집어 [A1:G1]의 '아래쪽 테두리' 지시가
-             'A2 위쪽 선 없음'으로 표기됐다 — 문제지 지시 범위 밖 주소라
-             '문제에 없는 걸 감점했다'는 오해를 샀다. 이제 그 선을 실제로
-             선언한 셀(정답 파일 기준, 없으면 문제 파일)을 골라 표기해
-             'A1 아래쪽 선 없음'처럼 지시 범위 안 주소로 인용한다.
-           - 제작 메모 제외(일반 규칙): 정답 파일에만 있고 문제 파일은 비어
-             있으며, 표에 붙어 있지 않은(8방향 이웃이 모두 빈) 홑셀의 짧은
-             문자열이 다른 셀 주소·범위(예: '區分+E4:E13')를 담고 있으면
-             제작자가 남긴 작업 메모로 보아 값·서식 채점에서 빼고 참고 노트만
-             남긴다. 학생이 입력할 근거가 문제지에 없는 셀을 오답 처리하던
-             문제 해결 (세트 전용 하드코딩 없이 모든 세트에 적용).
-           - 리포트 식별자(이의제기 글에 적히는 ID)를 채점 시각이 아니라
-             **응시 시각**(풀이 파일 이름의 `_YYYYMMDD_HHMM`)으로 매긴다.
-             채점은 응시가 끝난 뒤라 두 시각이 달라, 이의제기 글의 ID로는
-             어느 기록인지 가리키지 못해 점수 정정을 걸 수 없었다. 이제
-             기록 id 와 같은 값이라 정정 데이터가 바로 붙는다.
-           - 매크로(VBA) 읽기: CFB 섹터 시작 위치를 512바이트로 못박아 두어
-             4096바이트 섹터(CFB v4) 파일에서 스트림을 하나도 읽지 못했다.
-             섹터 오프셋을 (섹터번호+1)*섹터크기로 고쳐 512·4096 모두 읽는다.
-             또 vbaProject.bin이 있는데 코드를 못 읽으면 'VBA를 읽지
-             못했습니다' + 어디서 끊겼는지(구조 해석 / 압축 해제)를 리포트에
-             명시해 조용히 넘어가지 않게 했다.
-    2.0.5  이의제기 3건 반영 (코코 모의고사 2회 리포트 — 자체 제작 문제지 기준)
-           - 기본작업-2 열 너비: Excel은 [열 너비] 대화상자에 입력한 문자 수를
-             그대로 저장하지 않고 글자 폭(MDW)에 5픽셀 여백을 더해 저장한다
-             (저장값 = trunc((문자수*MDW + 5)/MDW*256)/256). 맑은 고딕 11pt는
-             MDW=8px이라 '12'를 입력하면 12.625가, Calibri 11pt는 MDW=7px이라
-             12.7109375가 저장된다. 반면 openpyxl로 만든 정답 파일은 12를
-             그대로 저장한다 — 그래서 정확히 12를 입력한 풀이가 오답 처리됐다.
-             이제 저장값을 '대화상자 문자 수'로 되돌려 비교하고(MDW 7·8 모두
-             시도), 리포트에 'A열 너비: 12자(저장값 12.625)'처럼 표기한다.
-             행 높이는 포인트를 그대로 저장하므로 패딩 보정이 없고, 1픽셀
-             (0.75pt) 단위 반올림만 허용한다.
-           - 계산작업 진단: 실제 차이를 짚도록 개선. (a) 정답이 MID(...)*1 /
-             VALUE(...)로 문자를 숫자로 바꾸는데 내 수식에 그 변환이 없으면
-             '문자↔숫자 불일치'로 설명. (b) VLOOKUP·HLOOKUP의 인수를 역할
-             이름(찾을 값/찾을 범위/가져올 행·열 번호/일치 옵션)으로 지적.
-             (c) 함수 이름 오타(AVRAGE → AVERAGE)를 찾아 '#NAME? 오류'와 함께
-             표기. (d) 조건을 '">"&800000'처럼 이어 붙인 것은 '">800000"'과
-             같은 뜻임을 인정하고 알려 준다. (e) 결과 뒤 &"명" 누락을 top-level
-             문자열 연결 기준으로 감지. (f) 카드의 '포인트' 문구를 실제 차이에
-             맞춰 고른다 (모든 수식에 '$ 절대참조는 …'이 붙던 문제 해결).
-           - 오류 값 표기: 학생 셀 값이 #NAME?·#N/A 같은 Excel 오류면 상태를
-             '오류 값'으로 구분하고 원인 한 줄(#NAME? = 함수 이름을 못 찾음)을
-             카드에 붙인다. 오류 값은 숫자 0으로 뭉개지 않고 그대로 표기.
-    2.0.4  이의제기 2건 반영 (2024 상시 2회 리포트 — 복원 문제지 기준)
-           - 계산작업 판정: 학생 파일에 계산값이 저장돼 있지 않으면(수식만
-             있음) LibreOffice headless로 통합 문서를 재계산해 '결과값'으로
-             먼저 비교하고, 재계산이 불가능할 때만 수식 문자열 비교로
-             내려간다 (LibreOffice 미설치·변환 실패 시 조용히 기존 경로).
-             리포트에 '재계산해 비교' / '수식 문자열로 비교' / '저장된
-             계산값으로 비교' 중 어느 방식이었는지 명시.
-             단, 재계산 값이 같아도 학생 수식이 참조하는 셀이 정답과 다르면
-             정답으로 올리지 않는다 — 이 자료에서만 우연히 결과가 겹친
-             참조 오류(예: 둘째 조건이 D열이어야 하는데 C열을 참조)를
-             정답 처리하지 않기 위한 안전장치. 리포트에 그 근거를 표기.
-           - 매크로작업: (a) VBA의 다중 영역 범위 Range("B5:F5,B6:B10")를
-             영역별로 분해해 인식 (지금까지 통째로 해석에 실패해 코드 인정이
-             되지 않던 문제). (b) 여러 범위를 요구하는 지시에서 일부만 맞으면
-             '맞은 범위'와 '틀린 범위'를 함께 표기 (틀린 셀만 나열해 '분명히
-             했는데'로 느껴지던 문제). (c) 글꼴 색을 사람이 읽을 수 있는
-             이름으로 정밀 표기하고, 색이 없으면 '자동(검정)'임을 명시.
-             (d) 같은 이름의 매크로가 있는데 적용 범위만 다르면 '코드에
-             문장이 없다'가 아니라 '매크로는 있으나 적용 범위가 다르다'로
-             설명. (e) 도형·단추의 텍스트/연결 매크로/도형 종류를 정답과
-             대조해 채점·표기 (예: 육각형 텍스트 '서식전용' vs '서식적용').
-    2.0.3  이의제기 4건 반영 (코코 모의고사 1회 리포트 — 자체 제작 문제지 기준)
-           - 수식 비교: 비교 연산자의 좌우 교환 동치(A>=B ↔ B<=A, > ↔ <, =, <>)
-             를 정규화에 추가 — 부등호 어순만 반대인 조건부 서식·계산 수식은
-             같은 식으로 채점. 조건부 서식 진단에 '어순만 다른 건 인정했고
-             남은 차이는 참조 고정($)'임을 명시.
-           - 기본작업-2 표시 형식: 코드가 달라도 그 셀 값의 화면 표시가 같으면
-             정답 처리(예: 정수 범위에서 0"개" ↔ G/표준"개"). 'G/표준'을
-             General과 동치로 정규화. 리포트는 정규화 결과 대신 원문 코드를
-             그대로 보여주고 General은 한국어 'G/표준'으로 표기(따옴표가
-             사라져 '0개'·'General개'로 깨져 보이던 표시 결함 제거).
-           - 기본작업-3 조건부 서식 해설: 다른 세트 예시(LEFT($A4,4))를 인용하던
-             고정 문구를 이 문제의 실제 적용 범위·기준 열·판정식으로 생성.
-           - 매크로작업: (a) 학생 파일의 xl/vbaProject.bin을 OLE(CFB) 해석 +
-             MS-OVBA 압축 해제로 읽어 매크로 이름과 코드(Interior.Color,
-             Font.Bold, FormulaR1C1 등)를 추출 — 실행 결과 서식이 없어도 지시
-             동작이 코드에 있으면 인정(둘 중 하나면 득점). (b) 리포트에 발견한
-             매크로 이름·단추 앵커/텍스트/연결 매크로·비교 셀과 정답/내 답 서식
-             값을 반드시 표기하고, 읽을 수 없으면 '판정 불가: 이유'로 명시
-             (정답·내 답이 '-'만 나오던 표시 결함 제거).
-    2.0.2  이의제기 5건 반영 (2026 상시 복원 1회 리포트 — 공식 문제지 PDF 기준)
-           - 기대값(--key) 확장: exclude(정답 파일 잔여 서식 등 채점 제외
-             목록: 시트별 {range, kinds, why}), chart(차트 축 지시를 명시:
-             axes [{axis: primary|secondary, max, min, major_unit}] — 나열한
-             속성만 채점). 세트별 보정을 채점기 코드 수정 없이 기대값 파일로.
-           - 계산작업: 정답이 수식이 아닌 셀(자료 셀, 예: '미응시' 같은 데이터
-             차이)은 계산 문제로 묶지 않고 채점 제외 — 계산작업은 수식 답만
-             채점. 문제 파일 오염 감지 확장: 정답 수식 위치에 '정답과 다른'
-             수식이 이미 있으면(이전 풀이 흔적) 문제 수와 무관하게 경고 +
-             리포트 상단 배너.
-           - 차트 축: 정답이 '자동'인 속성은 지시가 아니므로 채점 제외(학생의
-             부수 설정 무시), 축을 기본/보조 역할로 짝지어 속성 단위 비교
-             (문제에 없던 보조 축은 기준선 '자동'), 최소 0 명시 vs 자동은 자동
-             결과가 0이면 동일 처리, 숫자 표기(4e+07 → 40,000,000).
-           - 기본작업-3: 셀 값 기준(cellIs) 규칙을 '셀 값 >= 0.7'처럼 연산자
-             포함 표기(기존 '=0.7'로만 보여 오해), 연산자만 다른 경우 '규칙
-             유형 불일치' 대신 '비교 연산자 불일치(이상/초과)'로 설명 + 경계값
-             셀 유무 안내.
-           - 기본작업-2 정의된 이름: 내 답에 학생 파일의 실제 이름·참조 표기
-             ('없음 또는 다른 범위' 대신), 다중 영역 이름의 영역 수 차이 설명.
-    2.0.1  이의제기 3건 반영 (2024 상공회의소 샘플 A형 리포트)
-           - 기본작업-1: 정답 셀의 표시 형식으로 렌더한 결과가 같은 숫자
-             (예: 0.00% → 0.5714와 4/7 모두 57.14%)는 정답 처리. 자료 입력은
-             문제지에 보이는 대로 타이핑하는 것이 실제 시험 관례.
-           - 기본작업-3: 조건부 서식을 셀 단위 실효 규칙(적용 범위 + 상대참조
-             이동 + 적용 서식)으로 비교. '범위만 다르면 정답' 관대 처리 제거
-             ('행 전체' = 표 전체 범위 + $열 고정 혼합참조가 실제 시험 기준).
-             리포트에 정답 규칙/내 규칙을 나란히 표기하고 차이 항목(범위·참조
-             고정·서식·유형)을 명시.
-           - 리포트: 학생 셀 상태를 '빈 셀 / 수식만 있음(계산값 없음) / 값'으로
-             구분 표기하고 학생 수식 전문을 항상 표시. 이의제기 복사 텍스트에
-             셀별 정답·내 답을 나열 (첫 셀만 표기하던 문제 해결).
-           - 계산작업: 인식된 문제 수와 문제당 배점을 카드에 표기, 문제 파일
-             오염(정답 수식이 이미 포함) 경고, 문제 범위 전체가 빈 셀이면 저장
-             확인 안내, 계산값 없는 수식은 재저장 안내.
-           - 기본작업-2: 문제·정답 모두 값이 빈 셀의 맞춤(세로 맞춤 등) 차이는
-             화면에 보이지 않으므로 채점 제외 — '선택 영역의 가운데로'
-             (centerContinuous)처럼 빈 셀에도 보이는 맞춤만 유지. 병합·테두리·
-             채우기·값은 그대로 채점 (2024 상시 2회 정답 K4:K9 잔여 서식 오탐).
-    2.0.0  리포트 이의제기 기능(카드별 [이의제기] + 복사 텍스트) 및 학습 로그
-"""
 
 __version__ = "2.2.0"
 
@@ -249,11 +34,7 @@ except ImportError:
         print(_MSG, file=sys.stderr)
     except Exception:
         pass
-    sys.exit(3)  # exit 3 = openpyxl 미설치 (런처가 자동 설치 흐름으로 연결)
-
-# ---------------------------------------------------------------------------
-# 상수
-# ---------------------------------------------------------------------------
+    sys.exit(3)
 
 DEFAULT_POINTS = {
     "기본작업-1": 5,
@@ -266,8 +47,8 @@ DEFAULT_POINTS = {
     "차트작업": 10,
 }
 PASS_LINE = 70
-CALC_GROUP_TARGET = 5      # 계산작업 문제 수
-MAX_SCAN_ROWS = 400        # diff 스캔 상한 (안전장치)
+CALC_GROUP_TARGET = 5
+MAX_SCAN_ROWS = 400
 MAX_SCAN_COLS = 100
 
 NS_C = "http://schemas.openxmlformats.org/drawingml/2006/chart"
@@ -288,35 +69,13 @@ FMT_KIND_LABEL = {
     "style": "셀 스타일",
 }
 
-# ---------------------------------------------------------------------------
-# UNKNOWN 센티널 — "읽어 보니 없더라"와 "못 읽었다"를 가른다
-#
-# 이 채점기의 기본값은 '정답 파일과 다르면 오답'이라, 파일에서 무언가를
-# 읽어 내는 데 실패하면 그 실패가 그대로 감점으로 흘렀다. 파서가 못 읽으면
-# '없음'이 되고, 우리가 모르는 Excel 저장 형태는 '다름'이 됐다 — 무지가
-# 전부 감점 방향으로 흘렀다. 실제로 4096바이트 섹터 vbaProject.bin(CFB v4)을
-# 못 읽어 매크로 판정이 통째로 죽어 있었고, 단추 캡션의 <br/> 때문에 텍스트가
-# 있는 단추가 전부 '(없음)'으로 읽혔다.
-#
-# 그래서 추출 함수는 실패하면 빈 값 대신 Unknown 을 돌려준다. 채점부는
-# Unknown 을 만나면 감점하지 않고 '확인 필요'로 보류하고(add_hold), 그 배점을
-# 분모에서 뺀다.
-#
-# Unknown 은 기존 소비자 코드가 빈 값([]/{}/""/None)으로 다루던 자리에 그대로
-# 들어갈 수 있도록 falsy·빈 컨테이너처럼 동작한다. 그래야 판정 지점 하나를
-# 놓쳐도 예전과 같은 동작으로 떨어질 뿐 새 예외가 터지지 않는다.
-# ---------------------------------------------------------------------------
-
-
 class Unknown:
-    """해석 실패 센티널. why 에 사람이 읽을 수 있는 이유를 담는다."""
 
     __slots__ = ("why",)
 
     def __init__(self, why="원인을 특정하지 못했습니다"):
         self.why = str(why)
 
-    # -- 빈 값처럼 굴기 (기존 소비자 호환) --
     def __bool__(self):
         return False
 
@@ -347,7 +106,6 @@ class Unknown:
     def setdefault(self, _k, default=None):
         return default
 
-    # -- 절대 '같다'로 판정되지 않게 (모르는 값끼리 우연히 통과 금지) --
     def __eq__(self, other):
         return other is self
 
@@ -363,31 +121,19 @@ class Unknown:
     def __str__(self):
         return "(판정 불가)"
 
-
 def is_unknown(v):
-    """추출 실패 센티널인가."""
     return isinstance(v, Unknown)
 
-
 def unknown_why(*vals, default="원인을 특정하지 못했습니다"):
-    """인수 중 첫 Unknown 의 이유. 없으면 default."""
     for v in vals:
         if isinstance(v, Unknown):
             return v.why
     return default
 
-
 def any_unknown(*vals):
     return any(isinstance(v, Unknown) for v in vals)
 
-
-# ---------------------------------------------------------------------------
-# 공통 유틸
-# ---------------------------------------------------------------------------
-
-
 def norm_sheet_name(name):
-    """시트명 정규화: 공백 제거, '정답'/'-정답' 접미사 제거."""
     n = re.sub(r"\s+", "", str(name))
     for suf in ("-정답", "(정답)", "_정답", "정답"):
         if n.endswith(suf) and len(n) > len(suf):
@@ -395,9 +141,7 @@ def norm_sheet_name(name):
             break
     return n
 
-
 def formula_text(raw):
-    """셀 raw 값에서 수식 문자열을 추출. 수식이 아니면 None."""
     if isinstance(raw, str) and raw.startswith("="):
         return raw
     if isinstance(raw, ArrayFormula):
@@ -406,15 +150,10 @@ def formula_text(raw):
         return "=__DATATABLE__"
     return None
 
-
-# 비교 연산자의 좌우 교환 동치: A>=B 와 B<=A 는 엑셀에서 같은 조건이다.
-# (조건부 서식 '평균 이상'을 =$F3>=AVERAGE(...) / =AVERAGE(...)<=$F3 로 쓰는 차이)
 _CMP_MIRROR = {">": "<", "<": ">", ">=": "<=", "<=": ">=", "=": "=", "<>": "<>"}
 _CMP_TOKENS = (">=", "<=", "<>", ">", "<", "=")
 
-
 def _split_top(s, sep=","):
-    """괄호 깊이 0의 구분자로만 자른다."""
     parts, cur, depth = [], "", 0
     for ch in s:
         if ch == "(":
@@ -429,9 +168,7 @@ def _split_top(s, sep=","):
     parts.append(cur)
     return parts
 
-
 def _canon_cmp_one(s):
-    """이 조각의 최상위 비교 연산자가 정확히 하나면 표준 순서로 재배열."""
     hits = []
     depth = 0
     i = 0
@@ -457,9 +194,7 @@ def _canon_cmp_one(s):
     lhs, op, rhs = min((lhs, op, rhs), (rhs, _CMP_MIRROR[op], lhs))
     return lhs + op + rhs
 
-
 def _canon_cmp_seg(seg):
-    """괄호 안(함수 인수)부터 재귀로 표준화한 뒤 이 단계의 비교식을 정렬."""
     out = []
     i, n = 0, len(seg)
     while i < n:
@@ -482,9 +217,7 @@ def _canon_cmp_seg(seg):
         i += 1
     return _canon_cmp_one("".join(out))
 
-
 def canon_compare(f):
-    """정규화된 수식의 비교식을 좌우 교환 동치로 통일 (문자열 리터럴 보호)."""
     if not f or not any(op in f for op in ("<", ">", "=")):
         return f
     lits = []
@@ -501,11 +234,7 @@ def canon_compare(f):
     except Exception:
         return f
 
-
 def norm_formula(f, swap_cmp=True):
-    """수식 정규화. 문자열 리터럴은 보존, 나머지는 대문자화·공백/$/' 제거.
-    RANK( 는 RANK.EQ( 와 동일 취급, _xlfn. 접두사 제거, 시트명 속 '정답' 제거.
-    swap_cmp=True면 비교 연산자의 좌우 교환(A>=B ↔ B<=A)까지 동치 처리."""
     if f is None:
         return None
     if not isinstance(f, str):
@@ -514,39 +243,29 @@ def norm_formula(f, swap_cmp=True):
     parts = re.split(r'("(?:[^"]|"")*")', f)
     out = []
     for i, p in enumerate(parts):
-        if i % 2 == 1:  # 문자열 리터럴 그대로
+        if i % 2 == 1:
             out.append(p)
         else:
             p = p.upper()
             p = re.sub(r"\s+", "", p)
             p = p.replace("$", "").replace("'", "")
             p = p.replace("_XLFN.", "")
-            p = p.replace("정답!", "!")  # '계산작업 정답'! -> 계산작업!
-            p = re.sub(r"\[\d+\]", "", p)  # 외부 참조 [1]시트명! 제거
+            p = p.replace("정답!", "!")
+            p = re.sub(r"\[\d+\]", "", p)
             p = p.replace("RANK.EQ(", "RANK(")
-            # 불리언 인수 동치: FALSE=0, TRUE=1 (VLOOKUP 4번째 인수 등)
             p = re.sub(r"\bFALSE\b", "0", p)
             p = re.sub(r"\bTRUE\b", "1", p)
             out.append(p)
     joined = "".join(out)
     return canon_compare(joined) if swap_cmp else joined
 
-
 def cmp_order_swapped(a, b):
-    """두 수식이 '부등호 좌우 순서'만 다른가 (그 외 차이는 없음)."""
     try:
         return (norm_formula(a) == norm_formula(b)
                 and norm_formula(a, swap_cmp=False)
                 != norm_formula(b, swap_cmp=False))
     except Exception:
         return False
-
-
-# ---------------------------------------------------------------------------
-# 수식이 참조하는 셀 집합
-#   결과값이 같아도 '참조하는 셀'이 다르면 그 자료에서만 우연히 겹친 것일 수
-#   있다. 재계산 값으로 정답을 올려 줄 때 이 집합이 같은지 확인한다.
-# ---------------------------------------------------------------------------
 
 _REF_TOKEN = re.compile(
     r"(?<![A-Z0-9_.])"
@@ -555,27 +274,13 @@ _REF_TOKEN = re.compile(
     r"(?::(?P<b>[A-Z]{1,3}[0-9]{1,7}))?"
     r"(?![A-Z0-9_(])")
 
-REF_EXPAND_LIMIT = 4000     # 이보다 큰 범위는 전개하지 않고 범위 표기로 비교
-
+REF_EXPAND_LIMIT = 4000
 
 def formula_ref_counts(f, limit=REF_EXPAND_LIMIT):
-    """수식이 각 셀을 몇 번 참조하는지 {셀 좌표: 횟수}. 범위는 전개해서 센다.
-
-    같은 셀을 두 번 쓰면 2로 세기 때문에, 집합만으로는 구분되지 않는
-    참조 오류(둘째 조건이 D19여야 하는데 C19를 한 번 더 참조)를 잡아낸다.
-        정답 =IF(OR(C19<=SMALL(C18:C26,2),D19<=SMALL(D18:D26,2)),...)
-              -> C19:2, D19:2
-        오답 =IF(OR(SMALL(C18:C26,2)>=C19,SMALL(D18:D26,2)>=C19),...)
-              -> C19:3, D19:1
-    반대로 표기만 다른 같은 참조는 같게 센다.
-        =SUM(B1:B5) 와 =SUM(B1,B2,B3,B4,B5) -> 둘 다 B1~B5 각 1회
-    문자열 리터럴과 함수 이름(LOG10( 등)은 제외하고, 시트 한정 참조는
-    시트명을 접두로 붙인다. 읽을 수 없으면 None (비교하지 않음을 뜻함).
-    """
     if not f:
         return None
     try:
-        norm = norm_formula(f, swap_cmp=False)     # 대문자화·공백/$ 제거
+        norm = norm_formula(f, swap_cmp=False)
         norm = re.sub(r'"(?:[^"]|"")*"', '""', norm)
         from openpyxl.utils import range_boundaries, get_column_letter
         out = {}
@@ -606,21 +311,13 @@ def formula_ref_counts(f, limit=REF_EXPAND_LIMIT):
     except Exception:
         return None
 
-
 def same_ref_usage(a, b):
-    """두 수식이 같은 셀들을 같은 횟수만큼 참조하는가 (읽지 못하면 False)."""
     ra, rb = formula_ref_counts(a), formula_ref_counts(b)
     if ra is None or rb is None:
         return False
     return ra == rb
 
-
 def ref_usage_diff(expected_f, student_f, limit=6):
-    """참조 횟수가 다른 셀을 (정답이 더 쓴 셀, 내 답이 더 쓴 셀)로.
-
-    리포트에 '정답은 D19를 쓰는데 내 답은 C19를 한 번 더 썼습니다'처럼
-    셀 단위 근거를 보여 주기 위한 것.
-    """
     ra, rb = formula_ref_counts(expected_f), formula_ref_counts(student_f)
     if ra is None or rb is None:
         return [], []
@@ -633,23 +330,12 @@ def ref_usage_diff(expected_f, student_f, limit=6):
             more_b.append(k if db - da == 1 else f"{k}({db - da}회 더)")
     return more_a[:limit], more_b[:limit]
 
-
-# ---------------------------------------------------------------------------
-# 계산값 재계산 (LibreOffice headless)
-#   풀이 파일이 '수식만 있고 계산값이 없는' 상태로 저장되면(Excel 외 도구로
-#   저장·비정상 종료 등) 값 비교가 불가능해 수식 문자열로만 판정하게 된다.
-#   LibreOffice가 있으면 통합 문서를 다시 계산해 값 비교 경로를 복구한다.
-#   없거나 실패하면 조용히 기존(수식 비교) 경로를 쓴다.
-# ---------------------------------------------------------------------------
-
 RECALC_ENABLED = True
-RECALC_TIMEOUT = 180        # 초
+RECALC_TIMEOUT = 180
 _RECALC_UNSET = object()
 _recalc_cache = {}
 
-
 def soffice_exe():
-    """LibreOffice 실행 파일 경로 — 찾지 못하면 None."""
     import shutil
     for name in ("soffice", "libreoffice", "soffice.exe"):
         p = shutil.which(name)
@@ -667,12 +353,7 @@ def soffice_exe():
             pass
     return None
 
-
 def recalc_workbook(path):
-    """LibreOffice headless로 다시 계산한 {시트명: {(행, 열): 값}}.
-
-    실패하면 None. 같은 파일은 한 번만 변환한다(경로+수정시각+크기 기준).
-    """
     if not RECALC_ENABLED:
         return None
     try:
@@ -682,7 +363,7 @@ def recalc_workbook(path):
         return None
     if ck in _recalc_cache:
         return _recalc_cache[ck]
-    _recalc_cache[ck] = None        # 재시도 방지 (실패도 기억)
+    _recalc_cache[ck] = None
     exe = soffice_exe()
     if not exe:
         return None
@@ -692,13 +373,12 @@ def recalc_workbook(path):
     tmp = None
     try:
         tmp = tempfile.mkdtemp(prefix="grade_recalc_")
-        # 원본을 건드리지 않도록 사본으로 변환한다
         work = os.path.join(tmp, "in" + os.path.splitext(path)[1].lower())
         shutil.copyfile(path, work)
         outdir = os.path.join(tmp, "out")
         os.makedirs(outdir, exist_ok=True)
         env = dict(os.environ)
-        env.pop("PYTHONPATH", None)     # LibreOffice 내장 파이썬 보호
+        env.pop("PYTHONPATH", None)
         cp = subprocess.run(
             [exe, "--headless", "--norestore", "--invisible", "--nolockcheck",
              "-env:UserInstallation=file://" + os.path.join(tmp, "profile"),
@@ -736,7 +416,6 @@ def recalc_workbook(path):
             except Exception:
                 pass
 
-
 def _as_number(v):
     if isinstance(v, bool):
         return None
@@ -754,7 +433,6 @@ def _as_number(v):
         except ValueError:
             return None
     return None
-
 
 def _as_dt(v):
     if isinstance(v, datetime):
@@ -774,10 +452,7 @@ def _as_dt(v):
                 return None
     return None
 
-
 def value_eq(a, b):
-    """관대한 값 비교. 숫자: rel_tol=1e-6 + round(x,6), 문자열: strip,
-    날짜/시간: 타입 변환, None과 빈 문자열은 동일."""
     a_empty = a is None or (isinstance(a, str) and not a.strip())
     b_empty = b is None or (isinstance(b, str) and not b.strip())
     if a_empty or b_empty:
@@ -798,27 +473,20 @@ def value_eq(a, b):
         return a.strip() == b.strip()
     return a == b
 
-
 _NF_DIGITS = re.compile(r"[0#?]")
 
-
 def display_precision(nf):
-    """표시 형식에서 (배율, 소수 자릿수)를 추출. 판별 불가면 None.
-
-    자료 입력 채점용: '0.00%' -> (100, 2), '#,##0' -> (1, 0), '0.0' -> (1, 1).
-    General·날짜/시간·지수·텍스트(@) 형식은 None.
-    """
     if not nf or not isinstance(nf, str):
         return None
     s = nf.split(";")[0]
-    s = re.sub(r'"[^"]*"', "", s)        # 따옴표 문자열 제거
-    s = re.sub(r"\[[^\]]*\]", "", s)     # [$-412], [빨강] 등 제거
-    s = re.sub(r"\\.", "", s)            # \문자 이스케이프 제거
-    s = re.sub(r"_.", "", s)             # _-, _) 등 공백 자리 제거
-    s = re.sub(r"\*.", "", s)             # * 반복 문자 제거
+    s = re.sub(r'"[^"]*"', "", s)
+    s = re.sub(r"\[[^\]]*\]", "", s)
+    s = re.sub(r"\\.", "", s)
+    s = re.sub(r"_.", "", s)
+    s = re.sub(r"\*.", "", s)
     if s.strip().lower() == "general" or "@" in s or not _NF_DIGITS.search(s):
         return None
-    if re.search(r"[ymdhsaAeE]", s):    # 날짜/시간/지수 형식
+    if re.search(r"[ymdhsaAeE]", s):
         return None
     scale = 100 if "%" in s else 1
     if "." in s:
@@ -827,9 +495,7 @@ def display_precision(nf):
         dec = 0
     return scale, dec
 
-
 def value_eq_display(a, b, nf):
-    """정답 셀의 표시 형식으로 렌더한 숫자가 같은가 (0.5714 vs 4/7 -> 57.14%)."""
     prec = display_precision(nf)
     if prec is None or isinstance(a, bool) or isinstance(b, bool):
         return False
@@ -845,9 +511,7 @@ def value_eq_display(a, b, nf):
     except Exception:
         return False
 
-
 def fmt_value(v):
-    """리포트 표시용 값 문자열."""
     if v is None:
         return "(비어 있음)"
     if isinstance(v, float):
@@ -866,13 +530,11 @@ def fmt_value(v):
         s = s[:57] + "..."
     return s
 
-
 def disp_width(s):
     w = 0
     for ch in s:
         w += 2 if unicodedata.east_asian_width(ch) in ("W", "F") else 1
     return w
-
 
 def pad(s, width, align="left"):
     gap = width - disp_width(s)
@@ -885,14 +547,7 @@ def pad(s, width, align="left"):
         return " " * l + s + " " * (gap - l)
     return s + " " * gap
 
-
-# ---------------------------------------------------------------------------
-# 워크북 래퍼
-# ---------------------------------------------------------------------------
-
-
 class Book:
-    """수식용/캐시값용 워크북과 zip 패키지 정보를 함께 보관."""
 
     def __init__(self, path, label):
         self.path = path
@@ -911,9 +566,7 @@ class Book:
             self.norm_map.setdefault(norm_sheet_name(s), s)
         self._recalc = _RECALC_UNSET
 
-    # -- 계산값 재계산 (LibreOffice) ------------------------------------
     def recalc_map(self):
-        """이 파일을 다시 계산한 값 표 — 한 번만 변환하고 재사용."""
         if self._recalc is _RECALC_UNSET:
             self._recalc = recalc_workbook(self.path)
         return self._recalc
@@ -922,11 +575,6 @@ class Book:
         return bool(self.recalc_map())
 
     def recalc_value(self, sheet_name, r, c):
-        """재계산 값. 재계산을 못 했으면 '__MISSING__'.
-
-        재계산된 시트에서 값이 비어 있으면 그 수식의 결과가 빈 문자열("")인
-        경우이므로 ""로 돌려준다 (이 함수는 수식이 있는 셀에만 쓴다).
-        """
         m = self.recalc_map()
         if not m:
             return "__MISSING__"
@@ -941,14 +589,7 @@ class Book:
             return "__MISSING__"
         return sh.get((r, c), "")
 
-    # -- 도형(양식 컨트롤 단추가 아닌 그림 개체) ------------------------
     def drawing_shapes(self, sheet_name):
-        """시트의 도형 [{'text','anchor','macro','geom','name'}].
-
-        매크로 문제의 '육각형/단추'는 xl/drawings/drawingN.xml 의 <xdr:sp>로
-        저장된다 (양식 컨트롤 단추는 VML에도 남지만 도형은 여기에만 있다).
-        텍스트·연결 매크로·도형 종류를 정답과 대조하기 위해 읽는다.
-        """
         out = []
         targets = self.sheet_rel_targets(sheet_name)
         if is_unknown(targets):
@@ -959,8 +600,6 @@ class Book:
             try:
                 x = self.zf.read(t).decode("utf-8", "replace")
             except Exception as e:
-                # 그림 파트가 있다고 적혀 있는데 못 열었다 = 도형을 모른다.
-                # 빈 목록으로 돌리면 '도형 없음'으로 감점된다.
                 return Unknown(f"{self.label} 파일의 그림 파트 {t} 를 읽지 "
                                f"못했습니다({e})")
             for blob in re.finditer(
@@ -976,7 +615,6 @@ class Book:
                 rng = "?"
                 if a:
                     c1, r1, c2, r2 = (int(v) for v in a.groups())
-                    # <xdr:to>는 '다음 칸'을 가리킨다 -> 한 칸 당겨 표기
                     rng = _anchor_range(c1, r1, max(c1, c2 - 1),
                                         max(r1, r2 - 1))
                 mac = re.search(r'<xdr:sp[^>]*\bmacro="([^"]*)"', b)
@@ -995,18 +633,11 @@ class Book:
         return out
 
     def _map_sheet_parts(self):
-        """시트명 -> xl/worksheets/sheetN.xml 매핑.
-
-        여기서 실패하면 시트 XML·rels 를 못 읽어 단추·차트·조건부 서식 판정이
-        통째로 '없음'이 된다 — 실패 사유를 self.parts_error 에 남겨 두고
-        sheet_xml()/sheet_rel_targets() 가 Unknown 을 돌려주게 한다.
-        """
         mapping = {}
         self.parts_error = None
         try:
             wbxml = self.zf.read("xl/workbook.xml").decode("utf-8", "replace")
             relsxml = self.zf.read("xl/_rels/workbook.xml.rels").decode("utf-8", "replace")
-            # 속성 순서(Id/Target)는 저장 도구마다 달라 태그 단위로 읽는다
             rels = {}
             for tag in re.findall(r"<Relationship\b[^>]*>", relsxml):
                 rid = re.search(r'Id="([^"]+)"', tag)
@@ -1033,7 +664,6 @@ class Book:
         return mapping
 
     def _part_miss(self, sheet_name, what):
-        """시트 파트를 못 찾은 이유. 구조 해석 실패면 Unknown, 아니면 None."""
         if getattr(self, "parts_error", None):
             return Unknown(f"{self.label} 파일의 {what}: {self.parts_error}")
         return None
@@ -1051,7 +681,6 @@ class Book:
                            f"읽지 못했습니다({e})")
 
     def sheet_rels(self, sheet_name):
-        """시트의 관계(rels) {Id: 파트 경로}."""
         part = self.sheet_part.get(sheet_name)
         if not part:
             return self._part_miss(sheet_name, f"'{sheet_name}' 시트 관계") or {}
@@ -1077,11 +706,6 @@ class Book:
         return out
 
     def sheet_rel_targets(self, sheet_name):
-        """시트의 관계(rels) 대상 파트 경로 목록.
-
-        rels 파트가 아예 없는 것은 '연결된 그림·차트가 없다'는 사실이지만,
-        시트 ↔ 파트 연결을 못 푼 것은 '못 읽었다'이므로 구분해 Unknown.
-        """
         part = self.sheet_part.get(sheet_name)
         if not part:
             return self._part_miss(sheet_name,
@@ -1107,12 +731,6 @@ class Book:
         return any("vbaProject" in n for n in self.zf.namelist())
 
     def vba_modules(self):
-        """[(모듈명, 소스)] — vbaProject.bin을 해석해 캐시.
-
-        매크로가 아예 없으면 [] (사실), vbaProject.bin 은 있는데 해석에
-        실패하면 Unknown (모름). 둘을 같은 빈 목록으로 돌리면 '코드에 그
-        문장이 없다'가 되어 그대로 감점으로 흘렀다.
-        """
         if getattr(self, "_vba_mods", None) is None:
             mods = []
             for n in self.zf.namelist():
@@ -1127,7 +745,6 @@ class Book:
         return self._vba_mods
 
     def vba_diag(self):
-        """vbaProject.bin을 못 읽은 이유 한 줄. 정상·매크로 없음이면 None."""
         for n in self.zf.namelist():
             if n.endswith("vbaProject.bin"):
                 try:
@@ -1137,11 +754,6 @@ class Book:
         return None
 
     def vba_units(self):
-        """모든 모듈의 매크로 단위 [{'name','ranges','kinds'}].
-
-        vbaProject.bin 을 못 읽었으면 Unknown — 채점부는 코드 인정 경로가
-        막혔음을 알고 '확인 필요'로 보류한다.
-        """
         if getattr(self, "_vba_units", None) is None:
             mods = self.vba_modules()
             if is_unknown(mods):
@@ -1158,11 +770,6 @@ class Book:
         return self._vba_units
 
     def form_controls(self, sheet_name):
-        """시트의 양식 컨트롤(단추) [{'text','macro','anchor'}].
-
-        Excel은 단추를 레거시 VML(x:FmlaMacro·x:Anchor)과 시트 XML의
-        <controls>(controlPr/anchor) 두 곳에 기록한다 — 둘 다 읽는다.
-        """
         out = []
         targets = self.sheet_rel_targets(sheet_name)
         if is_unknown(targets):
@@ -1180,9 +787,6 @@ class Book:
                     continue
                 mac = re.search(r"<x:FmlaMacro>\s*([^<]*)</x:FmlaMacro>", sh)
                 anc = re.search(r"<x:Anchor>\s*([^<]*)</x:Anchor>", sh)
-                # 캡션은 <v:textbox> 안에 있는데 Excel 이 글자 뒤에 <br/> 를
-                # 붙인다 — <font[^<]*</font> 처럼 태그를 못 넘는 정규식으로
-                # 뽑으면 텍스트가 있는 단추가 전부 '(없음)' 이 된다.
                 txt = _vml_textbox_text(sh)
                 rng = "?"
                 if anc:
@@ -1198,9 +802,6 @@ class Book:
             return Unknown(unknown_why(xml, rels))
         x = xml or ""
         for blob in re.findall(r"<control\b.*?(?:</control>|/>)", x, re.S):
-            # 실제 Excel 은 <controls> 안의 앵커를 네임스페이스 접두사와 함께
-            # <xdr:col>/<xdr:row> 로 적는다 (openpyxl 로 만든 합성 파일에는
-            # 접두사가 없어 합성 픽스처만으로는 이 형태를 못 봤다).
             a = re.search(r"<(?:\w+:)?from>.*?<(?:\w+:)?col>(\d+)</(?:\w+:)?col>"
                           r".*?<(?:\w+:)?row>(\d+)</(?:\w+:)?row>.*?"
                           r"</(?:\w+:)?from>.*?<(?:\w+:)?to>.*?"
@@ -1210,17 +811,15 @@ class Book:
             rng = _anchor_range(*a.groups()) if a else "?"
             nm = re.search(r'<control\b[^>]*\bname="([^"]*)"', blob)
             label = html_mod.unescape(nm.group(1)) if nm else ""
-            # 연결 매크로는 <controlPr macro="[0]!평균"> 에 있다. ctrlProps
-            # 파트(formControlPr)에는 매크로도 캡션도 없는 경우가 많다.
             mpr = re.search(r'<controlPr\b[^>]*\bmacro="([^"]*)"', blob)
             rid = re.search(r'r:id="(rId\d+)"', blob)
             text, macro = label, ""
             if mpr:
                 macro = html_mod.unescape(mpr.group(1)).split("!")[-1].strip()
             if any(o["anchor"] == rng for o in out if o["anchor"] != "?"):
-                continue        # VML에서 이미 읽은 같은 단추
+                continue
             if macro and any(o.get("macro") == macro for o in out):
-                continue        # 앵커 표기가 달라도 같은 단추
+                continue
             if rid and rels.get(rid.group(1)):
                 try:
                     cx = self.zf.read(rels[rid.group(1)]).decode(
@@ -1236,8 +835,6 @@ class Book:
                         f"{self.label} 파일의 컨트롤 속성 파트 "
                         f"{rels[rid.group(1)]} 를 읽지 못했습니다({e})")
             if rng == "?" and not macro:
-                # 앵커도 연결 매크로도 못 읽은 컨트롤 — 비교할 근거가 없다.
-                # 조용히 버리면 '단추가 없다'로 감점되므로 보류로 올린다.
                 return Unknown(f"{self.label} 파일의 '{sheet_name}' 시트에 "
                                "앵커·연결 매크로를 읽지 못한 컨트롤이 "
                                "있습니다")
@@ -1252,7 +849,6 @@ class Book:
         return bool(x) and "<scenarios" in x
 
     def sheet_has_drawing(self, sheet_name):
-        """단추/도형 존재 판정: drawing, vmlDrawing, 컨트롤 참조."""
         targets = self.sheet_rel_targets(sheet_name)
         if is_unknown(targets):
             return targets
@@ -1266,7 +862,6 @@ class Book:
         return "<controls" in x or "<legacyDrawing" in x
 
     def chart_parts_for_sheet(self, sheet_name):
-        """시트 -> drawing -> chart 파트 경로 목록 (rels 체인)."""
         charts = []
         targets = self.sheet_rel_targets(sheet_name)
         if is_unknown(targets):
@@ -1288,32 +883,17 @@ class Book:
                 p = p.lstrip("/") if p.startswith("/") else \
                     os.path.normpath("xl/drawings/" + p).replace("\\", "/")
                 charts.append(p)
-        if not charts:  # 폴백: 워크북 내 아무 차트
+        if not charts:
             charts = sorted(
                 n for n in self.zf.namelist() if re.match(r"xl/charts/chart\d+\.xml$", n)
             )
         return charts
 
-
-# ---------------------------------------------------------------------------
-# 매크로(VBA) 코드 읽기 — xl/vbaProject.bin
-#   구조: OLE 복합 문서(CFB) 안의 모듈 스트림 + MS-OVBA 압축 컨테이너.
-#   매크로 이름과 코드(Interior.Color, Font.Bold, FormulaR1C1 …)를 뽑아
-#   '실행 결과 서식'이 없어도 지시 동작을 수행하는 코드가 있으면 인정한다.
-# ---------------------------------------------------------------------------
-
 _CFB_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 _CFB_FREESECT = 0xFFFFFFFF
 _CFB_ENDOFCHAIN = 0xFFFFFFFE
 
-
 def cfb_streams(data):
-    """OLE 복합 문서(CFB)의 {스트림 이름: 바이트}. 최소 구현.
-
-    해석에 실패하면 {} 가 아니라 Unknown — '스트림이 없다'와 '구조를 못
-    풀었다'를 가른다 (4096바이트 섹터 CFB v4 를 못 읽어 매크로 판정이 통째로
-    죽어 있던 사고가 이 구분이 없어서 조용히 넘어갔다).
-    """
     import struct
     if len(data) < 512 or data[:8] != _CFB_MAGIC:
         return Unknown("OLE(CFB) 형식이 아닙니다")
@@ -1331,9 +911,6 @@ def cfb_streams(data):
                            f"미니 섹터 {msz})")
 
         def sector(i):
-            # 섹터 0은 헤더 '한 섹터' 뒤에서 시작한다 — 512바이트 섹터면
-            # 512, 4096바이트 섹터(CFB v4)면 4096. 512를 상수로 두면
-            # v4 파일에서 모든 체인이 어긋나 스트림을 하나도 못 읽는다.
             off = (i + 1) * ssz
             return data[off:off + ssz]
 
@@ -1412,9 +989,7 @@ def cfb_streams(data):
     except Exception as e:
         return Unknown(f"CFB 구조를 해석하지 못했습니다({type(e).__name__})")
 
-
 def ovba_decompress(data, start):
-    """MS-OVBA CompressedContainer 압축 해제 (RLE). 실패하면 None."""
     if start >= len(data) or data[start] != 0x01:
         return None
     out = bytearray()
@@ -1425,12 +1000,11 @@ def ovba_decompress(data, start):
             hdr = data[pos] | (data[pos + 1] << 8)
             pos += 2
             if (hdr >> 12) & 0x07 != 0b011:
-                # 컨테이너 뒤의 여분 바이트(스트림 슬랙)면 여기까지가 본문
                 return bytes(out) if chunks else None
             chunks += 1
             end = min(pos + (hdr & 0x0FFF) + 1, n)
             chunk_start = len(out)
-            if not (hdr >> 15) & 1:              # 비압축 청크
+            if not (hdr >> 15) & 1:
                 out += data[pos:end]
                 pos = end
                 continue
@@ -1467,44 +1041,19 @@ def ovba_decompress(data, start):
     except Exception:
         return None
 
-
 def _vml_textbox_text(shape_xml):
-    """VML 도형(<v:shape>)의 캡션 문자열. 없으면 "".
-
-    Excel 은 단추 캡션을 <v:textbox><div><font>평균<br/></font></div> 처럼
-    적고, 글자 뒤에 <br/> 를 붙인다. 태그를 넘지 못하는 정규식으로 뽑으면
-    캡션이 있는 단추가 전부 빈 문자열이 되므로, textbox 안의 태그를 걷어낸
-    뒤 공백을 정리해 읽는다.
-    """
     box = re.search(r"<v:textbox\b.*?</v:textbox>", shape_xml, re.S)
     inner = box.group(0) if box else shape_xml
     text = re.sub(r"<[^>]*>", " ", inner)
     return re.sub(r"\s+", " ", html_mod.unescape(text)).strip()
 
-
 _ATTEMPT_STAMP_RE = re.compile(r"_(\d{8})_(\d{4})(?:\D|$)")
 
-
 def attempt_report_id(student_path):
-    """풀이 파일 이름의 응시 시각 → 리포트 식별자 `YYYYMMDDHHMM00`. 없으면 None.
-
-    시험장은 `풀이_<세트>_20260915_1226.xlsm` 처럼 **응시 시작 시각**으로
-    사본을 만들고, 기록(`기록.json`)의 `일시` 와 기록 id 도 같은 시각을
-    씁니다. 리포트 식별자를 채점한 시각으로 매기면 그 ID가 어느 기록인지
-    가리키지 못해(채점은 응시가 끝난 뒤라 시각이 다릅니다) 점수 정정을 걸 수
-    없습니다 — 응시 시각을 그대로 씁니다.
-    """
     m = _ATTEMPT_STAMP_RE.search(os.path.basename(str(student_path or "")))
     return f"{m.group(1)}{m.group(2)}00" if m else None
 
-
 def vba_read_diag(bin_bytes):
-    """vbaProject.bin을 왜 못 읽었는지 한 줄. 정상이면 None.
-
-    예전에는 코드를 못 읽어도 조용히 넘어가 '매크로를 인식 못 한다'는
-    오해만 남았다 — 어디서 끊겼는지(파일 형식 / 구조 해석 / 압축 해제)를
-    리포트에 그대로 적기 위한 진단.
-    """
     if not bin_bytes:
         return "vbaProject.bin이 비어 있습니다"
     if len(bin_bytes) < 512 or bin_bytes[:8] != _CFB_MAGIC:
@@ -1523,13 +1072,7 @@ def vba_read_diag(bin_bytes):
                 "풀지 못했습니다")
     return None
 
-
 def vba_module_sources(bin_bytes):
-    """vbaProject.bin -> [(모듈명, 소스 문자열)].
-
-    CFB 구조를 못 풀었으면 Unknown, 모듈 스트림은 찾았는데 하나도 풀지
-    못했어도 Unknown. '모듈이 없다'(빈 목록)와 구분한다.
-    """
     mods = []
     streams = cfb_streams(bin_bytes)
     if is_unknown(streams):
@@ -1561,8 +1104,6 @@ def vba_module_sources(bin_bytes):
                        "풀지 못했습니다")
     return mods
 
-
-# VBA 코드에서 읽어내는 '지시 동작' -> 채점 서식 종류
 VBA_ACTION_KINDS = (
     (r"\.Interior\b|\.ColorIndex\b(?=[^\n]*Interior)", "fill"),
     (r"\.Font\b", "font"),
@@ -1578,9 +1119,7 @@ VBA_KIND_LABEL = {"fill": "채우기", "font": "글꼴", "number_format": "표�
                   "alignment": "맞춤", "border": "테두리", "merge": "병합",
                   "value": "값/수식"}
 
-
 def vba_macro_units(source):
-    """모듈 소스 -> [{'name': 매크로명, 'ranges': [...], 'kinds': {...}}]."""
     units = []
     cur = None
     for line in (source or "").splitlines():
@@ -1599,7 +1138,6 @@ def vba_macro_units(source):
         if cur is None:
             continue
         for m in re.finditer(r'Range\(\s*"([^"]+)"', s, re.I):
-            # Range("B5:F5,B6:B10") 처럼 여러 영역을 한 번에 지정할 수 있다
             for part in m.group(1).split(","):
                 part = part.replace("$", "").strip().upper()
                 if part:
@@ -1612,9 +1150,7 @@ def vba_macro_units(source):
                 cur["kinds"].add(kind)
     return units
 
-
 def vba_covers(units, coord, kind):
-    """(셀, 서식 종류)를 수행하는 매크로 이름 — 없으면 None."""
     from openpyxl.utils import range_boundaries
     from openpyxl.utils.cell import coordinate_to_tuple
     try:
@@ -1636,9 +1172,7 @@ def vba_covers(units, coord, kind):
                 return u["name"]
     return None
 
-
 def _anchor_range(col1, row1, col2, row2):
-    """0-based 열/행 앵커 -> 'F3:G4' 표기."""
     from openpyxl.utils import get_column_letter
     try:
         a = f"{get_column_letter(int(col1) + 1)}{int(row1) + 1}"
@@ -1647,23 +1181,13 @@ def _anchor_range(col1, row1, col2, row2):
     except Exception:
         return "?"
 
-
-# ---------------------------------------------------------------------------
-# 서식 시그니처
-# ---------------------------------------------------------------------------
-
-
-# 색 비교: 테마/인덱스 색을 RGB로 환산한 뒤 비교 (저장 방식 차이 무시)
-
 _THEME_ORDER = ("lt1", "dk1", "lt2", "dk2", "accent1", "accent2", "accent3",
                 "accent4", "accent5", "accent6", "hlink", "folHlink")
 _DEFAULT_THEME = ("FFFFFF", "000000", "E7E6E6", "44546A", "4472C4", "ED7D31",
                   "A5A5A5", "FFC000", "5B9BD5", "70AD47", "0563C1", "954F72")
 _theme_cache = {}
 
-
 def _theme_palette(wb):
-    """워크북 theme1.xml -> 테마 색 RGB 목록 (Excel theme 인덱스 순)."""
     key = id(wb)
     if key in _theme_cache:
         return _theme_cache[key]
@@ -1691,9 +1215,7 @@ def _theme_palette(wb):
     _theme_cache[key] = palette
     return palette
 
-
 def _apply_tint(rgb_hex, tint):
-    """테마 색 tint 적용 (표준 HLS 휘도 공식)."""
     import colorsys
     try:
         r = int(rgb_hex[0:2], 16) / 255.0
@@ -1710,9 +1232,7 @@ def _apply_tint(rgb_hex, tint):
     except Exception:
         return rgb_hex
 
-
 def _quant_hex(rgb_hex):
-    """반올림 오차 흡수를 위해 채널을 4단위로 양자화."""
     try:
         vals = [min(255, (int(rgb_hex[i:i + 2], 16) + 2) // 4 * 4)
                 for i in (0, 2, 4)]
@@ -1720,9 +1240,7 @@ def _quant_hex(rgb_hex):
     except Exception:
         return rgb_hex
 
-
 def _color_key(color, wb=None):
-    """색을 저장 방식과 무관한 비교 키로. 가능하면 ("rgb", 양자화 RGB)."""
     if color is None:
         return None
     try:
@@ -1740,7 +1258,7 @@ def _color_key(color, wb=None):
                 return ("rgb", _quant_hex(_apply_tint(base, tint)))
             return ("theme", idx, round(tint, 2))
         if color.type == "indexed":
-            if color.indexed in (64, 65):  # 자동/기본
+            if color.indexed in (64, 65):
                 return None
             try:
                 from openpyxl.styles.colors import COLOR_INDEX
@@ -1751,7 +1269,6 @@ def _color_key(color, wb=None):
     except Exception:
         pass
     return None
-
 
 _COLOR_NAMES_KO = (
     ("FFFFFF", "흰색"), ("000000", "검정"), ("FF0000", "빨강"),
@@ -1764,9 +1281,7 @@ _COLOR_NAMES_KO = (
     ("FCE4D6", "연한 주황"),
 )
 
-
 def color_name_ko(rgb_hex):
-    """RGB -> 가까운 한국어 색 이름 (+hex). 예: '황금색(#BF8F00 계열)'"""
     try:
         r = int(rgb_hex[0:2], 16)
         g = int(rgb_hex[2:4], 16)
@@ -1785,8 +1300,6 @@ def color_name_ko(rgb_hex):
     except Exception:
         return f"#{rgb_hex}"
 
-
-# 동일 글꼴의 한/영 이름 별칭 (영문 UI Excel 저장 대응)
 FONT_ALIASES = {
     "malgun gothic": "맑은 고딕", "gulim": "굴림", "gulimche": "굴림체",
     "dotum": "돋움", "dotumche": "돋움체", "batang": "바탕",
@@ -1794,40 +1307,24 @@ FONT_ALIASES = {
     "nanumgothic": "나눔고딕", "nanum gothic": "나눔고딕",
 }
 
-
 def _norm_font_name(name):
     if not name:
         return name
     return FONT_ALIASES.get(str(name).strip().lower(), str(name).strip())
 
-
-# 표시 형식에서 자체 의미를 갖는 코드 문자 — 이 문자는 따옴표 유무가 의미를
-# 바꾸므로 리터럴("c")을 유지하고, 그 외 문자는 따옴표를 벗겨도 표시 동일.
 _NF_SIGNIFICANT = set('0123456789#?.,%eEgG@ymdhsSbBnN*_/:[]"\\;aA')
 
-# 한국어 Excel의 '일반' 표시 형식 코드. 사용자 지정 칸에 'G/표준'을 입력하면
-# 파일에는 'General'로 저장되므로 같은 코드로 다뤄야 한다.
 _NF_GENERAL_KO = "G/표준"
 
-
 def _nf_split_quoted(s):
-    """표시 형식 코드를 [코드, 리터럴, 코드, ...] 로 분리 (홀수 인덱스=리터럴)."""
     return re.split(r'("(?:[^"]|"")*")', str(s))
 
-
 def _nf_general_alias(s):
-    """따옴표 밖의 'G/표준'을 'General'로 (동치 코드 통일)."""
     parts = _nf_split_quoted(s)
     return "".join(p if i % 2 else p.replace(_NF_GENERAL_KO, "General")
                    for i, p in enumerate(parts))
 
-
 def nf_display(nf):
-    """리포트 표기용 표시 형식 코드 — 원문 그대로, General만 한국어 'G/표준'.
-
-    정규화 결과('0개')를 그대로 보여주면 리터럴 따옴표가 사라져 형식 코드가
-    깨져 보이므로, 화면에는 반드시 사용자가 입력한 원문 코드를 쓴다.
-    """
     if is_unknown(nf):
         return "확인 불가"
     s = str(nf) if nf not in (None, "") else "General"
@@ -1836,17 +1333,13 @@ def nf_display(nf):
                                           flags=re.IGNORECASE)
                    for i, p in enumerate(parts))
 
-
 def _nf_general_str(v):
-    """General(G/표준) 표시 근사 — 정수는 그대로, 실수는 불필요한 0 제거."""
     f = float(v)
     if f == int(f) and abs(f) < 1e15:
         return str(int(f))
     return ("%.10f" % f).rstrip("0").rstrip(".")
 
-
 def _nf_sections(s):
-    """표시 형식 섹션 분해 (따옴표 안 ';' 보호)."""
     secs, cur, in_q = [], "", False
     for ch in s:
         if ch == '"':
@@ -1859,9 +1352,7 @@ def _nf_sections(s):
     secs.append(cur)
     return secs
 
-
 def _nf_parse_section(sec):
-    """섹션 -> (접두 문자열, 숫자 코어 코드, 접미 문자열). 미지원이면 None."""
     pre, post = [], []
     cur = pre
     core = None
@@ -1887,7 +1378,7 @@ def _nf_parse_section(sec):
             j = sec.find("]", i)
             if j == -1:
                 return None
-            i = j + 1                      # [빨강]·[$₩-412] 등은 표시 비교 제외
+            i = j + 1
             continue
         if sec[i:i + 7].lower() == "general":
             if core is not None:
@@ -1899,21 +1390,19 @@ def _nf_parse_section(sec):
             if core is None:
                 core, cur = "", post
             elif core == "General" or post:
-                return None                # 코어가 두 번 등장: 미지원
+                return None
             core += ch
             i += 1
             continue
         if ch in "@*/" or ch in "eE" or ch.lower() in "ymdhsb":
-            return None                    # 텍스트·채움·분수·지수·날짜: 판정 보류
+            return None
         cur.append(ch)
         i += 1
     if core is None:
         return None
     return "".join(pre), core, "".join(post)
 
-
 def _nf_render_core(v, core):
-    """숫자 코어 코드로 값을 렌더. 실패하면 None."""
     if core == "General":
         return _nf_general_str(v)
     body = core
@@ -1945,7 +1434,7 @@ def _nf_render_core(v, core):
     if len(itxt) < min_int:
         itxt = itxt.rjust(min_int, "0")
     if min_int == 0 and itxt == "0":
-        itxt = ""                          # '#.##' 처럼 정수 자리 표기가 없는 코드
+        itxt = ""
     if thousands and itxt:
         groups, t = [], itxt
         while len(t) > 3:
@@ -1956,13 +1445,7 @@ def _nf_render_core(v, core):
     out = pct_pre + itxt + ("." + dtxt if dec else "") + pct_post
     return ("-" if neg else "") + out
 
-
 def nf_render(value, nf):
-    """값을 표시 형식 코드로 렌더한 화면 문자열. 판정 불가하면 None.
-
-    동치 판정용(정수 범위에서 0"개" ↔ G/표준"개")이므로 숫자 값과 숫자/일반
-    형식만 지원하고, 날짜·시간·지수·분수·텍스트 형식은 None(보류)을 돌려준다.
-    """
     if value is None or isinstance(value, bool) \
             or isinstance(value, (datetime, date, time)):
         return None
@@ -1986,29 +1469,17 @@ def nf_render(value, nf):
         return None
     return pre + body + post
 
-
 def nf_same_display(value, nf_a, nf_b):
-    """코드는 달라도 이 값의 화면 표시가 같은가 (둘 다 렌더 가능할 때만)."""
     if _norm_number_format(nf_a) == _norm_number_format(nf_b):
         return True
     ra = nf_render(value, nf_a)
     return ra is not None and ra == nf_render(value, nf_b)
 
-
 def _norm_number_format(nf):
-    """표시 형식 코드 정규화 — 표시가 동일한 저장 변형을 통일.
-
-    - [$-412] 같은 로캘 접두 제거 ([$₩-412]는 통화기호만 남김)
-    - 후행 ';@' 텍스트 섹션 제거
-    - 기본형 음수 섹션(';-<양수형>') 제거
-    - 리터럴 문자("₩" ↔ ₩, \\- ↔ "-")의 따옴표/이스케이프 통일
-      (단 0, y 등 코드 문자는 따옴표 유지 — 의미가 다름)
-    """
     s = (nf or "General").strip()
     s = _nf_general_alias(s)
     if s in ("", "General"):
         return "General"
-    # 로캘/통화 토큰: [$기호-로캘] -> 기호
     s = re.sub(r"\[\$([^\]-]*)-[0-9A-Za-z\-]+\]", r"\1", s)
 
     def _norm_section(sec):
@@ -2035,7 +1506,6 @@ def _norm_number_format(nf):
             i += 1
         return "".join(out)
 
-    # 섹션 분해 (따옴표 안 ';' 보호)
     sections = []
     cur = ""
     in_q = False
@@ -2049,17 +1519,13 @@ def _norm_number_format(nf):
             cur += ch
     sections.append(cur)
     sections = [_norm_section(x) for x in sections]
-    # 후행 '@'(기본 텍스트) 섹션 제거
     while len(sections) > 1 and sections[-1].strip() in ("@", ""):
         sections.pop()
-    # 기본형 음수 섹션 제거: 2번째 섹션 == '-'+1번째 섹션
     if len(sections) == 2 and sections[1] == "-" + sections[0]:
         sections.pop()
     return ";".join(sections)
 
-
 def _norm_h_align(h, value):
-    """가로 맞춤: 명시된 기본값(왼쪽=텍스트 등)과 미지정을 동치 처리."""
     if h in (None, "general"):
         return None
     default = None
@@ -2072,9 +1538,7 @@ def _norm_h_align(h, value):
         default = "right"
     return None if h == default else h
 
-
 def fmt_signature(cell, kind):
-    """셀의 특정 서식 종류(kind) 시그니처. 색은 테마 해석 후 RGB 비교."""
     try:
         wb = None
         try:
@@ -2089,7 +1553,7 @@ def fmt_signature(cell, kind):
             u = None if u in (None, "none") else u
             col = _color_key(f.color, wb)
             if col == ("rgb", "000000"):
-                col = None  # 자동(기본 검정)과 명시 검정은 화면 동일
+                col = None
             return (_norm_font_name(f.name), float(f.size or 11),
                     bool(f.bold), bool(f.italic), u, bool(f.strike), col)
         if kind == "fill":
@@ -2101,7 +1565,7 @@ def fmt_signature(cell, kind):
         if kind == "alignment":
             al = cell.alignment
             v = al.vertical
-            v = None if v in (None, "bottom") else v  # 세로 기본=아래쪽
+            v = None if v in (None, "bottom") else v
             return (_norm_h_align(al.horizontal, cell.value), v,
                     bool(al.wrap_text), int(al.text_rotation or 0))
         if kind == "border":
@@ -2109,16 +1573,10 @@ def fmt_signature(cell, kind):
             return tuple(bool(s is not None and s.style) for s in
                          (b.left, b.right, b.top, b.bottom, b.diagonal))
     except Exception as e:
-        # 예전에는 "?" 를 돌려줬다 — 한쪽만 실패하면 "?" != None 이라
-        # 감점, 양쪽 다 실패하면 "?" == "?" 라 통과. 둘 다 근거 없는 판정이다.
         return Unknown(f"셀 서식({FMT_KIND_LABEL.get(kind, kind)})을 읽지 "
                        f"못했습니다({type(e).__name__})")
     return None
 
-
-# 셀 단위 비교 서식 종류. 오탐 방지를 위해 다음은 제외:
-#  - border: edge(격자 선) 단위 합성 비교로 대체 (인접 셀 공유 선 대응)
-#  - 셀 스타일 이름: 저장 방식 차이일 뿐, 효과는 표시형식/글꼴 등으로 판정됨
 CELL_FMT_KINDS = ("number_format", "font", "fill", "alignment")
 
 _BORDER_WEIGHT = {"hair": 1, "thin": 2, "dotted": 2, "dashed": 2,
@@ -2131,21 +1589,13 @@ BORDER_STYLE_KO = {"thin": "실선", "medium": "굵은 실선", "double": "이�
                    "thick": "매우 굵은 실선", "mediumDashed": "굵은 파선",
                    "dashDot": "일점쇄선", "dashDotDot": "이점쇄선"}
 
-
 def _combine_edge(s1, s2):
-    """인접한 두 셀이 선언한 같은 선: 어느 쪽이든 있으면 존재, 굵은 쪽 우선."""
     if s1 and s2:
         return s1 if _BORDER_WEIGHT.get(s1, 2) >= _BORDER_WEIGHT.get(s2, 2) \
             else s2
     return s1 or s2
 
-
 def sheet_edge_map(ws, max_r, max_c):
-    """격자 선(edge) 단위 테두리 맵. Excel이 공유 선을 어느 셀에 저장했든
-    같은 선으로 취급. 병합 범위 내부 선은 제외.
-
-    키: ("h", r, c) = r행 위쪽 가로선, ("v", r, c) = c열 왼쪽 세로선.
-    """
     _members, anchors = merge_maps(ws)
     failed = []
 
@@ -2156,7 +1606,6 @@ def sheet_edge_map(ws, max_r, max_c):
             s = getattr(ws.cell(r, c).border, name)
             return s.style if s is not None else None
         except Exception as e:
-            # 예전에는 None('선 없음')으로 뭉개 테두리 감점으로 흘렀다.
             failed.append(f"테두리를 읽지 못했습니다({type(e).__name__})")
             return None
 
@@ -2184,15 +1633,7 @@ def sheet_edge_map(ws, max_r, max_c):
         return Unknown(failed[0])
     return edges
 
-
 def _edge_owner(ws, key):
-    """이 격자 선을 실제로 선언한 셀 (행, 열). 못 찾으면 None.
-
-    ("h", r, c) 선은 (r-1, c)의 '아래쪽'이자 (r, c)의 '위쪽'이다. 리포트가
-    늘 아래쪽 셀을 집으면 [A1:G1] '아래쪽 테두리' 지시가 'A2 위쪽 선 없음'이
-    돼 문제지 지시 범위 밖 주소를 인용하게 된다 — 선을 선언한 셀을 골라
-    지시 범위 안 주소로 표기하기 위한 헬퍼.
-    """
     if ws is None:
         return None
     try:
@@ -2217,14 +1658,7 @@ def _edge_owner(ws, key):
         return None
     return None
 
-
 def merge_maps(ws):
-    """병합 맵: (비앵커 멤버 -> 앵커 좌표), (앵커 -> bounds).
-
-    Excel은 서식 적용 순서(병합 전/후)에 따라 병합 하위 셀에 서식을
-    저장하기도, 앵커에만 저장하기도 합니다. 화면 표시는 항상 앵커
-    기준이므로 서식 비교도 앵커 기준으로 해야 오탐이 없습니다.
-    """
     members = {}
     anchors = {}
     try:
@@ -2236,19 +1670,11 @@ def merge_maps(ws):
                     if (r, c) != (min_r, min_c):
                         members[(r, c)] = (min_r, min_c)
     except Exception as e:
-        # 병합 정보를 못 읽으면 서식 비교 기준(앵커)이 통째로 틀어진다.
         u = Unknown(f"병합 정보를 읽지 못했습니다({type(e).__name__})")
         return u, u
     return members, anchors
 
-
 def fmt_signature_m(ws, r, c, kind, members, anchors):
-    """병합 인지 서식 시그니처.
-
-    비앵커 멤버는 앵커 셀의 서식으로 대체하고, 병합 앵커의 테두리는
-    범위 외곽 테두리를 합성해 비교합니다 (외곽 테두리가 하위 셀에
-    분산 저장되는 경우 대응).
-    """
     if any_unknown(members, anchors):
         return Unknown(unknown_why(members, anchors))
     if ws is None:
@@ -2277,9 +1703,7 @@ def fmt_signature_m(ws, r, c, kind, members, anchors):
         )
     return fmt_signature(ws.cell(r, c), kind)
 
-
 def cell_raw_m(ws, r, c, members, attr):
-    """병합 인지 원본 속성 (표시 형식 원문·값). 실패하면 None."""
     if ws is None:
         return None
     if is_unknown(members):
@@ -2291,12 +1715,7 @@ def cell_raw_m(ws, r, c, members, attr):
     except Exception as e:
         return Unknown(f"{attr} 속성을 읽지 못했습니다({type(e).__name__})")
 
-
 def nf_display_equal(sha, shs, r, c, a_members, s_members):
-    """이 셀의 표시 형식이 코드는 달라도 화면 표시가 같은가.
-
-    정답 셀의 값을 두 코드로 렌더해 비교한다 (정수 범위에서 0"개" ↔ G/표준"개").
-    """
     if shs is None:
         return False
     nf_a = cell_raw_m(sha, r, c, a_members, "number_format")
@@ -2308,11 +1727,6 @@ def nf_display_equal(sha, shs, r, c, a_members, s_members):
         val = cell_raw_m(shs, r, c, s_members, "value")
     return nf_same_display(val, nf_a, nf_s)
 
-
-# ---------------------------------------------------------------------------
-# 서식 속성 한국어 표기 / 조작 경로 힌트 / 범위 표기
-# ---------------------------------------------------------------------------
-
 H_ALIGN_KO = {"center": "가운데", "centerContinuous": "선택 영역의 가운데로",
               "distributed": "균등 분할", "fill": "채우기", "left": "왼쪽",
               "right": "오른쪽", "justify": "양쪽 맞춤", "general": "일반",
@@ -2323,9 +1737,7 @@ UNDERLINE_KO = {"double": "이중 실선 밑줄", "single": "밑줄",
                 "doubleAccounting": "이중 실선 밑줄(회계형)",
                 "singleAccounting": "밑줄(회계형)"}
 
-
 def describe_font(sig):
-    """글꼴 시그니처 -> '굴림체 16pt 굵은 기울임꼴, 이중 실선 밑줄'"""
     if not sig or sig == "?" or is_unknown(sig):
         return "확인 불가"
     name, size, bold, italic, u, strike, color = sig
@@ -2348,7 +1760,6 @@ def describe_font(sig):
             parts.append("글꼴 색 지정")
     return head + (" " + ", ".join(parts) if parts else "")
 
-
 def describe_border(sig):
     if not sig or sig == "?" or is_unknown(sig):
         return "확인 불가"
@@ -2360,7 +1771,6 @@ def describe_border(sig):
     sides = [nm for nm, v in (("왼쪽", l), ("오른쪽", r),
                               ("위쪽", t), ("아래쪽", b)) if v]
     return "테두리(" + "·".join(sides) + ")"
-
 
 def describe_fill(sig):
     if is_unknown(sig):
@@ -2376,13 +1786,7 @@ def describe_fill(sig):
         return "채우기 있음(테마 색)"
     return "채우기 있음"
 
-
 def props_for_kind(kind, sig_a, sig_s, raw_a=None, raw_s=None):
-    """실제로 다른 속성만 (한국어 속성명, 정답, 내 답) 목록으로.
-
-    raw_a/raw_s: 표시 형식 등 '사용자가 입력한 원문'이 있으면 그것을 표기
-    (정규화 결과를 보여주면 리터럴 따옴표가 사라져 코드가 깨져 보임).
-    """
     out = []
     if kind == "alignment":
         sa = sig_a if isinstance(sig_a, tuple) else (None, None, False, 0)
@@ -2425,9 +1829,7 @@ def props_for_kind(kind, sig_a, sig_s, raw_a=None, raw_s=None):
                     "got": str(sig_s)})
     return out
 
-
 def hints_for_kind(kind, sig_a, raw_a=None):
-    """실제 차이 난 속성에서 파생한 조작 경로 힌트."""
     if kind == "alignment" and isinstance(sig_a, tuple):
         h = sig_a[0]
         if h == "distributed":
@@ -2460,16 +1862,14 @@ def hints_for_kind(kind, sig_a, raw_a=None):
         return ["문제 지시 값을 정확히 입력했는지 확인"]
     return []
 
-
 def compress_coords(coords):
-    """['C5','C6',...,'C11','H6'] -> ['C5:C11', 'H6'] 범위 표기."""
     from openpyxl.utils import get_column_letter
     from openpyxl.utils.cell import coordinate_to_tuple
     pts = set()
     for co in coords:
         try:
             if ":" in str(co):
-                pts.add(str(co))  # 이미 범위 표기
+                pts.add(str(co))
                 continue
             pts.add(coordinate_to_tuple(str(co)))
         except Exception:
@@ -2516,23 +1916,12 @@ def compress_coords(coords):
                 run = [c]
     return sorted(set(out + ranges))
 
-
 def _cluster_units(units, target=None):
-    """서식 diff 단위를 '지시 단위' 공간 클러스터로 묶는다.
-
-    병합 조건: 두 클러스터에 (행 간격 <= 1 그리고 맨해튼 거리 <= 2)인
-    셀 쌍이 존재할 때만. 행 간격이 2행 이상 떨어진 영역(예: 2행 제목과
-    4~11행 표)은 서로 다른 지시로 보고 절대 병합하지 않는다.
-
-    target은 더 이상 강제 상한이 아니다(무리하게 합쳐 지시를 뒤섞지
-    않음) — 클러스터가 target을 넘으면 호출부가 배점을 비례 분할한다.
-    """
     if not units:
         return []
     clusters = [[u] for u in units]
 
     def near(c1, c2):
-        """행 간격 1 이내이면서 맨해튼 거리 2 이내인 셀 쌍이 있는가."""
         for a in c1:
             for b in c2:
                 dr = abs(a["pos"][0] - b["pos"][0])
@@ -2557,9 +1946,7 @@ def _cluster_units(units, target=None):
     clusters.sort(key=lambda cl: (cl[0]["pos"][0], cl[0]["pos"][1]))
     return clusters
 
-
 def norm_ref(ref):
-    """참조 문자열 정규화: $, 공백, 따옴표, '정답' 제거, 대문자화."""
     if ref is None:
         return None
     s = str(ref).upper().replace("$", "").replace("'", "")
@@ -2567,21 +1954,13 @@ def norm_ref(ref):
     s = s.replace("정답!", "!").replace("정답".upper() + "!", "!")
     return s
 
-
 def norm_range_only(ref):
-    """참조에서 시트명을 떼고 범위만 (예: '차트작업 정답'!$C$4:$E$4 -> C4:E4)."""
     if ref is None:
         return None
     s = str(ref)
     if "!" in s:
         s = s.rsplit("!", 1)[1]
     return s.upper().replace("$", "").replace("'", "").strip()
-
-
-# ---------------------------------------------------------------------------
-# 조건부 서식
-# ---------------------------------------------------------------------------
-
 
 _CF_REF_RE = re.compile(
     r"(?<![A-Za-z0-9_.\$])(\$?)([A-Za-z]{1,3})(\$?)(\d{1,7})(?![A-Za-z0-9_(])")
@@ -2597,7 +1976,6 @@ CF_TYPE_KO = {
     "containsErrors": "오류", "timePeriod": "발생 날짜",
 }
 
-# 셀 값 기준(cellIs) 규칙의 비교 연산자: (기호, 한국어)
 CF_OP_KO = {
     "lessThan": ("<", "미만"), "lessThanOrEqual": ("<=", "이하"),
     "equal": ("=", "같음"), "notEqual": ("<>", "같지 않음"),
@@ -2605,15 +1983,11 @@ CF_OP_KO = {
     "between": ("between", "사이"), "notBetween": ("notBetween", "사이 아님"),
 }
 
-
 def _cf_op_text(op):
-    """연산자 -> '>= (이상)' 표기."""
     sym, ko = CF_OP_KO.get(op or "", (op or "?", ""))
     return f"{sym} ({ko})" if ko else str(sym)
 
-
 def _cf_cond_text(rule):
-    """규칙의 조건 표기: 수식형은 '=수식', 셀 값 기준은 '셀 값 >= 0.7'."""
     fs = rule.get("formulas") or []
     if rule.get("type") == "cellIs":
         op = rule.get("operator")
@@ -2625,7 +1999,6 @@ def _cf_cond_text(rule):
         return "=" + fs[0]
     return f"({CF_TYPE_KO.get(rule.get('type'), rule.get('type'))})"
 
-
 CF_ROW_PRINCIPLE = (
     "'행 전체'에 서식을 적용하려면 ① 적용 범위는 표 전체(예: A4:H18)를 선택한 "
     "뒤 규칙을 만들고 ② 수식은 열만 고정한 혼합참조(예: =LEFT($A4,4)=\"2019\")"
@@ -2633,14 +2006,7 @@ CF_ROW_PRINCIPLE = (
     "색이 됩니다. A열만 선택하거나(범위 오답) 상대참조 A4를 쓰면(참조 오답) "
     "실제 시험에서는 오답입니다.")
 
-
 def cf_row_principle(rule, ws_a=None):
-    """'행 전체' 조건부 서식 원칙을 이 문제의 실제 범위·기준 열로 설명.
-
-    정답 규칙의 혼합참조($F3 같은 '열만 고정')를 찾아, 적용 범위의 열 구간과
-    기준 열(머리글 이름까지 있으면 함께)로 문장을 만든다. 찾지 못하면 일반
-    문구(CF_ROW_PRINCIPLE)로 돌아간다.
-    """
     try:
         from openpyxl.utils import column_index_from_string, \
             get_column_letter, range_boundaries
@@ -2678,13 +2044,7 @@ def cf_row_principle(rule, ws_a=None):
     except Exception:
         return CF_ROW_PRINCIPLE
 
-
 def shift_formula(formula, dr, dc):
-    """수식의 상대 참조를 (dr행, dc열)만큼 이동 — $ 고정 부분은 유지.
-
-    조건부 서식 규칙이 적용 범위의 각 셀에서 실제로 검사하는 수식을 얻기 위함.
-    (Excel은 규칙 수식을 적용 범위의 왼쪽 위 셀 기준 상대 위치로 해석)
-    """
     if not formula or (dr == 0 and dc == 0):
         return formula
     from openpyxl.utils import column_index_from_string, get_column_letter
@@ -2712,9 +2072,7 @@ def shift_formula(formula, dr, dc):
         out.append(_CF_REF_RE.sub(_rep, p))
     return "".join(out)
 
-
 def _dxf_sig(dxf, wb=None):
-    """조건부 서식의 적용 서식(dxf) 요약 {'글꼴 색': 색키, '굵게': True, ...}."""
     sig = {}
     if dxf is None:
         return sig
@@ -2739,7 +2097,6 @@ def _dxf_sig(dxf, wb=None):
     try:
         fl = dxf.fill
         if fl is not None:
-            # dxf 단색 채우기는 Excel이 bgColor에 저장 (일반 셀과 반대)
             col = _color_key(getattr(fl, "bgColor", None), wb) or \
                 _color_key(getattr(fl, "fgColor", None), wb)
             if col:
@@ -2748,7 +2105,6 @@ def _dxf_sig(dxf, wb=None):
         return Unknown(f"조건부 서식의 채우기를 읽지 못했습니다"
                        f"({type(e).__name__})")
     return sig
-
 
 def _dxf_desc(sig):
     if not sig:
@@ -2765,21 +2121,13 @@ def _dxf_desc(sig):
             parts.append(f"{k} {v}")
     return ", ".join(parts)
 
-
 def _dxf_compatible(exp, got):
-    """정답 dxf가 지정한 속성은 학생 dxf에도 같은 값으로 있어야 함."""
     for k, v in (exp or {}).items():
         if (got or {}).get(k) != v:
             return False
     return True
 
-
 def cf_rules_detail(ws, wb=None):
-    """시트의 조건부 서식 규칙 목록 (범위·유형·수식·서식·비교 키).
-
-    규칙을 읽다가 실패하면 부분 목록이 아니라 Unknown — 절반만 읽은 목록을
-    돌리면 못 읽은 규칙이 '학생이 안 만든 규칙'으로 둔갑해 감점된다.
-    """
     rules = []
     try:
         for cf in ws.conditional_formatting:
@@ -2807,9 +2155,7 @@ def cf_rules_detail(ws, wb=None):
                        f"({type(e).__name__})")
     return rules
 
-
 def _cf_rule_cells(rule, limit=20000):
-    """규칙 적용 셀 목록 -> (앵커(r,c), [(r,c)...], 상한 초과 여부)."""
     from openpyxl.utils import range_boundaries
     cells = []
     anchor = None
@@ -2819,7 +2165,7 @@ def _cf_rule_cells(rule, limit=20000):
         except Exception:
             continue
         if None in (c1, r1, c2, r2):
-            return anchor, cells, True   # 열/행 전체 참조: 폴백
+            return anchor, cells, True
         if anchor is None:
             anchor = (r1, c1)
         for r in range(r1, r2 + 1):
@@ -2829,16 +2175,12 @@ def _cf_rule_cells(rule, limit=20000):
                     return anchor, cells, True
     return anchor, cells, False
 
-
 def _cf_effective(rule, r, c, anchor):
-    """규칙이 (r,c)에서 실제로 검사하는 정규화 수식 튜플."""
     ar, ac = anchor
     return tuple(sorted(norm_formula("=" + shift_formula(f, r - ar, c - ac))
                         for f in rule["formulas"]))
 
-
 def cf_effective_map(rules):
-    """{(r,c): [(유형, 연산자, 실효수식, dxf, 규칙 idx), ...]}, 폴백 필요 여부."""
     m = {}
     overflow = False
     for idx, rule in enumerate(rules):
@@ -2852,13 +2194,7 @@ def cf_effective_map(rules):
                  _cf_effective(rule, r, c, anchor), rule["dxf"], idx))
     return m, overflow
 
-
 def cf_compare_rule(rule, rules_s, map_s):
-    """정답 규칙 1개를 학생 규칙들과 셀 단위로 대조.
-
-    반환 dict: ok, missing(규칙 없는 셀), type_bad, formula_bad, dxf_bad,
-    fallback(셀 전개 불가로 집합 비교한 경우).
-    """
     out = {"ok": False, "missing": [], "type_bad": [], "operator_bad": [],
            "formula_bad": [], "dxf_bad": [], "fallback": False}
     anchor, cells, over = _cf_rule_cells(rule)
@@ -2879,7 +2215,6 @@ def cf_compare_rule(rule, rules_s, map_s):
         same_type = [e for e in same_kind
                      if (e[1] or None) == (rule["operator"] or None)]
         if not same_type:
-            # 유형·수식(경계값)은 같은데 비교 연산자만 다름 (예: >= 대신 >)
             same_f_other_op = [e for e in same_kind if e[2] == eff]
             if same_f_other_op:
                 out["operator_bad"].append((r, c))
@@ -2899,13 +2234,10 @@ def cf_compare_rule(rule, rules_s, map_s):
                      or out["formula_bad"] or out["dxf_bad"])
     return out
 
-
 def _cf_rule_text(rule):
     return f"{rule['sqref']}: {_cf_cond_text(rule)} · {_dxf_desc(rule['dxf'])}"
 
-
 def cf_rule_set(ws):
-    """시트의 조건부 서식 규칙을 정규화된 튜플 집합으로."""
     rules = set()
     try:
         for cf in ws.conditional_formatting:
@@ -2922,20 +2254,12 @@ def cf_rule_set(ws):
         pass
     return rules
 
-
-# ---------------------------------------------------------------------------
-# diff 추출
-# ---------------------------------------------------------------------------
-
-
 def scan_bounds(*sheets):
     mr = max([s.max_row or 1 for s in sheets] + [1])
     mc = max([s.max_column or 1 for s in sheets] + [1])
     return min(mr, MAX_SCAN_ROWS), min(mc, MAX_SCAN_COLS)
 
-
 def cell_differs(raw_p, raw_a):
-    """문제/정답 셀 raw 값이 채점 대상이 될 만큼 다른가."""
     fp, fa = formula_text(raw_p), formula_text(raw_a)
     if fp is not None or fa is not None:
         if (fp is None) != (fa is None):
@@ -2943,9 +2267,7 @@ def cell_differs(raw_p, raw_a):
         return norm_formula(fp) != norm_formula(fa)
     return not value_eq(raw_p, raw_a)
 
-
 def value_diff_cells(shp, sha):
-    """문제↔정답 값/수식 diff 셀 좌표 목록 [(row, col, coord)]."""
     mr, mc = scan_bounds(shp, sha)
     out = []
     for r in range(1, mr + 1):
@@ -2954,49 +2276,24 @@ def value_diff_cells(shp, sha):
                 out.append((r, c, sha.cell(r, c).coordinate))
     return out
 
-
 def _blank_answer_cell(sha, r, c):
-    """정답 셀에 표시할 값이 없는가 (None 또는 공백 문자열)."""
     try:
         v = sha.cell(r, c).value
     except Exception:
         return False
     return v is None or (isinstance(v, str) and v.strip() == "")
 
-
-# 정답 셀이 비어 있으면 채점에서 제외하는 서식 종류.
-# 값이 없는 셀의 글꼴·표시 형식은 화면에 아무 영향이 없다 — 예:
-# 'B2 제목에 굴림체' 지시를 정답 제작자가 B2:H2 전체에 걸어도
-# centerContinuous 표시 텍스트는 앵커(B2) 글꼴로 렌더되므로 C2:H2의
-# 글꼴 불일치는 오탐. 반면 채우기·테두리·맞춤(centerContinuous 참여)·
-# 병합은 빈 셀이어도 화면에 보이므로 채점을 유지한다.
 BLANK_SKIP_KINDS = ("font", "number_format")
 
-
 def _blank_align_sig(sig):
-    """값이 빈 셀의 맞춤 시그니처를 '화면에 보이는 부분'만 남긴다.
-
-    빈 셀은 세로 맞춤·줄 바꿈·회전·가운데/왼쪽 맞춤이 모두 화면에 영향이
-    없다. 유일한 예외는 '선택 영역의 가운데로'(centerContinuous) — 이웃
-    셀의 텍스트가 이 셀까지 걸쳐 표시되므로 유지한다.
-    """
     if isinstance(sig, tuple) and sig and sig[0] == "centerContinuous":
         return ("centerContinuous",)
     return None
 
-
 def format_diff_items(book_p, book_a, psheet, asheet):
-    """문제↔정답 서식 diff를 종류별 항목으로. {kind: [셀좌표...] 또는 데이터}
-
-    정답 파일에서 값이 비어 있는 셀은 글꼴·표시 형식 diff에서 제외
-    (BLANK_SKIP_KINDS) — 화면 영향이 없는 차이는 채점 대상이 아니다.
-    """
     shp, sha = book_p.raw[psheet], book_a.raw[asheet]
     mr, mc = scan_bounds(shp, sha)
     items = {}
-    # 채점 대상(지시)을 뽑는 단계에서 읽기에 실패하면, 그 실패가 그대로
-    # '지시가 하나 더 있다'(허위 감점) 또는 '지시가 없다'(미탐)로 굳는다.
-    # 실패 사유를 items["_unknown"] 에 모아 채점부가 보류로 올리게 한다.
     unknown = []
     p_members, p_anchors = merge_maps(shp)
     a_members, a_anchors = merge_maps(sha)
@@ -3004,7 +2301,6 @@ def format_diff_items(book_p, book_a, psheet, asheet):
         unknown.append((psheet, "merge", hold_reason(p_members, a_members)))
     for r in range(1, mr + 1):
         for c in range(1, mc + 1):
-            # 병합 하위(비앵커) 셀은 앵커가 대표하므로 개별 비교하지 않음
             if (r, c) in a_members or (r, c) in p_members:
                 continue
             blank_a = _blank_answer_cell(sha, r, c)
@@ -3014,7 +2310,6 @@ def format_diff_items(book_p, book_a, psheet, asheet):
                 sp = fmt_signature_m(shp, r, c, kind, p_members, p_anchors)
                 sa = fmt_signature_m(sha, r, c, kind, a_members, a_anchors)
                 if blank_a and kind == "alignment":
-                    # 빈 셀의 맞춤은 보이는 부분(centerContinuous)만 비교
                     sp, sa = _blank_align_sig(sp), _blank_align_sig(sa)
                 if any_unknown(sp, sa):
                     unknown.append((sha.cell(r, c).coordinate, kind,
@@ -3023,7 +2318,6 @@ def format_diff_items(book_p, book_a, psheet, asheet):
                 if sp != sa:
                     items.setdefault(kind, []).append(
                         sha.cell(r, c).coordinate)
-    # 테두리: edge(격자 선) 단위 diff — 인접 셀에 분산 저장돼도 같은 선
     from openpyxl.utils import get_column_letter
     p_edges = sheet_edge_map(shp, mr, mc)
     a_edges = sheet_edge_map(sha, mr, mc)
@@ -3045,14 +2339,12 @@ def format_diff_items(book_p, book_a, psheet, asheet):
     if border_edges:
         items["border"] = sorted(border_edges)
         items["border_edges"] = border_edges
-    # 병합
     merges_p = {str(x).upper() for x in shp.merged_cells.ranges}
     merges_a = {str(x).upper() for x in sha.merged_cells.ranges}
     if merges_a - merges_p:
-        items["merge"] = sorted(merges_a - merges_p)      # 병합 지시
+        items["merge"] = sorted(merges_a - merges_p)
     if merges_p - merges_a:
-        items["merge_del"] = sorted(merges_p - merges_a)  # 병합 해제 지시
-    # 행 높이 / 열 너비 (±0.5)
+        items["merge_del"] = sorted(merges_p - merges_a)
     rows = set(shp.row_dimensions) | set(sha.row_dimensions)
     rh = []
     for r in sorted(rows):
@@ -3067,12 +2359,10 @@ def format_diff_items(book_p, book_a, psheet, asheet):
     for cl in sorted(cols):
         wp = shp.column_dimensions[cl].width if cl in shp.column_dimensions else None
         wa = sha.column_dimensions[cl].width if cl in sha.column_dimensions else None
-        # 문자 수로 환산해 비교 (저장값 12 와 Excel 저장값 12.625 는 같은 12자)
         if not col_width_same(wp, wa):
             cw.append((cl, wa))
     if cw:
         items["colwidth"] = cw
-    # 정의된 이름 (이 시트를 가리키는 것)
     names = defined_names_for_sheet(book_a, asheet)
     names_p = defined_names_for_sheet(book_p, psheet)
     if any_unknown(names, names_p):
@@ -3085,14 +2375,12 @@ def format_diff_items(book_p, book_a, psheet, asheet):
         items["_unknown"] = unknown
     return items
 
-
 def _size_differs(a, b):
     if a is None and b is None:
         return False
     if a is None or b is None:
         return True
     return abs(a - b) > 0.5
-
 
 def _size_matches(a, b):
     if a is None and b is None:
@@ -3101,49 +2389,28 @@ def _size_matches(a, b):
         return False
     return abs(a - b) <= 0.5
 
-
-# ---------------------------------------------------------------------------
-# 열 너비 정규화 — 저장값 <-> [열 너비] 대화상자 문자 수
-#
-# Excel은 대화상자에 입력한 문자 수를 그대로 저장하지 않는다. 글자 폭(MDW,
-# 숫자 0 한 글자의 픽셀 너비)에 좌우 여백 5픽셀을 더해 저장한다:
-#     저장값 = trunc((문자수 * MDW + 5) / MDW * 256) / 256
-# 맑은 고딕 11pt(한글 Excel 기본)는 MDW = 8px -> '12' 입력 시 12.625 저장,
-# Calibri 11pt(영문 기본)는 MDW = 7px -> '12' 입력 시 12.7109375 저장.
-# 반면 openpyxl 등으로 만든 파일은 문자 수를 그대로(12) 저장한다.
-# 그래서 두 값을 견주기 전에 '문자 수'로 되돌려 맞춘다.
-# ---------------------------------------------------------------------------
-
-COL_WIDTH_MDW = (8, 7)      # 시도할 글자 폭(픽셀) 후보
-COL_WIDTH_PAD = 5           # 셀 좌우 여백(픽셀)
-COL_WIDTH_TOL = 0.5         # 문자 수 기준 허용 오차 (기존 ±0.5와 같은 관대함)
-ROW_HEIGHT_TOL = 0.75       # 행 높이는 포인트 그대로 저장 — 1픽셀(0.75pt)만 허용
-
+COL_WIDTH_MDW = (8, 7)
+COL_WIDTH_PAD = 5
+COL_WIDTH_TOL = 0.5
+ROW_HEIGHT_TOL = 0.75
 
 def col_width_stored(chars, mdw=8):
-    """문자 수 -> Excel이 실제로 저장하는 열 너비 값."""
     return math.trunc((float(chars) * mdw + COL_WIDTH_PAD) / mdw * 256) / 256
 
-
 def col_width_candidates(w):
-    """저장값 -> 대화상자 문자 수 후보 [그대로, MDW별 여백 제거]."""
     if w is None:
         return []
     w = float(w)
     return [round(w, 2)] + [round(w - float(COL_WIDTH_PAD) / m, 2)
                             for m in COL_WIDTH_MDW]
 
-
 def _col_width_rank(c):
-    """대화상자에 입력할 법한 값일수록 작은 순위 (0=정수 … 4=그 밖)."""
     for i, q in enumerate((1.0, 0.5, 0.25, 0.1)):
         if abs(c / q - round(c / q)) < 1e-6:
             return i
     return 4
 
-
 def col_width_chars(w, want=None):
-    """저장된 열 너비 -> 대화상자에 입력했을 문자 수(가장 그럴듯한 해석)."""
     cands = col_width_candidates(w)
     if not cands:
         return None
@@ -3152,17 +2419,13 @@ def col_width_chars(w, want=None):
     return min(cands, key=lambda c: (_col_width_rank(c),
                                      abs(c - float(want))))
 
-
 def col_width_is(stored, want_chars, tol=COL_WIDTH_TOL):
-    """저장된 열 너비가 '대화상자에 want_chars를 입력한 상태'인가."""
     if stored is None or want_chars is None:
         return stored is None and want_chars is None
     return any(abs(c - float(want_chars)) <= tol
                for c in col_width_candidates(stored))
 
-
 def col_width_same(a, b, tol=COL_WIDTH_TOL):
-    """저장된 열 너비 두 개가 같은 문자 수를 뜻하는가."""
     if a is None and b is None:
         return True
     if a is None or b is None:
@@ -3170,9 +2433,7 @@ def col_width_same(a, b, tol=COL_WIDTH_TOL):
     ca, cb = col_width_candidates(a), col_width_candidates(b)
     return any(abs(x - y) <= tol for x in ca for y in cb)
 
-
 def col_width_text(w, want=None):
-    """리포트 표기: 12 -> '12자', 12.625 -> '12자(저장값 12.625)'."""
     if w is None:
         return "지정 안 함(기본 너비)"
     ch = col_width_chars(w, want)
@@ -3182,16 +2443,12 @@ def col_width_text(w, want=None):
         return f"{ch:g}자"
     return f"{ch:g}자(저장값 {float(w):g})"
 
-
 def row_height_text(h):
-    """행 높이 표기 — 포인트 단위라 저장값이 곧 입력값이다."""
     if h is None:
         return "지정 안 함(기본 높이)"
     return f"{float(h):g}"
 
-
 def _book_defined_name(book, name):
-    """통합 문서 스코프 이름의 정규화 참조 (시트 무관). 없으면 None."""
     try:
         for nm, dn in book.raw.defined_names.items():
             if str(nm) == str(name):
@@ -3200,9 +2457,7 @@ def _book_defined_name(book, name):
         pass
     return None
 
-
 def _ref_areas(ref):
-    """정규화 참조 '기본작업-2!A4:A10,기본작업-2!C4:C10' -> ['A4:A10', 'C4:C10']."""
     if not ref:
         return []
     out = []
@@ -3213,23 +2468,12 @@ def _ref_areas(ref):
         out.append(part.rsplit("!", 1)[-1])
     return out
 
-
-# Excel 이 스스로 만드는 예약·숨김 이름 — 사용자가 정의한 이름이 아니다.
-# 자동 필터를 걸면 _xlnm._FilterDatabase 가, 최신 함수를 쓰면 _xleta.* 가
-# 생긴다. 정답 파일(openpyxl 산)에는 없고 실제 Excel 로 푼 학생 파일에만
-# 생기므로, 거르지 않으면 '정의된 이름이 다르다'는 허위 감점이 된다.
 _RESERVED_NAME_RE = re.compile(r"^_xl(?:nm|eta|udf|fn)?[._]", re.I)
-
 
 def _is_reserved_name(name):
     return bool(_RESERVED_NAME_RE.match(str(name or "")))
 
-
 def defined_names_for_sheet(book, sheet_name):
-    """이 시트를 참조 대상에 포함하는 정의된 이름 {이름: 정규화참조}.
-
-    통합 문서 스코프와 시트 스코프(ws.defined_names) 모두 조회.
-    """
     out = {}
     key = norm_sheet_name(sheet_name)
     try:
@@ -3242,7 +2486,7 @@ def defined_names_for_sheet(book, sheet_name):
     except Exception as e:
         return Unknown(f"{book.label} 파일의 통합 문서 이름 정의를 읽지 "
                        f"못했습니다({type(e).__name__})")
-    try:  # 시트 스코프 이름 (학생이 시트 범위로 정의해도 인정)
+    try:
         ws = book.raw[sheet_name]
         for name, dn in getattr(ws, "defined_names", {}).items():
             if _is_reserved_name(name):
@@ -3257,17 +2501,7 @@ def defined_names_for_sheet(book, sheet_name):
                        f"읽지 못했습니다({type(e).__name__})")
     return out
 
-
-# ---------------------------------------------------------------------------
-# 셀 채점
-# ---------------------------------------------------------------------------
-
-
 class CellJudge:
-    """기대값/기대수식 대비 학생 셀 판정.
-
-    key_cells: {좌표: {"value": 기대값 or None, "formula": 기대수식 or None}}
-    """
 
     def __init__(self, book_a, book_s, asheet, ssheet, key_cells,
                  display_tolerant=False):
@@ -3276,21 +2510,18 @@ class CellJudge:
         self.shs_raw = book_s.raw[ssheet] if ssheet else None
         self.shs_val = book_s.cached[ssheet] if ssheet else None
         self.key_cells = key_cells or {}
-        self.formula_only_used = False  # 캐시값 없어 수식 판정한 적 있음
-        # 재계산(LibreOffice) 경로
+        self.formula_only_used = False
         self.book_a, self.book_s = book_a, book_s
         self.asheet, self.ssheet = asheet, ssheet
-        self.recalc_cells = []      # 재계산 값으로 비교한 셀 좌표
-        self.recalc_failed = False  # 재계산이 필요했는데 못 한 적이 있음
-        self.recalc_vals_s = {}     # (행, 열) -> 학생 재계산 값
-        self.recalc_vals_a = {}     # (행, 열) -> 정답 재계산 값
-        self.ref_mismatch = []      # 결과는 같으나 참조가 다른 셀 [(좌표, ef, sf)]
-        # 자료 입력(기본작업-1): 정답 셀 표시 형식으로 같은 숫자면 정답
+        self.recalc_cells = []
+        self.recalc_failed = False
+        self.recalc_vals_s = {}
+        self.recalc_vals_a = {}
+        self.ref_mismatch = []
         self.display_tolerant = display_tolerant
-        self.display_matched = []       # 표시 형식 기준으로 정답 처리한 셀
+        self.display_matched = []
 
     def expected(self, r, c):
-        """(기대값 or __MISSING__, 기대수식) 반환."""
         coord = self.sha_raw.cell(r, c).coordinate
         raw = self.sha_raw.cell(r, c).value
         f = formula_text(raw)
@@ -3308,7 +2539,6 @@ class CellJudge:
         return raw, None
 
     def student(self, r, c):
-        """(학생값 or __MISSING__, 학생수식)"""
         if self.shs_raw is None:
             return "__MISSING__", None
         raw = self.shs_raw.cell(r, c).value
@@ -3321,12 +2551,6 @@ class CellJudge:
         return raw, None
 
     def _recalc(self, r, c, ef, sf):
-        """계산값이 없어 값 비교가 막혔을 때 LibreOffice 재계산으로 값을 채운다.
-
-        학생 파일에 '수식은 있는데 계산값이 없는' 셀이 있을 때만 시도한다
-        (그 외에는 변환 비용을 쓰지 않는다). 정답 파일도 같은 이유로 값이
-        없으면 함께 재계산한다. 실패하면 아무 것도 바꾸지 않는다.
-        """
         got_v = exp_v = "__MISSING__"
         if self.ssheet and sf:
             got_v = self.book_s.recalc_value(self.ssheet, r, c)
@@ -3341,12 +2565,10 @@ class CellJudge:
         return exp_v, got_v
 
     def judge(self, r, c):
-        """(정답 여부, 기대값, 학생값, 기대수식) 반환."""
         exp, ef = self.expected(r, c)
         got, sf = self.student(r, c)
         if self.shs_raw is None:
             return False, exp, None, ef
-        # 0) 학생 계산값이 없어 값 비교가 막히면 재계산으로 값 비교를 복구
         used_recalc = False
         if got == "__MISSING__" and sf:
             exp_v, got_v = self._recalc(r, c, ef, sf)
@@ -3358,17 +2580,13 @@ class CellJudge:
                 coord = self.sha_raw.cell(r, c).coordinate
                 if coord not in self.recalc_cells:
                     self.recalc_cells.append(coord)
-        # 1) 값 판정
         if exp != "__MISSING__" and got != "__MISSING__":
             ok = value_eq(exp, got)
             if not ok and ef and sf and norm_formula(ef) == norm_formula(sf):
-                # 수식이 정확히 같은데 캐시값만 다른 경우(재계산 안 됨) 관대 처리
                 ok = True
             if ok and used_recalc and ef and sf \
                     and norm_formula(ef) != norm_formula(sf) \
                     and not same_ref_usage(ef, sf):
-                # 재계산 결과가 같아도 '참조하는 셀'이 정답과 다르면 이 자료에서만
-                # 우연히 겹친 것일 수 있다 -> 수식 기준(오답)을 유지하고 근거를 남긴다
                 ok = False
                 coord = self.sha_raw.cell(r, c).coordinate
                 if not any(m[0] == coord for m in self.ref_mismatch):
@@ -3384,25 +2602,16 @@ class CellJudge:
                     if coord not in self.display_matched:
                         self.display_matched.append(coord)
             return ok, exp, got, ef
-        # 2) 값 판정 불가 -> 수식 판정
         if ef is not None or sf is not None:
             self.formula_only_used = True
             ok = ef is not None and sf is not None and \
                 norm_formula(ef) == norm_formula(sf)
             return ok, exp if exp != "__MISSING__" else None, sf or got, ef
-        # 3) 둘 다 수식 없음
         e = None if exp == "__MISSING__" else exp
         g = None if got == "__MISSING__" else got
         return value_eq(e, g), e, g, ef
 
-
-# ---------------------------------------------------------------------------
-# --key JSON 정규화
-# ---------------------------------------------------------------------------
-
-
 def expand_ref(ref):
-    """'D3' 또는 'D3:D12' 참조를 (row, col) 목록으로 확장."""
     from openpyxl.utils.cell import coordinate_to_tuple, range_boundaries
     ref = str(ref).replace("$", "").replace(" ", "").upper()
     if ":" in ref:
@@ -3412,31 +2621,21 @@ def expand_ref(ref):
     r, c = coordinate_to_tuple(ref)
     return [(r, c)]
 
-
 def _unwrap_cell_override(v):
-    """key cells 항목을 {"value":..., "formula":...} 형태로 통일."""
     if isinstance(v, dict) and ("value" in v or "formula" in v):
         return {"value": v.get("value"), "formula": v.get("formula")}
     return {"value": v, "formula": None}
 
-
 def normalize_key(key):
-    """--key JSON을 내부 표준 형태로 정규화.
-
-    cells는 두 가지 형태를 모두 지원:
-      중첩형: {"시트명": {"A1": 값 또는 {"value":..,"formula":..}}}
-      평면형: {"시트명!A1": 값 또는 {"value":..,"formula":..}}
-    groups의 항목은 단일 좌표("D3")와 범위("D3:D12") 모두 허용.
-    """
     out = {"points": {}, "cells": {}, "groups": {}}
     for k, v in (key.get("points") or {}).items():
         out["points"][norm_sheet_name(k)] = v
     for k, v in (key.get("cells") or {}).items():
-        if "!" in str(k):  # 평면형
+        if "!" in str(k):
             sheet, coord = str(k).rsplit("!", 1)
             out["cells"].setdefault(norm_sheet_name(sheet), {})[
                 coord.replace("$", "").strip().upper()] = _unwrap_cell_override(v)
-        elif isinstance(v, dict):  # 중첩형
+        elif isinstance(v, dict):
             tgt = out["cells"].setdefault(norm_sheet_name(k), {})
             for coord, cv in v.items():
                 tgt[str(coord).replace("$", "").strip().upper()] = \
@@ -3447,9 +2646,6 @@ def normalize_key(key):
     for k, v in (key.get("format_checks") or {}).items():
         if isinstance(v, list):
             out["format_checks"][norm_sheet_name(k)] = v
-    # exclude: 시트별 채점 제외 목록 (정답 파일 잔여 서식 등, 문제지에 없는 차이)
-    #   {"기본작업-2": [{"range": "F2", "kinds": ["alignment"], "why": "..."}]}
-    #   kinds 생략 = 서식 전부(값 제외). "F2" 문자열만 적어도 됨.
     out["exclude"] = {}
     for k, v in (key.get("exclude") or {}).items():
         items = []
@@ -3466,14 +2662,11 @@ def normalize_key(key):
                           "why": it.get("why")})
         if items:
             out["exclude"][norm_sheet_name(k)] = items
-    # chart: 차트 지시 명시 — {"차트작업": {"axes": [{"axis": "secondary",
-    #   "max": 12000, "major_unit": 1500}]}} (나열한 축 속성만 채점)
     out["chart"] = {}
     for k, v in (key.get("chart") or {}).items():
         if isinstance(v, dict):
             out["chart"][norm_sheet_name(k)] = v
     return out
-
 
 EXCLUDE_FMT_KINDS = ("number_format", "font", "fill", "alignment", "border",
                      "merge", "rowheight", "colwidth")
@@ -3481,20 +2674,13 @@ EXCLUDE_KIND_KO = {"number_format": "표시 형식", "font": "글꼴", "fill": "
                    "alignment": "맞춤", "border": "테두리", "merge": "병합",
                    "rowheight": "행 높이", "colwidth": "열 너비", "value": "값"}
 
-
 def apply_key_exclusions(vdiffs, fdiffs, items, label="세트 기대값에 따라 채점 제외"):
-    """--key exclude 항목을 diff에서 제거. 반환: (vdiffs, fdiffs, 안내문 목록).
-
-    문제지에 지시가 없는데 정답 파일에만 남은 서식(제작자의 잔여 서식)을
-    세트 기대값으로 채점에서 빼는 용도. 값(value)은 kinds에 명시할 때만 제외.
-    """
     from openpyxl.utils import get_column_letter
     notes = []
     for it in items or []:
         try:
             cells = set(expand_ref(it["range"]))
         except Exception as e:
-            # 조용히 넘기면 '채점에서 빼라'는 지시가 사라져 그대로 감점된다
             notes.append(f"채점 제외 범위 '{it.get('range')}'를 해석하지 "
                          f"못해 적용하지 못했습니다({type(e).__name__}) — "
                          "이 범위는 그대로 채점됩니다. 기대값 파일을 "
@@ -3556,17 +2742,11 @@ def apply_key_exclusions(vdiffs, fdiffs, items, label="세트 기대값에 따�
             notes.append(f"{label}: {it['range']} {kinds_ko}{why}")
     return vdiffs, fdiffs, notes
 
-
 AUTHOR_MEMO_MAX_LEN = 40
-# 'E4:E13' 처럼 콜론이 들어간 범위 참조 — 수식 조각의 문법이지 표에 적는
-# 자료의 모양이 아니다. 'A1' 하나만으로는 흔한 글자와 구분이 안 되므로
-# (예: 과목코드 'KJ230'은 아니지만 'B4' 같은 값은 자료일 수 있다) 범위만 본다.
 _MEMO_RANGE_RE = re.compile(r"\$?([A-Z]{1,3})\$?([0-9]{1,7})"
                             r":\$?([A-Z]{1,3})\$?([0-9]{1,7})")
 
-
 def _memo_range_on_sheet(sha, text):
-    """text 안의 범위 참조가 이 시트의 사용 범위 안을 가리키면 그 문자열."""
     from openpyxl.utils import column_index_from_string
     try:
         mr, mc = sha.max_row, sha.max_column
@@ -3584,22 +2764,7 @@ def _memo_range_on_sheet(sha, text):
             return m.group(0)
     return None
 
-
 def detect_author_memo_cells(shp, sha, vdiffs):
-    """정답 파일에만 남은 '제작 메모' 셀 목록 -> exclude 항목 리스트.
-
-    문제 제작자가 정답 파일에 적어 둔 작업 메모(예: [E2]의 '區分+E4:E13')는
-    문제지 어디에도 없어 학생이 입력할 근거가 없는데, 문제↔정답 diff에는
-    '셀 값 지시'로 잡혀 오답이 된다. 세트 전용 하드코딩 대신 다음을 모두
-    만족하는 셀만 제작 메모로 보고 채점에서 뺀다:
-
-      (1) 문제 파일은 비어 있고 정답 파일에만 값이 있다
-      (2) 값이 수식이 아닌 짧은 문자열(AUTHOR_MEMO_MAX_LEN 이하)이다
-      (3) 값 안에 이 시트 안을 가리키는 범위 참조(E4:E13)가 들어 있다
-
-    (3)이 핵심이다 — 콜론이 들어간 범위 참조는 수식 조각의 문법이라
-    '수업요일'·'04.05 ~ 06.16' 같은 실제 자료와는 섞이지 않는다.
-    """
     out = []
     for (r, c, coord) in list(vdiffs):
         try:
@@ -3626,14 +2791,7 @@ def detect_author_memo_cells(shp, sha, vdiffs):
                            "없습니다)"})
     return out
 
-
-# ---------------------------------------------------------------------------
-# 계산작업 그룹핑
-# ---------------------------------------------------------------------------
-
-
 def cluster_cells(cells, target):
-    """diff 셀을 인접(체비쇼프 거리 1) 기준으로 묶고, target 개수로 병합."""
     if not cells:
         return []
     clusters = [[cell] for cell in cells]
@@ -3643,7 +2801,6 @@ def cluster_cells(cells, target):
             max(abs(a[0] - b[0]), abs(a[1] - b[1])) for a in c1 for b in c2
         )
 
-    # 1단계: 인접 셀 병합
     merged = True
     while merged:
         merged = False
@@ -3656,7 +2813,6 @@ def cluster_cells(cells, target):
                     break
             if merged:
                 break
-    # 2단계: target 개수 초과 시 가장 가까운 클러스터 병합
     while len(clusters) > target:
         best = None
         for i in range(len(clusters)):
@@ -3667,20 +2823,12 @@ def cluster_cells(cells, target):
         _, i, j = best
         clusters[i].extend(clusters[j])
         del clusters[j]
-    # 좌표 정렬
     for cl in clusters:
         cl.sort(key=lambda x: (x[0], x[1]))
     clusters.sort(key=lambda cl: (cl[0][0], cl[0][1]))
     return clusters
 
-
-# ---------------------------------------------------------------------------
-# 차트 특성 추출
-# ---------------------------------------------------------------------------
-
-
 def _dlbls_active(dl):
-    """dLbls 요소가 실제로 레이블을 표시하는지 (delete=1, 전부 show=0 대응)."""
     if dl is None:
         return False
     d = dl.find("c:delete", NS)
@@ -3691,9 +2839,7 @@ def _dlbls_active(dl):
         return False
     return True
 
-
 def _cell_value_from_ref(book, ref):
-    """'시트명!$F$1' 참조의 셀 값 문자열 (캐시값 우선). 실패 시 None."""
     try:
         s = str(ref).strip().replace("$", "")
         if "!" not in s:
@@ -3710,14 +2856,7 @@ def _cell_value_from_ref(book, ref):
     except Exception:
         return None
 
-
 def chart_features(book, sheet_name):
-    """시트에 연결된 첫 차트의 특성 dict.
-
-    차트가 정말 없으면 None(사실), 차트 파트는 있는데 XML 을 해석하지
-    못했으면 Unknown(모름). 둘을 같은 None 으로 돌리면 '차트 없음 → 0점'
-    으로 흘러 감점이 된다.
-    """
     parts = book.chart_parts_for_sheet(sheet_name)
     if is_unknown(parts):
         return Unknown(unknown_why(parts))
@@ -3749,7 +2888,6 @@ def chart_features(book, sheet_name):
                     break
             has_dlbls = _dlbls_active(ser.find("c:dLbls", NS))
             series.append((norm_range_only(ref), has_dlbls))
-    # 제목: 직접 입력(a:t), 셀 연동(strRef -> strCache 캐시/참조 셀 값 순)
     title = None
     t = root.find("c:chart/c:title", NS)
     autodel = root.find("c:chart/c:autoTitleDeleted", NS)
@@ -3769,7 +2907,6 @@ def chart_features(book, sheet_name):
     legend = root.find("c:chart/c:legend/c:legendPos", NS)
     legend_pos = legend.get("val") if legend is not None else (
         "r" if root.find("c:chart/c:legend", NS) is not None else None)
-    # 축별로 그려지는 계열 값(캐시 → 없으면 참조 셀) — 자동 최소값 판단용
     ax_values = {}
     for child in plot:
         tag = child.tag.split("}")[1]
@@ -3829,9 +2966,7 @@ def chart_features(book, sheet_name):
         "axes_detail": axes_detail,
     }
 
-
 def _range_values_from_ref(book, ref):
-    """'시트명!$B$5:$F$5' 참조 범위의 숫자 값 목록 (캐시값 우선). 실패 시 []."""
     try:
         s = str(ref).strip().replace("$", "")
         if "!" not in s:
@@ -3852,17 +2987,10 @@ def _range_values_from_ref(book, ref):
     except Exception:
         return []
 
-
 AXIS_ROLE_KO = {"primary": "기본 축", "secondary": "보조 축"}
 AXIS_ATTR_KO = {"max": "최대", "min": "최소", "unit": "주 단위"}
 
-
 def _axes_by_role(feat):
-    """차트 특성 -> {'primary': 축 dict, 'secondary': 축 dict}.
-
-    보조 축은 crosses='max'(반대쪽에서 교차) 또는 오른쪽/위 위치로 판별.
-    같은 역할이 겹치면 문서 순서대로 기본 → 보조.
-    """
     out = {}
     if not feat:
         return out
@@ -3875,16 +3003,13 @@ def _axes_by_role(feat):
         out[role] = ax
     return out
 
-
 def _axis_role_name(v):
     s = str(v or "primary").strip().lower()
     if s in ("secondary", "보조", "보조축", "보조 축", "2", "1"):
         return "secondary"
     return "primary"
 
-
 def _num_txt(v):
-    """축 값 표기: 자동 / 12,000 / 0.5 (4e+07 같은 표기 방지)."""
     if v is None:
         return "자동"
     try:
@@ -3893,10 +3018,7 @@ def _num_txt(v):
     except (TypeError, ValueError):
         return str(v)
 
-
 def _auto_min_zero(values):
-    """Excel 자동 최소값이 0이 되는가: 값이 모두 0 이상이고, 최대-최소 차이가
-    최대의 1/6보다 클 때(값이 좁게 몰리면 0에서 시작하지 않음)."""
     vals = [v for v in values if isinstance(v, (int, float))]
     if not vals:
         return False
@@ -3905,10 +3027,7 @@ def _auto_min_zero(values):
         return False
     return (hi - lo) > hi / 6.0
 
-
 def _axis_attr_ok(attr, want, have, ax_s, lenient_unit=False):
-    """축 속성 1개 판정. 자동(None)도 화면 결과가 같으면 정답:
-    주 단위 — 문제·학생 모두 자동이면 통과(기존), 최소 0 — 자동 최소가 0."""
     if have is not None and want is not None:
         try:
             return abs(float(have) - float(want)) <= 1e-9 * max(1.0, abs(float(want)))
@@ -3922,34 +3041,21 @@ def _axis_attr_ok(attr, want, have, ax_s, lenient_unit=False):
             return True
     return False
 
-
-# ---------------------------------------------------------------------------
-# 시트별 채점
-# ---------------------------------------------------------------------------
-
-
 class SheetResult:
     def __init__(self, name, alloc):
         self.name = name
         self.alloc = alloc
         self.earned = 0
-        self.details = []   # 틀린 항목 설명 목록 (콘솔용 텍스트)
-        self.notes = []     # 안내/경고
+        self.details = []
+        self.notes = []
         self.missing = False
-        self.wrong = []     # 오답노트 카드(구조화) 목록
-        self.diff_total = 0    # 채점 대상(문제↔정답) 값 diff 셀 수
-        self.diff_matched = 0  # 그중 학생 파일이 정답과 일치한 셀 수
-        self.holds = []     # 확인 필요(판정 불가) 항목 [{label, why, points}]
-        self.held = 0.0     # 그 항목들이 차지하던 배점 (분모에서 뺀다)
-
+        self.wrong = []
+        self.diff_total = 0
+        self.diff_matched = 0
+        self.holds = []
+        self.held = 0.0
 
 def add_hold(res, label, why, points, what=None):
-    """확인 필요 1건 — 감점도 가점도 하지 않고 배점에서 뺀다.
-
-    추출에 실패해 판정 근거가 없을 때 쓴다. 이 배점은 만점(분모)에서
-    빠지므로 학생에게 유리하지도 불리하지도 않다 — 리포트에는 무엇을 왜
-    판정하지 못했는지 그대로 적는다.
-    """
     pts = round(max(0.0, float(points or 0)), 2)
     res.holds.append({
         "sheet": res.name, "label": label, "why": str(why),
@@ -3958,38 +3064,28 @@ def add_hold(res, label, why, points, what=None):
     res.held = round(res.held + pts, 2)
     return pts
 
-
 def hold_items(results):
-    """모든 시트의 확인 필요 항목을 한 목록으로."""
     return [h for r in results for h in getattr(r, "holds", [])]
 
-
 def hold_total(results):
-    """확인 필요 항목이 차지하는 배점 합."""
     return round(sum(getattr(r, "held", 0) for r in results), 2)
 
-
 def hold_reason(*vals):
-    """Unknown 들에서 이유를 모아 한 줄로."""
     seen = []
     for v in vals:
         if is_unknown(v) and v.why not in seen:
             seen.append(v.why)
     return " / ".join(seen) or "원인을 특정하지 못했습니다"
 
-
 def _fmt_expected(exp, ef):
-    """기대값 표시 — 캐시 없는 수식 채점이면 '(비어 있음)' 대신 명시."""
     if exp is None and ef:
         return "(수식 기준 채점)"
     return fmt_value(exp)
-
 
 STATE_BLANK = "(빈 셀 — 값·수식 없음)"
 STATE_NOCACHE = "(수식만 있음 · 계산값 없음)"
 STATE_RECALC = "(수식만 있음 · 재계산값 {v})"
 
-# Excel 오류 값 — 리포트에 0이나 빈칸으로 뭉개지 말고 그대로 보여 준다
 EXCEL_ERRORS = {"#NULL!", "#DIV/0!", "#VALUE!", "#REF!", "#NAME?", "#NUM!",
                 "#N/A", "#SPILL!", "#CALC!", "#GETTING_DATA"}
 EXCEL_ERROR_WHY = {
@@ -4007,18 +3103,14 @@ EXCEL_ERROR_WHY = {
               "확인하세요).",
 }
 
-
 def excel_error(v):
-    """셀 값이 Excel 오류 값이면 그 문자열, 아니면 None."""
     if isinstance(v, str):
         s = v.strip().upper()
         if s in EXCEL_ERRORS:
             return s
     return None
 
-
 def excel_error_note(err):
-    """오류 값 한 줄 설명."""
     if not err:
         return None
     why = EXCEL_ERROR_WHY.get(err, "수식이 계산되지 못했습니다.")
@@ -4032,9 +3124,7 @@ BLANK_GUIDE = ("채점한 파일에서 이 셀들은 값도 수식도 없는 빈
 RECALC_GUIDE = ("수식은 있으나 계산된 값이 파일에 저장돼 있지 않아, 이 채점기가 "
                 "LibreOffice로 통합 문서를 다시 계산해 결과값으로 비교했습니다.")
 
-
 def compare_mode_note(judge):
-    """이 시트를 어떤 방식으로 비교했는지 한 줄로. 해당 없으면 None."""
     if getattr(judge, "recalc_cells", None):
         cc = compress_coords(judge.recalc_cells)
         txt = ("계산값이 없어 재계산해 비교했습니다 — LibreOffice로 다시 계산한 "
@@ -4052,9 +3142,7 @@ def compare_mode_note(judge):
         return "계산값이 없어 수식 문자열로 비교했습니다."
     return "저장된 계산값으로 비교했습니다."
 
-
 def ref_mismatch_note(judge, limit=4):
-    """결과는 같지만 참조가 다른 셀의 근거 문장. 없으면 None."""
     items = getattr(judge, "ref_mismatch", None)
     if not items:
         return None
@@ -4074,13 +3162,7 @@ def ref_mismatch_note(judge, limit=4):
             "참조가 바뀌면 결과가 달라집니다 (" + "; ".join(lines) + tail + "). "
             "실제 시험도 수식의 참조를 보고 채점합니다.")
 
-
 def student_cell_state(judge, r, c):
-    """학생 셀 상태 -> (상태, 표시 문자열, 학생 수식).
-
-    상태: 'nosheet'(시트 없음) / 'blank'(값·수식 없음) /
-          'nocache'(수식은 있으나 계산값 없음) / 'value'
-    """
     if judge.shs_raw is None:
         return "nosheet", "(시트 없음)", None
     try:
@@ -4102,9 +3184,7 @@ def student_cell_state(judge, r, c):
         return "error", f"{err} (오류 값)", sf
     return "value", fmt_value(got), sf
 
-
 def make_cell_entries(judge, wrong, limit=3):
-    """오답 셀들의 (좌표, 기대값, 학생값·상태, 기대/학생 수식) 구조화 목록."""
     out = []
     for (r, c, coord) in wrong[:limit]:
         ok, exp, got, ef = judge.judge(r, c)
@@ -4114,9 +3194,7 @@ def make_cell_entries(judge, wrong, limit=3):
                     "got_formula": sf, "got_state": state})
     return out
 
-
 def wrong_error_note(judge, wrong):
-    """오답 셀 중 Excel 오류 값이 있으면 그 원인 한 줄. 없으면 None."""
     for (r, c, _co) in wrong:
         try:
             got, _sf = judge.student(r, c)
@@ -4130,9 +3208,7 @@ def wrong_error_note(judge, wrong):
             return excel_error_note(err)
     return None
 
-
 def cell_state_guide(judge, wrong):
-    """오답 셀 상태 요약 안내문 (전부 빈 셀 / 계산값 없는 수식 포함). 없으면 None."""
     states = [student_cell_state(judge, r, c)[0] for (r, c, _co) in wrong]
     if states and all(s == "blank" for s in states):
         return BLANK_GUIDE
@@ -4142,17 +3218,14 @@ def cell_state_guide(judge, wrong):
         return RECALC_GUIDE
     return None
 
-
 def add_card(res, label, lost, kind, cells=None, formula=None,
              note=None, hint=None, more=0, props=None):
-    """오답노트 카드 1장 추가."""
     res.wrong.append({
         "sheet": res.name, "label": label, "lost": round(float(lost), 1),
         "kind": kind, "cells": cells or [], "formula": formula,
         "note": note, "hint": hint, "more": more, "props": props or [],
         "category": None, "explain": [], "point": None,
     })
-
 
 def add_wrong_cells(res, judge, wrong, limit=30):
     for (r, c, coord) in wrong[:limit]:
@@ -4168,9 +3241,7 @@ def add_wrong_cells(res, judge, wrong, limit=30):
     if len(wrong) > limit:
         res.details.append(f"... 외 {len(wrong) - limit}개 셀")
 
-
 def grade_basic1(res, ctx):
-    """기본작업-1: 전부 일치=만점, 하나라도 틀리면 0점."""
     diffs = ctx["vdiffs"]
     if not diffs:
         res.earned = res.alloc
@@ -4201,9 +3272,7 @@ def grade_basic1(res, ctx):
     else:
         res.earned = res.alloc
 
-
 def _edge_desc(key, coord):
-    """edge 키 -> 'H11 아래쪽' 같은 위치 설명."""
     from openpyxl.utils.cell import coordinate_to_tuple
     try:
         ek, r, c = key
@@ -4214,9 +3283,7 @@ def _edge_desc(key, coord):
     except Exception:
         return str(coord)
 
-
 def _border_props(fail_units, s_edges):
-    """테두리 실패 유닛들 -> (정답 설명, 내 답 설명)."""
     styles = set()
     misses = []
     for u in fail_units:
@@ -4243,9 +3310,7 @@ def _border_props(fail_units, s_edges):
                                    if len(misses) > 3 else "")
     return exp, (got or "확인 불가")
 
-
 def _key_row_heights(ctx, sheet_name):
-    """--key format_checks에 명시된 행 높이 {행번호: pt}."""
     out = {}
     fcs = (ctx["key"].get("format_checks") or {}).get(
         norm_sheet_name(sheet_name)) or []
@@ -4280,9 +3345,7 @@ def _key_row_heights(ctx, sheet_name):
                 pass
     return out
 
-
 def _key_col_widths(ctx, sheet_name):
-    """--key format_checks에 명시된 열 너비 {열문자: 너비}."""
     out = {}
     fcs = (ctx["key"].get("format_checks") or {}).get(
         norm_sheet_name(sheet_name)) or []
@@ -4314,18 +3377,7 @@ def _key_col_widths(ctx, sheet_name):
                 pass
     return out
 
-
 def grade_basic2(res, ctx):
-    """기본작업-2: 서식 diff를 '지시 단위'(공간 인접 클러스터)로 채점.
-
-    - 채점 후보는 문제↔정답 diff 셀만 (지시 범위 밖 잔여 서식 감점 없음)
-    - 행 간격 2행 이상 떨어진 영역은 별도 지시로 취급(절대 병합 안 함).
-      지시가 5개를 넘으면 합치는 대신 배점을 항목 수로 비례 분할
-    - 병합은 앵커 기준, 테두리는 edge 합성, 색은 테마 해석 후 RGB 비교,
-      정답에서 값이 빈 셀은 글꼴·표시 형식 채점 제외(화면 영향 없음)
-    - 행 높이/열 너비는 자동 조정 부산물이 많아 기본 제외(참고 노트만),
-      --key format_checks에 명시된 세트만 채점(±0.5)
-    """
     from openpyxl.utils.cell import coordinate_to_tuple, range_boundaries
     book_a, book_s = ctx["book_a"], ctx["book_s"]
     asheet, ssheet = ctx["asheet"], ctx["ssheet"]
@@ -4344,7 +3396,6 @@ def grade_basic2(res, ctx):
         res.details.append("서식을 읽지 못해 판정을 보류했습니다 (확인 필요)")
         return
 
-    # --- 채점 단위(unit) 구성: 문제↔정답 diff에서만 ---
     units = []
     for kind in CELL_FMT_KINDS:
         for coord in fd.get(kind, []):
@@ -4361,7 +3412,7 @@ def grade_basic2(res, ctx):
             continue
         units.append({"pos": (min_r, min_c), "kind": "merge",
                       "range": rng, "coord": rng})
-    for rng in fd.get("merge_del", []):  # 병합 해제 지시
+    for rng in fd.get("merge_del", []):
         try:
             min_c, min_r, _mc, _mr = range_boundaries(rng)
         except Exception:
@@ -4372,7 +3423,6 @@ def grade_basic2(res, ctx):
         units.append({"pos": (r, c), "kind": "value", "coord": coord,
                       "rc": (r, c)})
 
-    # --- 별도 항목: 정의된 이름 / (key 명시 시) 행 높이 ---
     standalone = []
     for (where, kind, why) in (ctx.get("fmt_unknown") or []):
         standalone.append(("_unknown", (where, kind, why)))
@@ -4385,7 +3435,6 @@ def grade_basic2(res, ctx):
     if key_cw:
         standalone.append(("key_colwidth", key_cw))
 
-    # --- 행 높이/열 너비: 감점 없는 참고 노트만 (1pt 초과 차이일 때) ---
     if not key_rh and fd.get("rowheight") and shs is not None:
         noted = []
         for (r, ha) in fd["rowheight"]:
@@ -4403,7 +3452,6 @@ def grade_basic2(res, ctx):
         for (cl, wa) in fd["colwidth"]:
             ws_ = shs.column_dimensions[cl].width \
                 if cl in shs.column_dimensions else None
-            # 문자 수로 환산해 비교 (Excel 저장값의 5픽셀 여백 보정)
             if wa is not None and not col_width_same(ws_, wa, tol=1.0):
                 noted.append(str(cl))
         if noted:
@@ -4417,8 +3465,6 @@ def grade_basic2(res, ctx):
         res.notes.append("채점할 서식 차이가 없어 만점 처리")
         return
 
-    # 지시 단위 클러스터. 5개를 넘어도 강제로 합치지 않고(지시 뒤섞임
-    # 방지) 배점을 항목 수(n)로 비례 분할한다 — 합계는 res.alloc 유지.
     clusters = _cluster_units(units) if units else []
     n = len(clusters) + len(standalone)
     per = res.alloc / n
@@ -4431,8 +3477,8 @@ def grade_basic2(res, ctx):
     s_merges = {str(x).upper() for x in shs.merged_cells.ranges} \
         if shs is not None else set()
 
-    nf_same = []       # 코드는 다르지만 화면 표시가 같아 정답 처리한 셀
-    held_clusters = 0  # 판정 불가로 보류한 지시 수
+    nf_same = []
+    held_clusters = 0
     for cl in clusters:
         fails = []
         blind_units = []
@@ -4442,7 +3488,6 @@ def grade_basic2(res, ctx):
                 if u["range"].upper() not in s_merges:
                     fails.append(u)
             elif k == "merge_del":
-                # 병합 해제 지시: 학생 파일에 병합이 남아 있으면 실패
                 if u["range"].upper() in s_merges:
                     fails.append(u)
             elif k == "value":
@@ -4464,7 +3509,6 @@ def grade_basic2(res, ctx):
                 sig_s = fmt_signature_m(shs, r, c, k, s_members, s_anchors) \
                     if shs is not None else None
                 if any_unknown(sig_a, sig_s):
-                    # 서식을 못 읽었다 — '다르다'로 세지 않고 보류로 올린다
                     u["blind"] = hold_reason(sig_a, sig_s)
                     blind_units.append(u)
                     continue
@@ -4476,7 +3520,6 @@ def grade_basic2(res, ctx):
                                             "number_format")
                     u["raw_s"] = cell_raw_m(shs, r, c, s_members,
                                             "number_format")
-                    # 코드가 달라도 그 셀 값의 화면 표시가 같으면 정답 처리
                     if cmp_a != cmp_s and nf_display_equal(
                             sha, shs, r, c, a_members, s_members):
                         nf_same.append(u["coord"])
@@ -4485,7 +3528,6 @@ def grade_basic2(res, ctx):
                     u["sig_a"], u["sig_s"] = sig_a, sig_s
                     fails.append(u)
         if blind_units and not fails:
-            # 이 지시는 판정 근거를 못 읽었다 — 감점도 가점도 하지 않는다
             held_clusters += 1
             locs_b = compress_coords([u["coord"] for u in blind_units])
             add_hold(res, "서식 지시 (" + ", ".join(locs_b[:3]) + ")",
@@ -4495,11 +3537,9 @@ def grade_basic2(res, ctx):
         if not fails:
             passed += 1
             continue
-        # --- 실패 카드: 범위 표기 + 속성별 정답/내답 + 파생 힌트 ---
         loc = compress_coords([u["coord"] for u in cl])
 
         def _kind_loc(k):
-            """이 클러스터에서 종류 k가 실패한 셀/범위 표기 (인용 출처)."""
             locs = compress_coords([x["coord"] for x in fails
                                     if x["kind"] == k])
             return ", ".join(locs[:2]) + (" 외" if len(locs) > 2 else "")
@@ -4543,7 +3583,6 @@ def grade_basic2(res, ctx):
                               "expected": exp, "got": got})
                 hints.extend(hints_for_kind("border", None))
             else:
-                # 속성 행마다 이 클러스터의 diff 셀/범위를 명시해 인용
                 where = _kind_loc(k)
                 for p in props_for_kind(k, u.get("sig_a"), u.get("sig_s"),
                                         u.get("raw_a"), u.get("raw_s")):
@@ -4571,7 +3610,6 @@ def grade_basic2(res, ctx):
             "같아 정답 처리했습니다. 실제 시험도 표시 예(예: 460 → 460개)와 "
             "같게 보이면 정답으로 봅니다.")
 
-    # --- 별도 항목 채점 ---
     for kind, payload in standalone:
         if kind == "_unknown":
             where, ukind, why = payload
@@ -4598,8 +3636,6 @@ def grade_basic2(res, ctx):
             if not missing:
                 passed += 1
             else:
-                # 내 답: 학생 파일의 실제 정의(같은 이름이 다른 시트를 가리키는
-                # 경우 포함) — '없음 또는 다른 범위' 대신 구체 표기 (v2.0.2)
                 props = []
                 notes_nm = []
                 for nm in missing[:5]:
@@ -4637,8 +3673,6 @@ def grade_basic2(res, ctx):
                 if notes_nm:
                     res.wrong[-1]["diff_notes"] = notes_nm
         elif kind == "key_rowheight":
-            # 행 높이는 포인트를 그대로 저장한다(열 너비와 달리 여백 패딩이
-            # 없다). 화면 1픽셀 = 0.75pt 반올림만 허용한다.
             bad = []
             for r, want in sorted(payload.items()):
                 hs = shs.row_dimensions[r].height \
@@ -4663,8 +3697,6 @@ def grade_basic2(res, ctx):
                               "숫자가 그대로 저장됩니다 — 경계선을 끌어서 "
                               "맞추면 값이 어긋나니 반드시 숫자를 입력하세요.")
         elif kind == "key_colwidth":
-            # Excel은 [열 너비] 대화상자 값에 5픽셀 여백을 더해 저장하므로
-            # (12 입력 -> 12.625 저장) 저장값을 문자 수로 되돌려 비교한다.
             bad = []
             for cl, want in sorted(payload.items()):
                 cw_s = shs.column_dimensions[cl].width \
@@ -4696,7 +3728,6 @@ def grade_basic2(res, ctx):
 
     res.earned = int(round(per * passed))
     if held_clusters:
-        # 보류분은 만점(분모)에서 뺀다 — 감점도 가점도 아니다
         res.earned = min(res.earned, int(round(per * (n - held_clusters))))
     if passed < n - held_clusters:
         res.details.insert(0, f"서식 지시 {n}개 중 {passed}개 통과 "
@@ -4704,18 +3735,14 @@ def grade_basic2(res, ctx):
                               + (f", 확인 필요 {held_clusters}개 제외"
                                  if held_clusters else "") + ")")
 
-
 def _is_cond_syntax(v):
     return isinstance(v, str) and bool(
         re.match(r"^\s*(<>|<=|>=|<|>|=)", v) or "*" in v or "?" in v)
 
-
 def _norm_field(v):
     return re.sub(r"\s+", "", str(v)).lower() if v is not None else None
 
-
 def _norm_cond(v):
-    """조건/데이터 값 정규화 (공백·대소문자 무시, 수식은 수식 정규화)."""
     if v is None:
         return None
     if isinstance(v, str):
@@ -4729,20 +3756,13 @@ def _norm_cond(v):
         return ("n", round(float(v), 6))
     return ("s", str(v))
 
-
 def _block_grid(sh, r1, r2, c1, c2):
     if sh is None:
         return []
     return [[sh.cell(r, c).value for c in range(c1, c2 + 1)]
             for r in range(r1, r2 + 1)]
 
-
 def _cond_rows(grid):
-    """조건 범위 -> (행별 (필드,조건) 짝 집합의 Counter, 머리글).
-
-    수식 조건(=로 시작)의 머리글 라벨은 필드명만 아니면 임의 텍스트/빈칸
-    모두 허용되는 규칙이므로 라벨을 비교에서 제외('#수식#' 고정 필드).
-    """
     from collections import Counter
     header = [_norm_field(v) for v in grid[0]]
     rows = []
@@ -4753,16 +3773,14 @@ def _cond_rows(grid):
                 continue
             cond = _norm_cond(v)
             if isinstance(v, str) and v.strip().startswith("="):
-                pairs.add(("#수식#", cond))     # 라벨 자유 — 비교 제외
+                pairs.add(("#수식#", cond))
             elif header[i]:
                 pairs.add((header[i], cond))
         if pairs:
             rows.append(frozenset(pairs))
     return Counter(rows), header
 
-
 def _excel_cond_match_norm(cond, value):
-    """정규화된 조건 1개를 값에 평가. 판정 불가(수식 등)면 None."""
     if cond is None:
         return True
     kind, cv = cond
@@ -4773,7 +3791,7 @@ def _excel_cond_match_norm(cond, value):
         return vn is not None and abs(vn - cv) < 1e-9
     if kind == "b":
         return isinstance(value, bool) and value == cv
-    s = str(cv)  # 소문자·공백 제거 상태
+    s = str(cv)
     vtxt = re.sub(r"\s+", "", str(value)).lower() if value is not None else ""
     m = re.match(r"^(<>|<=|>=|<|>|=)(.*)$", s)
     if m:
@@ -4792,11 +3810,9 @@ def _excel_cond_match_norm(cond, value):
     if "*" in s or "?" in s:
         pat = "^" + re.escape(s).replace(r"\*", ".*").replace(r"\?", ".") + "$"
         return re.match(pat, vtxt) is not None
-    return vtxt.startswith(s)  # 일반 텍스트 조건 = 시작 일치
-
+    return vtxt.startswith(s)
 
 def _locate_source_table(shp, fields):
-    """문제 시트에서 필드 머리글 행을 찾아 (헤더맵, 데이터 행 목록) 반환."""
     mr, mc = scan_bounds(shp)
     for r in range(1, min(mr, 30) + 1):
         hdr = {}
@@ -4816,12 +3832,7 @@ def _locate_source_table(shp, fields):
             return hdr, rows
     return None, None
 
-
 def filter_result_equivalent(shp, ga, gs):
-    """학생 조건이 표기만 다르고 필터 결과 행 집합은 정답과 같은지.
-
-    판단 불가(수식 조건·표 미발견 등)면 None.
-    """
     try:
         ca, _ha = _cond_rows(ga)
         cs, _hs = _cond_rows(gs)
@@ -4840,9 +3851,9 @@ def filter_result_equivalent(shp, ga, gs):
         def match_set(counter):
             out = set()
             for i, vals in enumerate(rows):
-                for rowset in counter:          # 행 = OR
+                for rowset in counter:
                     ok = True
-                    for f, cond in rowset:      # 같은 행 = AND
+                    for f, cond in rowset:
                         m = _excel_cond_match_norm(cond, vals.get(f))
                         if m is None:
                             raise ValueError("판정 불가 조건")
@@ -4858,18 +3869,12 @@ def filter_result_equivalent(shp, ga, gs):
     except Exception:
         return None
 
-
 COND_EQUIV_NOTE = ("필터 결과는 정답과 같지만, 조건식이 문제 지시와 다릅니다 "
                    "(예: '~이 아니면서'는 <>값). 실제 시험은 조건 셀에 입력한 "
                    "내용도 채점할 수 있어 오답 처리했습니다 — '~이 아닌' "
                    "조건은 항상 <> 로 쓰세요.")
 
-
 def compare_condition_block(ga, gs):
-    """고급 필터 조건 범위 의미 비교 — 열 순서/행 순서 무관.
-
-    같은 행의 (필드, 조건) 짝 집합이 행 단위로 일치하면 동일한 조건.
-    """
     ca, _ha = _cond_rows(ga)
     cs, _hs = _cond_rows(gs) if gs else (None, None)
     if cs is not None and ca == cs:
@@ -4900,12 +3905,7 @@ def compare_condition_block(ga, gs):
         msgs.append("조건의 AND(같은 행)/OR(다른 행) 배치가 정답과 다릅니다")
     return False, msgs[:4]
 
-
 def compare_result_block(ga, gs):
-    """고급 필터 결과 표 비교 — 열 순서는 머리글로 재정렬, 행은 집합 비교.
-
-    반환: (통과, 메시지들, 행 순서만 다른지)
-    """
     from collections import Counter
     ha = [_norm_field(v) for v in ga[0]]
     hs = [_norm_field(v) for v in gs[0]] if gs else []
@@ -4944,9 +3944,7 @@ def compare_result_block(ga, gs):
                     "포함되었습니다 (조건 재확인)")
     return False, msgs or ["결과 행이 정답과 다릅니다"], False
 
-
 def _cf_boundary_note(rule, book_s, ssheet):
-    """셀 값 기준 규칙에서 경계값과 정확히 같은 셀이 적용 범위에 있는지 안내."""
     try:
         if rule.get("type") != "cellIs" or not rule.get("formulas") or not ssheet:
             return ""
@@ -4968,14 +3966,7 @@ def _cf_boundary_note(rule, book_s, ssheet):
     except Exception:
         return ""
 
-
 def grade_basic3(res, ctx):
-    """기본작업-3: 조건부 서식 규칙 비교, 없으면 값 diff.
-
-    고급 필터는 의미 동치 비교: 조건 범위의 열/행 배치가 달라도 (필드,
-    조건) 짝이 같으면 정답, 결과 표는 행 집합 비교(순서 무관·무감점 노트).
-    텍스트 나누기 등 일반 블록은 셀 단위 비교 유지.
-    """
     book_p, book_a, book_s = ctx["book_p"], ctx["book_a"], ctx["book_s"]
     psheet, asheet, ssheet = ctx["psheet"], ctx["asheet"], ctx["ssheet"]
     rules_a = cf_rules_detail(book_a.raw[asheet], book_a.raw)
@@ -5011,7 +4002,6 @@ def grade_basic3(res, ctx):
         from openpyxl.utils import get_column_letter
 
         def _rng_txt(cells):
-            """셀 목록 -> 범위 표기. 직사각형을 꽉 채우면 'B4:H18' 한 덩어리."""
             rs = [r for (r, _c) in cells]
             cs = [c for (_r, c) in cells]
             if cells and len(set(cells)) == \
@@ -5032,9 +4022,7 @@ def grade_basic3(res, ctx):
             exp_f = ("=" + rule["formulas"][0]) if rule["formulas"] else None
             stu_f = next((("=" + s["formulas"][0]) for s in rules_s
                           if s["formulas"]), None)
-            # 조건 표기: 수식형 '=수식', 셀 값 기준 '셀 값 >= 0.7' (연산자 포함)
             exp_c = _cf_cond_text(rule)
-            # 내 답 조건: 경계값(수식)이 같은 내 규칙이 있으면 그것만, 없으면 전부
             same_thr = [s for s in rules_s if s["key"][3] == rule["key"][3]]
             stu_c = " / ".join(_cf_cond_text(s) for s in (same_thr or rules_s)) \
                 or "(규칙 없음)"
@@ -5161,7 +4149,6 @@ def grade_basic3(res, ctx):
     shs = book_s.raw[ssheet] if ssheet else None
     coord_of = {(r, c): co for (r, c, co) in diffs}
     clusters = cluster_cells([(r, c) for (r, c, _co) in diffs], target=99)
-    # 원본 표 머리글 후보: 문제 시트의 문자열 값들
     header_pool = set()
     try:
         for row in shp.iter_rows(min_row=1,
@@ -5204,7 +4191,6 @@ def grade_basic3(res, ctx):
             if ok:
                 passed_b += 1
                 continue
-            # 표기만 다르고 필터 결과는 같은 경우 문구 구분 (감점은 유지)
             equiv = filter_result_equivalent(shp, ga, gs) if gs else None
             note_txt = COND_EQUIV_NOTE if equiv else None
             res.details.append(
@@ -5252,14 +4238,11 @@ def grade_basic3(res, ctx):
                           "대조하세요.")
     res.earned = int(round(res.alloc * passed_b / len(blocks)))
 
-
 CALC_FUNC_NOTE = ("이 채점기는 결과값 기준이라 문제가 제시한 함수를 썼는지는 "
                   "판정하지 못합니다. 실제 시험은 제시 함수 외 사용 시 값이 "
                   "맞아도 오답이니 문제지의 함수 지정을 확인하세요.")
 
-
 def grade_calc(res, ctx):
-    """계산작업: diff 셀 5그룹, 그룹 내 전 셀 일치 시에만 그룹 점수."""
     res.notes.append(CALC_FUNC_NOTE)
     diffs = ctx["vdiffs"]
     if not diffs:
@@ -5269,8 +4252,6 @@ def grade_calc(res, ctx):
     judge = ctx["judge"]
     key_groups = (ctx["key"].get("groups") or {}).get(norm_sheet_name(res.name))
     sha = ctx["book_a"].raw[ctx["asheet"]]
-    # 계산작업은 수식으로 답하는 문제만 채점: 정답이 수식이 아닌 diff 셀(자료
-    # 셀 — 예: 정답 파일 B35 '미응시' vs 문제 파일 0)은 문제로 묶지 않음
     if not key_groups:
         f_diffs = [(r, c, co) for (r, c, co) in diffs
                    if formula_text(sha.cell(r, c).value) is not None]
@@ -5299,11 +4280,6 @@ def grade_calc(res, ctx):
         groups = [[(r, c, co[(r, c)]) for (r, c) in cl] for cl in clusters]
     n = len(groups)
     per = res.alloc / n
-    # 문제 파일 오염 감지
-    #  - contaminated: 정답 수식이 문제 파일에 이미 같은 수식으로 들어 있음
-    #    (문제 수가 표준보다 적을 때만 — 문제가 미리 채워 준 수식과 구분 불가)
-    #  - contaminated_diff: 정답 수식 위치에 '정답과 다른' 수식이 이미 있음
-    #    (이전 풀이 흔적 — 원본 문제에는 없는 것이므로 문제 수와 무관하게 경고)
     contaminated = []
     contaminated_diff = []
     try:
@@ -5412,14 +4388,7 @@ def grade_calc(res, ctx):
     if contaminated or contaminated_diff:
         res.contaminated = compress_coords(contaminated + contaminated_diff)
 
-
 def grade_analysis(res, ctx):
-    """분석작업: 확정 검사 항목(값/수식 diff) 전부 일치=만점, 아니면 0점.
-
-    실제 시험 규정: 분석작업은 부분점수가 없습니다. 시나리오/피벗의
-    '존재 여부' 같은 베스트 에포트 항목은 점수 게이트에서 제외하고
-    노트로만 안내합니다 (자동 판정 한계로 인한 억울한 0점 방지).
-    """
     book_a, book_s = ctx["book_a"], ctx["book_s"]
     asheet, ssheet = ctx["asheet"], ctx["ssheet"]
     diffs = ctx["vdiffs"]
@@ -5446,7 +4415,6 @@ def grade_analysis(res, ctx):
             res.details.append(f"결과 셀 {len(diffs)}개 전부 일치")
     else:
         res.earned = res.alloc
-    # 시나리오 / 피벗: 존재 여부만 노트로 안내 (점수에 반영하지 않음)
     for has_a, has_s, label in (
         (book_a.has_scenarios(asheet),
          ssheet and book_s.has_scenarios(ssheet), "시나리오"),
@@ -5461,9 +4429,7 @@ def grade_analysis(res, ctx):
             res.notes.append(f"{label} 세부 설정은 자동 비교하지 않습니다. "
                              "수동 확인을 권장합니다.")
 
-
 def _macro_fmt_desc(kind, sig, raw=None):
-    """매크로 서식 결과 표기용 한국어 서식 값. 읽을 수 없으면 None."""
     if sig == "?" or is_unknown(sig):
         return None
     if kind == "font":
@@ -5481,9 +4447,7 @@ def _macro_fmt_desc(kind, sig, raw=None):
                 + (", 텍스트 줄 바꿈" if len(sa) > 2 and sa[2] else ""))
     return str(sig)
 
-
 def _font_color_txt(color):
-    """글꼴 색 시그니처 -> 사람이 읽는 표기. 지정이 없으면 '자동(검정)'."""
     if color is None:
         return "자동(검정)"
     if isinstance(color, tuple) and color[0] == "rgb":
@@ -5492,13 +4456,7 @@ def _font_color_txt(color):
         return f"테마 색 {color[1]}"
     return "지정 색"
 
-
 def font_pair_desc(sig_a, sig_s):
-    """정답/내 답 글꼴 표기 — 색이 한쪽에만 있으면 없는 쪽을 '자동(검정)'으로.
-
-    색 항목이 통째로 빠져 '맑은 고딕 11pt' vs '맑은 고딕 11pt 굵게, 글꼴 색
-    파랑'처럼 무엇이 다른지 눈에 잘 안 들어오던 표기를 고친다.
-    """
     a, s = describe_font(sig_a), describe_font(sig_s)
     try:
         ca, cs = sig_a[6], sig_s[6]
@@ -5512,9 +4470,7 @@ def font_pair_desc(sig_a, sig_s):
         s += f", 글꼴 색 {_font_color_txt(cs)}"
     return a, s
 
-
 def macro_objects(book, sheet):
-    """시트의 매크로 실행 개체(양식 컨트롤 단추 + 도형)를 한 목록으로."""
     out = []
     if not sheet:
         return out
@@ -5538,19 +4494,17 @@ def macro_objects(book, sheet):
         return Unknown(unknown_why(shapes))
     for s in shapes:
         if s.get("hidden"):
-            continue        # 양식 컨트롤의 그림자 개체 — 단추로 이미 셈
+            continue
         out.append({"kind": "도형", "text": s.get("text", ""),
                     "anchor": s.get("anchor", "?"),
                     "macro": s.get("macro", ""),
                     "geom": s.get("geom", "")})
     return out
 
-
 SHAPE_GEOM_KO = {"hexagon": "육각형", "rect": "직사각형",
                  "roundRect": "모서리가 둥근 직사각형", "ellipse": "타원",
                  "flowChartProcess": "순서도: 처리", "pentagon": "오각형",
                  "diamond": "다이아몬드", "octagon": "팔각형"}
-
 
 def _obj_label(o):
     g = SHAPE_GEOM_KO.get(o.get("geom"), o.get("geom") or "")
@@ -5558,12 +4512,7 @@ def _obj_label(o):
     return (f"[{o['anchor']}] {head} 텍스트 '{o['text'] or '(없음)'}'"
             + (f" → {o['macro']} 매크로" if o.get("macro") else ""))
 
-
 def compare_macro_objects(objs_a, objs_s):
-    """정답/내 답의 단추·도형을 짝지어 [(정답 개체, 내 개체 or None, 차이들)].
-
-    짝은 앵커 -> 연결 매크로 -> 같은 종류의 순서 로 찾는다.
-    """
     left = list(objs_s)
     pairs = []
     for a in objs_a:
@@ -5597,9 +4546,7 @@ def compare_macro_objects(objs_a, objs_s):
         pairs.append((a, mate, diffs))
     return pairs
 
-
 def _macro_evidence_notes(res, book_a, book_s, asheet, ssheet):
-    """리포트에 남길 매크로 근거: 매크로 이름·단추 앵커/텍스트/연결 매크로."""
     names_s = [u["name"] for u in book_s.vba_units()] if book_s else []
     if names_s:
         res.notes.append("내 파일 VBA 코드에서 찾은 매크로: "
@@ -5629,15 +4576,7 @@ def _macro_evidence_notes(res, book_a, book_s, asheet, ssheet):
             for s in shp[:4]))
     return names_s
 
-
 def grade_macro(res, ctx):
-    """매크로작업: 결과 값+서식 diff 비례(8점 분량) + 단추/도형 존재 +2점.
-
-    결과 서식이 없어도 학생 파일의 VBA 코드(xl/vbaProject.bin)에 지시 동작이
-    있으면 인정한다 (둘 중 하나면 득점). 리포트에는 발견한 매크로 이름·단추
-    앵커·비교 셀과 정답/내 답 서식 값을 남기고, 읽을 수 없으면 '판정 불가:
-    이유'로 명시한다.
-    """
     book_a, book_s = ctx["book_a"], ctx["book_s"]
     asheet, ssheet = ctx["asheet"], ctx["ssheet"]
     judge = ctx["judge"]
@@ -5646,17 +4585,13 @@ def grade_macro(res, ctx):
     result_pts = max(0, res.alloc - 2)
     units_total = 0
     units_ok = 0
-    units_held = 0           # 판정 근거를 못 읽어 보류한 단위 수
+    units_held = 0
     vba_units = book_s.vba_units() if book_s else []
-    # 매크로 코드를 못 읽으면 '코드 인정' 경로가 통째로 막힌다 — 실행 결과가
-    # 정답과 다른 단위는 '틀렸다'가 아니라 '모른다'로 보류한다 (4096바이트
-    # 섹터 vbaProject.bin 을 못 읽어 매크로 판정이 죽어 있던 사고의 재발 방지).
     vba_blind = is_unknown(vba_units)
     vba_blind_why = unknown_why(vba_units) if vba_blind else None
-    vba_credit = []          # 코드로 인정한 항목 (셀, 종류, 매크로명)
-    held_units = []          # 보류한 단위 [(좌표, 종류)]
-    blind_whys = []          # 서식을 읽지 못한 이유들
-    # 값 diff
+    vba_credit = []
+    held_units = []
+    blind_whys = []
     wrong_cells = []
     for (r, c, co) in ctx["vdiffs"]:
         units_total += 1
@@ -5673,7 +4608,6 @@ def grade_macro(res, ctx):
             held_units.append((co, "value"))
             continue
         wrong_cells.append((r, c, co))
-    # 서식 diff (셀 단위, 병합 인지 + edge 테두리)
     from openpyxl.utils.cell import coordinate_to_tuple
     a_members, a_anchors = merge_maps(sha)
     s_members, s_anchors = merge_maps(shs) if shs is not None else ({}, {})
@@ -5682,7 +4616,7 @@ def grade_macro(res, ctx):
         _mr, _mc = scan_bounds(sha, shs)
         s_edges = sheet_edge_map(shs, _mr, _mc)
     fmt_bad = []
-    fmt_ok = {}      # 종류 -> 정확히 적용된 셀 좌표 (부분 정답 표기용)
+    fmt_ok = {}
     for (where, ukind, why) in (ctx.get("fmt_unknown") or []):
         units_total += 1
         units_held += 1
@@ -5697,8 +4631,6 @@ def grade_macro(res, ctx):
             edge_info = ctx["fdiffs"].get("border_edges") or {}
             for coord in payload:
                 units_total += 1
-                # edge 맵을 못 읽었는데 all([]) == True 로 통과시키면
-                # 근거 없이 정답 처리된다 — 못 읽었으면 판정하지 않는다.
                 ok = (s_edges is not None and not is_unknown(s_edges)
                       and all((s_edges.get(key) or None) == (style or None)
                               for key, style in edge_info.get(coord, [])))
@@ -5744,7 +4676,6 @@ def grade_macro(res, ctx):
                                              s_members):
                     ok = True
             except Exception as e:
-                # 예전에는 ok=False 로 떨어져 '서식이 다르다'로 감점됐다.
                 ok = False
                 blind = (f"{coord} 의 서식을 비교하지 못했습니다"
                          f"({type(e).__name__})")
@@ -5785,7 +4716,6 @@ def grade_macro(res, ctx):
         per_unit = result_pts / units_total
         earned = int(round(per_unit * units_ok))
         if units_held:
-            # 보류분은 감점도 가점도 아니다 — 배점에서 빼고 확인 필요로 올린다
             kinds_txt = ", ".join(dict.fromkeys(
                 f"{co}({FMT_KIND_LABEL.get(k, k)})" for co, k in held_units
             ))[:120]
@@ -5842,7 +4772,6 @@ def grade_macro(res, ctx):
                 or f"판정 불가: {first['why'] or '알 수 없음'}",
                 "got": first["got"]
                 or f"판정 불가: {first['why'] or '알 수 없음'}"})
-        # 같은 지시 안에서 이미 정확히 적용된 범위를 함께 보여 준다
         okay_note = ""
         ok_chips = []
         for k in by_kind:
@@ -5857,7 +4786,6 @@ def grade_macro(res, ctx):
                          "적용되지 않았습니다.")
         code_note = ""
         if vba_units:
-            # 같은 서식 종류를 다루는 매크로가 있는데 범위만 다른 경우를 구분
             bad_kinds = set(by_kind)
             rel = [u for u in vba_units if u["kinds"] & bad_kinds]
             if rel:
@@ -5891,12 +4819,10 @@ def grade_macro(res, ctx):
             "실행 결과 서식/값은 정답과 다르지만 매크로 코드에 해당 동작이 "
             f"있어 인정했습니다: {txt}. 실제 시험은 '생성하여 실행'까지 "
             "요구하므로 단추를 눌러 결과까지 남기세요.")
-    # 단추/도형 존재 +2 (텍스트·연결 매크로·도형 종류가 다르면 -1)
     btn_a = book_a.sheet_has_drawing(asheet)
     btn_s = ssheet and book_s.sheet_has_drawing(ssheet)
     obj_held = False
     if any_unknown(btn_a, btn_s):
-        # 단추가 있는지조차 못 읽었다 — '단추 없음 -2점'으로 흘리지 않는다
         add_hold(res, "매크로 단추·도형",
                  hold_reason(btn_a, btn_s)
                  + " — 단추(도형)가 있는지 확인하지 못해 이 2점은 점수에서 "
@@ -5908,9 +4834,6 @@ def grade_macro(res, ctx):
         objs_a = macro_objects(book_a, asheet)
         objs_s = macro_objects(book_s, ssheet)
         if any_unknown(objs_a, objs_s):
-            # 개체를 못 읽었다 — '단추가 없다'로 감점하지 않고 보류한다.
-            # (단추 캡션을 <font>…</font> 정규식으로 뽑다가 텍스트가 있는
-            #  단추를 전부 '(없음)'으로 읽어 감점하던 사고의 재발 방지)
             add_hold(res, "매크로 단추·도형",
                      hold_reason(objs_a, objs_s)
                      + " — 단추·도형의 텍스트/연결 매크로를 대조하지 못해 "
@@ -5947,34 +4870,24 @@ def grade_macro(res, ctx):
                           "도형을 그린 뒤 우클릭 → 매크로 지정으로 연결하고, "
                           "단추 텍스트를 지시대로 입력합니다.")
     elif not obj_held:
-        # 정답 파일에 단추·도형이 없는 세트: 결과가 다 맞으면 2점.
-        # 보류한 단위는 '틀렸다'가 아니므로 분모에서 뺀다.
         gradable_units = units_total - units_held
         earned += 2 if gradable_units <= 0 or units_ok == gradable_units else 0
     res.earned = min(res.alloc - res.held, earned)
     _macro_evidence_notes(res, book_a, book_s, asheet, ssheet)
-    # vba 보존 경고
     if book_a.has_vba() and not book_s.has_vba():
         res.notes.append("학생 파일에 매크로(vbaProject)가 없습니다. "
                          "매크로는 xlsm 형식으로 저장해야 보존됩니다.")
     res.notes.append("매크로는 실행 결과(값·서식)를 기준으로 채점하고, 결과가 "
                      "없으면 VBA 코드에 지시 동작이 있는지까지 확인합니다.")
 
-
 def grade_chart(res, ctx):
-    """차트작업: 차트 XML 5개 항목 x (배점/5).
-
-    문제 파일 차트를 기준선으로 사용 — 문제·정답이 같은 특성은 지시가
-    아니므로 채점 제외(정답 작성자의 부수 설정 오탐 차단).
-    """
     book_a, book_s = ctx["book_a"], ctx["book_s"]
     asheet, ssheet = ctx["asheet"], ctx["ssheet"]
     fa = chart_features(book_a, asheet)
     fs = chart_features(book_s, ssheet) if ssheet else None
-    fp = chart_features(ctx["book_p"], ctx["psheet"])  # 기준선
+    fp = chart_features(ctx["book_p"], ctx["psheet"])
     per = res.alloc / 5.0
     if any_unknown(fa, fs):
-        # 차트 XML 을 해석하지 못했다 — '차트 없음 → 0점'으로 흘리지 않는다
         add_hold(res, "차트작업",
                  hold_reason(fa, fs)
                  + " — 차트를 대조하지 못해 이 문항은 점수에서 뺐습니다.",
@@ -5983,7 +4896,7 @@ def grade_chart(res, ctx):
         res.details.append("차트를 읽지 못해 판정을 보류했습니다 (확인 필요)")
         return
     if is_unknown(fp):
-        fp = None       # 기준선은 없어도 채점 가능 (문제 파일 비교만 생략)
+        fp = None
         res.notes.append("문제 파일의 차트를 읽지 못해 '문제·정답이 같은 "
                          "특성은 지시가 아니다' 규칙을 적용하지 못했습니다.")
     if fa is None:
@@ -6017,17 +4930,14 @@ def grade_chart(res, ctx):
         return sorted((x[0] or "") for x in f["series"] if x[1])
 
     def same_as_problem(key_fn):
-        """문제·정답이 같은 특성 = 지시 아님 -> 채점 제외."""
         return fp is not None and key_fn(fp) == key_fn(fa)
 
-    # 1. 존재 + 종류
     if same_as_problem(lambda f: f["types"]) or fa["types"] == fs["types"]:
         passed += 1
     else:
         fail("차트 종류", fa["types"], fs["types"],
              "차트 영역 우클릭 → 차트 종류 변경. 콤보(혼합)형이면 계열별 "
              "차트 종류와 보조 축 체크를 확인하세요.")
-    # 2. 제목
     ta, ts = _title_key(fa), _title_key(fs)
     if same_as_problem(_title_key) or \
             ((ta is None) == (ts is None) and (ta is None or ta == ts)):
@@ -6038,7 +4948,6 @@ def grade_chart(res, ctx):
              (fs["title"][1] if fs["title"] else "(제목 없음)"),
              "차트 선택 → 차트 요소(+) → 차트 제목 체크 후 텍스트를 "
              "입력합니다(제거 지시면 체크 해제).")
-    # 3. 계열 수 + 참조
     if same_as_problem(_series_key) or _series_key(fa) == _series_key(fs):
         passed += 1
     else:
@@ -6048,7 +4957,6 @@ def grade_chart(res, ctx):
              f"{len(fs['series'])}개 {refs_s}",
              "차트 우클릭 → 데이터 선택에서 계열을 문제 지시대로 추가/제거 "
              "하고 각 계열의 값 범위를 확인합니다.")
-    # 4. 데이터 레이블
     dl_a, dl_s = _dlbls_key(fa), _dlbls_key(fs)
     if same_as_problem(_dlbls_key) or dl_a == dl_s:
         passed += 1
@@ -6057,14 +4965,7 @@ def grade_chart(res, ctx):
              "레이블을 붙일 계열만 한 번 클릭해 선택한 뒤 차트 요소(+) → "
              "데이터 레이블에서 위치를 지정합니다.")
 
-    # 5. 축 설정 / 범례 위치
-    #   축을 기본/보조 역할로 짝지어 속성(최대·최소·주 단위) 단위로 비교.
-    #   - 정답이 '자동'인 속성은 지시가 아니므로 채점 안 함 (학생의 부수 설정 무시)
-    #   - 문제와 같은 값도 지시가 아님. 문제에 없던 축(새 보조 축)은 기준선 자동
-    #   - 최소 0 명시 vs 자동: 자동 결과가 0이면 동일 처리. 주 단위 자동: 기존 관대
-    #   - 세트 기대값 chart.axes가 있으면 나열한 속성만 그 값으로 채점
     def axis_item():
-        """(채점 대상?, 통과?, 기대, 학생)"""
         A, S = _axes_by_role(fa), _axes_by_role(fs)
         P = _axes_by_role(fp) if fp is not None else {}
         graded_any, ok, exp, got = False, True, [], []
@@ -6100,10 +5001,10 @@ def grade_chart(res, ctx):
             for attr in ("max", "min", "unit"):
                 aa = a_a.get(attr)
                 if aa is None:
-                    continue           # 정답이 자동 = 지시 아님
+                    continue
                 pa = a_p.get(attr) if a_p else None
                 if pa is not None and abs(pa - aa) <= 1e-9 * max(1.0, abs(aa)):
-                    continue           # 문제와 같음 = 정답 작성자 부수 설정/기존 값
+                    continue
                 graded_any = True
                 sa = a_s.get(attr) if a_s else None
                 if _axis_attr_ok(attr, aa, sa, a_s, lenient_unit=(pa is None)):
@@ -6135,9 +5036,7 @@ def grade_chart(res, ctx):
         res.details.insert(0, f"차트 검사 5개 항목 중 {passed}개 통과 "
                               f"(항목당 {per:.0f}점)")
 
-
 def grade_generic(res, ctx):
-    """비표준 시트: 값 diff 비례."""
     diffs = ctx["vdiffs"]
     if not diffs:
         res.earned = res.alloc
@@ -6154,7 +5053,6 @@ def grade_generic(res, ctx):
                  formula=next((e["formula"] for e in entries
                                if e["formula"]), None))
 
-
 GRADERS = {
     "기본작업-1": grade_basic1,
     "기본작업-2": grade_basic2,
@@ -6168,17 +5066,7 @@ GRADERS = {
 
 NEEDS_FMT_DIFF = {"기본작업-2", "매크로작업"}
 
-
-# ---------------------------------------------------------------------------
-# 전체 채점
-# ---------------------------------------------------------------------------
-
-
 def run_grading(problem_path, answer_path, student_path, key, sheets=None):
-    """채점 실행. sheets가 주어지면 해당 시트만 부분 채점.
-
-    sheets: 시트명 목록(정규화 매칭). 없는 이름이면 RuntimeError.
-    """
     book_p = Book(problem_path, "문제")
     book_a = Book(answer_path, "정답")
     book_s = Book(student_path, "학생")
@@ -6190,8 +5078,7 @@ def run_grading(problem_path, answer_path, student_path, key, sheets=None):
     global_notes = []
     results = []
 
-    # 시트 매칭 (문제 기준)
-    matched = []  # (norm_name, psheet, asheet, ssheet or None)
+    matched = []
     for psheet in book_p.raw.sheetnames:
         n = norm_sheet_name(psheet)
         asheet = book_a.norm_map.get(n)
@@ -6210,7 +5097,6 @@ def run_grading(problem_path, answer_path, student_path, key, sheets=None):
     if not matched:
         raise RuntimeError("문제/정답 파일에서 매칭되는 시트를 찾지 못했습니다.")
 
-    # 부분 채점: 지정 시트만 남기기
     if sheets:
         wanted = [norm_sheet_name(s) for s in sheets if str(s).strip()]
         available = [m[0] for m in matched]
@@ -6224,7 +5110,6 @@ def run_grading(problem_path, answer_path, student_path, key, sheets=None):
         global_notes.append("부분 채점: " + ", ".join(m[1] for m in matched)
                             + " 시트만 채점했습니다.")
 
-    # diff 선계산 + 배점 할당
     ctxs = {}
     nonstd = []
     for (n, psheet, asheet, ssheet) in matched:
@@ -6232,18 +5117,15 @@ def run_grading(problem_path, answer_path, student_path, key, sheets=None):
         vdiffs = value_diff_cells(shp, sha)
         fdiffs = format_diff_items(book_p, book_a, psheet, asheet) \
             if n in NEEDS_FMT_DIFF else {}
-        # 지시를 뽑는 단계에서 못 읽은 것들 — 채점부가 '확인 필요'로 올린다
         fmt_unknown = fdiffs.pop("_unknown", []) if fdiffs else []
         key_cells = {k.upper(): v for k, v in
                      ((key.get("cells") or {}).get(n) or {}).items()}
-        # 제작 메모 제외(일반 규칙): 정답 파일에만 남은 작업 메모 셀
         excl_notes = []
         memos = detect_author_memo_cells(shp, sha, vdiffs)
         if memos:
             vdiffs, fdiffs, memo_notes = apply_key_exclusions(
                 vdiffs, fdiffs, memos, label="제작 메모로 보아 채점 제외")
             excl_notes.extend(memo_notes)
-        # 세트 기대값 exclude: 문제지에 없는 정답 파일 잔여 서식 등 채점 제외
         excl = (key.get("exclude") or {}).get(n)
         if excl:
             vdiffs, fdiffs, more_notes = apply_key_exclusions(vdiffs, fdiffs, excl)
@@ -6276,7 +5158,6 @@ def run_grading(problem_path, answer_path, student_path, key, sheets=None):
         alloc = points.get(n, 0)
         res = SheetResult(psheet, alloc)
         ctx = ctxs[n]
-        # 풀이 파일 실수 감지용: 채점 대상 diff 셀 일치율 집계
         try:
             res.diff_total = len(ctx["vdiffs"])
             if ssheet is not None:
@@ -6295,8 +5176,6 @@ def run_grading(problem_path, answer_path, student_path, key, sheets=None):
         try:
             grader(res, ctx)
         except Exception as e:
-            # 채점기가 죽었는데 값 비교 결과만 남기면 못 본 지시가 조용히
-            # 감점이 된다 — 이 시트 배점을 통째로 '확인 필요'로 뺀다.
             res.notes.append(f"채점 중 오류가 발생해 값 비교로 대체: {e}")
             add_hold(res, f"{psheet} 채점",
                      f"채점기가 이 시트를 끝까지 처리하지 못했습니다"
@@ -6308,7 +5187,6 @@ def run_grading(problem_path, answer_path, student_path, key, sheets=None):
                 pass
         res.earned = max(0, min(res.alloc if isinstance(res.alloc, int)
                                 else res.alloc, res.earned))
-        # 보류분은 만점에서 빠지므로 득점도 그 한도를 넘지 않는다
         res.earned = max(0, min(res.earned, res.alloc - res.held))
         for note in ctx.get("exclude_notes") or []:
             res.notes.append(note)
@@ -6329,11 +5207,8 @@ def run_grading(problem_path, answer_path, student_path, key, sheets=None):
     total_alloc = sum(r.alloc for r in results)
     total_earned = sum(r.earned for r in results)
     total_held = round(sum(getattr(r, "held", 0) for r in results), 2)
-    # '확인 필요'(판정 불가) 배점은 감점도 가점도 아니다 — 만점에서 빼고
-    # 나머지로 비율 환산한다. 계산 방식은 리포트에 그대로 적는다.
     gradable = max(0.0, total_alloc - total_held)
     if sheets:
-        # 부분 채점: 환산 없이 영역 배점 합 기준 원점수
         score100 = int(round(total_earned))
     elif not gradable:
         score100 = 0
@@ -6354,15 +5229,10 @@ def run_grading(problem_path, answer_path, student_path, key, sheets=None):
     else:
         score100 = int(round(total_earned))
     try:
-        enrich_wrong_cards(results)   # 오답 카드에 유형 분류 + 수식 해설
+        enrich_wrong_cards(results)
     except Exception:
         pass
     return results, score100, global_notes, (book_p, book_a, book_s)
-
-
-# ---------------------------------------------------------------------------
-# 수식 해설기 (rule-based)
-# ---------------------------------------------------------------------------
 
 _CIRCLED = "①②③④⑤⑥⑦⑧⑨⑩⑪⑫⑬⑭⑮"
 
@@ -6379,11 +5249,9 @@ _FTOKEN = re.compile(r'''
   | (?P<ws>\s+)
 ''', re.VERBOSE)
 
-
 def _parse_formula(f):
-    """수식 문자열 -> 노드 트리. 노드: (kind, ...) 튜플."""
     s = str(f).lstrip("=").strip()
-    s = re.sub(r"'[^']*'!", "", s)          # 시트 참조 제거
+    s = re.sub(r"'[^']*'!", "", s)
     s = re.sub(r"\[\d+\]", "", s)
     s = re.sub(r"[A-Za-z가-힣0-9_.]+!", "", s)
     toks = []
@@ -6440,7 +5308,6 @@ def _parse_formula(f):
 
     return parse_expr()
 
-
 def _collect_funcs(node, out):
     if node[0] == "func":
         for a in node[2]:
@@ -6449,7 +5316,6 @@ def _collect_funcs(node, out):
     elif node[0] == "expr":
         for p in node[1]:
             _collect_funcs(p, out)
-
 
 def _render(node, marks):
     kind = node[0]
@@ -6465,11 +5331,9 @@ def _render(node, marks):
         return node[1].replace("$", "")
     return node[1]
 
-
 def _fn_display(node, marks):
     inner = ", ".join(_render(a, marks) for a in node[2])
     return f"{node[1]}({inner})"
-
 
 def _lit_num(node):
     try:
@@ -6483,10 +5347,8 @@ def _lit_num(node):
         pass
     return None
 
-
 def _rng(text):
     return f"{text} 범위" if ":" in text else text
-
 
 _DB_VERBS = {"DSUM": "합계", "DAVERAGE": "평균", "DCOUNT": "숫자 셀 개수",
              "DCOUNTA": "개수", "DMAX": "최대값", "DMIN": "최소값",
@@ -6495,7 +5357,6 @@ _AGG_KO = {"SUM": "합계", "AVERAGE": "평균", "MAX": "최대값", "MIN": "최
            "MEDIAN": "중간값(중앙값)", "COUNT": "숫자 셀 개수",
            "COUNTA": "비어 있지 않은 셀 개수", "STDEV": "표준편차",
            "MODE": "최빈값", "MODE.SNGL": "최빈값", "VAR": "분산"}
-
 
 def _round_pos(node):
     v = _lit_num(node)
@@ -6508,7 +5369,6 @@ def _round_pos(node):
         return "일의 자리까지(정수로)"
     unit = {-1: "십", -2: "백", -3: "천", -4: "만"}.get(v, f"10^{-v}")
     return f"{unit} 단위로"
-
 
 def _fn_sentence(name, args, R):
     n = len(args)
@@ -6658,12 +5518,7 @@ def _fn_sentence(name, args, R):
     args_txt = ", ".join(A(i) for i in range(n))
     return f"{name} 함수로 {args_txt} 을(를) 계산합니다."
 
-
 def explain_formula(formula):
-    """정답 수식을 안(내부)→밖 순서의 단계별 한국어 풀이로.
-
-    반환: (단계 문자열 목록, 절대참조 포인트 문구 또는 None)
-    """
     try:
         f = str(formula or "")
         if not f.startswith("="):
@@ -6698,7 +5553,6 @@ def explain_formula(formula):
     except Exception:
         return ["정답 수식을 한 단계씩 그대로 입력하며 구조를 익혀 보세요."], None
 
-
 ABS_POINT = ("$ 절대참조는 채우기 핸들로 수식을 복사할 때 참조 범위가 "
              "밀리지 않도록 고정하는 표시입니다. 표/기준 범위에만 $를 "
              "붙이고, 행마다 바뀌어야 하는 셀에는 붙이지 않습니다.")
@@ -6723,9 +5577,7 @@ CONCAT_POINT = (
     "표시 형식으로 꾸미면 값 자체는 숫자라 채점에서 다르게 볼 수 있으니, "
     "지시에 '붙여 표시'가 있으면 수식 끝에 &\"명\" 을 붙이세요.")
 
-
 def formula_point(expected_f, student_f=None):
-    """정답 수식과 내 수식의 차이에 맞는 '포인트' 한 문단. 없으면 None."""
     try:
         ef = str(expected_f or "")
         sf = str(student_f or "")
@@ -6734,20 +5586,16 @@ def formula_point(expected_f, student_f=None):
         eu, su = _flat(ef), _flat(sf)
         e_names = set(re.findall(r"([A-Z][A-Z.]{1,15})\(",
                                  re.sub(r'"[^"]*"', "", eu)))
-        # 1) 문자 -> 숫자 변환 (*1 / VALUE)
         cut_used = any(fn + "(" in eu for fn in TEXT_CUT_FUNCS)
         e_conv = bool(re.search(r"\)\*1(?![\d.])", eu)) or "VALUE(" in eu
         s_conv = bool(re.search(r"\)\*1(?![\d.])", su)) or "VALUE(" in su
         if cut_used and e_conv and (not sf or not s_conv):
             return TEXT2NUM_POINT
-        # 2) 찾기 함수의 행/열 번호·일치 옵션
         if e_names & {"VLOOKUP", "HLOOKUP"}:
             return LOOKUP_POINT
-        # 3) 조건 문자열(따옴표 vs & 연결)
         if any(n.startswith(("COUNTIF", "SUMIF", "AVERAGEIF"))
                for n in e_names) and '"&' in eu.replace(" ", ""):
             return CRITERIA_POINT
-        # 4) 결과 뒤 문자 붙이기
         tail = _tail_concat_strings(_parse_formula(ef))
         if tail and (not sf or not _tail_concat_strings(_parse_formula(sf))):
             return CONCAT_POINT
@@ -6757,9 +5605,7 @@ def formula_point(expected_f, student_f=None):
     except Exception:
         return None
 
-
 def explain_number_format(nf):
-    """number_format 코드 문자열의 한국어 해설."""
     try:
         nf = nf_display(nf)
         if not nf or nf in ("General", _NF_GENERAL_KO):
@@ -6804,7 +5650,7 @@ def explain_number_format(nf):
             feats.append("날짜/시간을 " + "·".join(bits) + " 형태로 표시")
         for lit in lits:
             if is_date and lit.strip() in ("년", "월", "일", "시", "분", "초"):
-                continue  # 날짜 설명에 이미 포함
+                continue
             feats.append(f"문자 '{lit.strip()}' 붙여 표시")
         if not feats:
             return f"사용자 지정 형식 코드 {nf} 를 그대로 입력합니다."
@@ -6812,14 +5658,7 @@ def explain_number_format(nf):
     except Exception:
         return f"사용자 지정 형식 코드 {nf} 를 그대로 입력합니다."
 
-
-# ---------------------------------------------------------------------------
-# 수식 차이 진단기 (학생 수식 vs 정답 수식)
-# ---------------------------------------------------------------------------
-
-
 def _walk_funcs(node, depth=0, out=None):
-    """트리에서 (함수명, 깊이, 노드) 목록 (DFS 선행 순서)."""
     if out is None:
         out = []
     if node[0] == "func":
@@ -6831,15 +5670,11 @@ def _walk_funcs(node, depth=0, out=None):
             _walk_funcs(p, depth, out)
     return out
 
-
 def _strip_strings(f):
     return re.sub(r'"[^"]*"', '""', str(f))
 
-
 def _cmp_ops(f):
-    """비교 연산자 목록 (문자열 리터럴 제외)."""
     return re.findall(r"<=|>=|<>|<|>", _strip_strings(f))
-
 
 def _top_func_name(tree):
     if tree[0] == "func":
@@ -6850,18 +5685,12 @@ def _top_func_name(tree):
                 return p[1]
     return None
 
-
 def _is_ref_node(n):
     return n[0] == "ref"
-
 
 def _josa_wa(word):
     return f"{word}와(과)"
 
-
-# --- 계산작업 진단 보조 ---------------------------------------------------
-
-# VLOOKUP/HLOOKUP 인수의 역할 이름 (1부터 센 위치)
 LOOKUP_ARG_KO = {
     "VLOOKUP": {1: "찾을 값", 2: "찾을 범위", 3: "가져올 열 번호",
                 4: "일치 옵션"},
@@ -6871,13 +5700,10 @@ LOOKUP_ARG_KO = {
 LOOKUP_FIRST_KO = {"VLOOKUP": "열", "HLOOKUP": "행"}
 TEXT_CUT_FUNCS = ("MID", "LEFT", "RIGHT")
 
-
 def _flat(s):
     return re.sub(r"\s+", "", str(s or "")).upper()
 
-
 def _num_conv_kind(sa, ea):
-    """정답이 학생 식에 *1 / VALUE()만 더한 것이면 '*1' / 'VALUE'."""
     base, got = _flat(_render(sa, {})), _flat(_render(ea, {}))
     if not base or base == got:
         return None
@@ -6887,9 +5713,7 @@ def _num_conv_kind(sa, ea):
         return "VALUE"
     return None
 
-
 def _cond_arg_text(node):
-    """조건 인수를 하나의 문자열로 정규화 ('">"&800000' -> '>800000')."""
     if node[0] == "str":
         return node[1].strip('"')
     if node[0] == "expr":
@@ -6907,9 +5731,7 @@ def _cond_arg_text(node):
             return "".join(out)
     return None
 
-
 def _tail_concat_strings(tree):
-    """최상위 & 연결로 이어 붙인 문자열 리터럴 목록."""
     if not tree or tree[0] != "expr":
         return []
     out = []
@@ -6920,9 +5742,7 @@ def _tail_concat_strings(tree):
             out.append(parts[i + 1][1])
     return out
 
-
 def _edit_distance(a, b, cap=2):
-    """짧은 문자열 편집 거리 (cap 초과면 cap+1)."""
     if abs(len(a) - len(b)) > cap:
         return cap + 1
     prev = list(range(len(b) + 1))
@@ -6934,9 +5754,7 @@ def _edit_distance(a, b, cap=2):
         prev = cur
     return prev[-1]
 
-
 def _typo_pairs(extra, missing):
-    """오타로 보이는 (내가 쓴 이름, 정답 이름) 쌍 목록."""
     out = []
     for x in extra:
         for m in missing:
@@ -6945,12 +5763,7 @@ def _typo_pairs(extra, missing):
                 break
     return out
 
-
 def diagnose_formula_diff(student_f, expected_f):
-    """학생 수식과 정답 수식을 비교해 무엇이 다른지 한국어 진단 목록 생성.
-
-    확실히 짚을 수 있는 차이만 나열하고, 없으면 '접근이 다릅니다' 안내.
-    """
     fallback = ["정답 수식과 접근이 다릅니다. 아래 풀이를 따라 처음부터 "
                 "다시 작성해 보세요."]
     try:
@@ -6973,7 +5786,6 @@ def diagnose_formula_diff(student_f, expected_f):
             return out
 
         if norm_formula(sf) == norm_formula(ef):
-            # 정규화하면 같음 = $ 등 표기 차이만 -> 절대참조 진단만
             if re.sub(r"\s+", "", sf.upper()) != \
                     re.sub(r"\s+", "", ef.upper()):
                 return _abs_ref_notes()
@@ -6986,7 +5798,6 @@ def diagnose_formula_diff(student_f, expected_f):
         enames = [n for n, _d, _x in efuncs]
         sset, eset = set(snames), set(enames)
         s_top, e_top = _top_func_name(st), _top_func_name(et)
-        # 1) 중첩 순서 반전 (예: =OR(IF(...)) vs =IF(OR(...)))
         if s_top and e_top and s_top != e_top \
                 and s_top in eset and e_top in sset:
             notes.append(
@@ -7010,7 +5821,6 @@ def diagnose_formula_diff(student_f, expected_f):
             if extra:
                 notes.append("정답에 없는 " + ", ".join(extra)
                              + " 함수를 사용했습니다.")
-        # 2) 비교 연산자 방향
         from collections import Counter
         sops, eops = Counter(_cmp_ops(sf)), Counter(_cmp_ops(ef))
         for a, b in ((">=", "<="), ("<=", ">="), (">", "<"), ("<", ">")):
@@ -7018,7 +5828,6 @@ def diagnose_formula_diff(student_f, expected_f):
                 notes.append(f"'{a}' 를 썼지만 '{b}' 여야 합니다 "
                              "(비교 방향이 반대).")
                 break
-        # 3) 같은 함수의 인수 비교 (첫 등장 페어)
         seen = set()
         for name in enames:
             if name in seen or name not in sset:
@@ -7039,7 +5848,6 @@ def diagnose_formula_diff(student_f, expected_f):
                 label = f"{name}의 {i}번째 인수"
                 if role.get(i):
                     label = f"{name}의 {i}번째 인수({role[i]})"
-                # (a) 조건 문자열을 & 로 이어 붙인 것은 같은 뜻 — 인정
                 cs, ce = _cond_arg_text(sa), _cond_arg_text(ea)
                 if cs is not None and ce is not None and cs == ce:
                     if rs != re_:
@@ -7047,7 +5855,6 @@ def diagnose_formula_diff(student_f, expected_f):
                             f"조건을 {rs} 처럼 이어 붙인 것은 {re_} 와 같은 "
                             "뜻입니다 — 이 부분은 맞습니다.")
                     continue
-                # (b) 문자 -> 숫자 변환(*1 / VALUE) 누락
                 conv = _num_conv_kind(sa, ea)
                 if conv:
                     cut = next((fn for fn in TEXT_CUT_FUNCS
@@ -7066,7 +5873,6 @@ def diagnose_formula_diff(student_f, expected_f):
                     notes.append(f"{label}에는 숫자 변환(*1 · VALUE)이 "
                                  f"필요 없습니다 — 정답은 {re_} 입니다.")
                     continue
-                # (c) 찾기 함수의 행/열 번호·일치 옵션
                 if name in LOOKUP_ARG_KO and i == 3 and \
                         sa[0] == "num" and ea[0] == "num":
                     unit = LOOKUP_FIRST_KO[name]
@@ -7094,7 +5900,6 @@ def diagnose_formula_diff(student_f, expected_f):
                     if rs.replace("$", "") != re_.replace("$", ""):
                         notes.append(f"{name}의 {i}번째 참조가 {re_}이어야 "
                                      f"하는데 {rs}을(를) 썼습니다.")
-        # 5) & 연결 유무 — 결과 뒤에 붙이는 문자(&"명")를 따로 본다
         e_tail = _tail_concat_strings(et)
         s_tail = _tail_concat_strings(st)
         for lit in e_tail:
@@ -7109,9 +5914,7 @@ def diagnose_formula_diff(student_f, expected_f):
                          "형태로 이어 붙여야 합니다.")
         elif "&" in _strip_strings(sf) and "&" not in _strip_strings(ef):
             notes.append("정답에는 & 연결이 없습니다.")
-        # 6) 절대참조 ($ 고정) — 구체적인 차이를 먼저 보여 준 뒤 덧붙인다
         notes.extend(_abs_ref_notes())
-        # 중복 제거 + 상한
         uniq = []
         for n in notes:
             if n not in uniq:
@@ -7119,11 +5922,6 @@ def diagnose_formula_diff(student_f, expected_f):
         return uniq[:6] if uniq else fallback
     except Exception:
         return fallback
-
-
-# ---------------------------------------------------------------------------
-# 취약점 유형 분류와 처방
-# ---------------------------------------------------------------------------
 
 CALC_CAT_FUNCS = [
     ("DB", {"DSUM", "DAVERAGE", "DCOUNT", "DCOUNTA", "DMAX", "DMIN", "DGET",
@@ -7254,9 +6052,7 @@ CAT_INFO = {
     },
 }
 
-
 def classify_formula_category(formula):
-    """계산작업 정답 수식 -> 6유형 분류."""
     try:
         f = re.sub(r'"[^"]*"', "", str(formula or "").upper())
         names = set(re.findall(r"([A-Z][A-Z.]{1,15})\s*\(", f))
@@ -7266,21 +6062,19 @@ def classify_formula_category(formula):
             if cat == "DB" and names & funcs:
                 return "DB"
         scores = {cat: len(names & funcs) for cat, funcs in CALC_CAT_FUNCS}
-        if "&" in f:  # & 연결은 동점일 때만 문자열 쪽으로 기울도록 반 점
+        if "&" in f:
             scores["문자열"] = scores.get("문자열", 0) + 0.5
         best = max(scores.values() or [0])
         if best == 0:
             return "통계조건"
-        for cat, _funcs in CALC_CAT_FUNCS:  # 동점이면 목록 순서 우선
+        for cat, _funcs in CALC_CAT_FUNCS:
             if scores.get(cat) == best:
                 return cat
     except Exception:
         pass
     return "통계조건"
 
-
 def enrich_wrong_cards(results):
-    """카드에 유형 분류·수식 해설·수식 차이 진단을 채운다."""
     for r in results:
         nname = norm_sheet_name(r.name)
         for card in r.wrong:
@@ -7302,18 +6096,13 @@ def enrich_wrong_cards(results):
                 if card["student_formula"] and not pre_notes:
                     card["diff_notes"] = diagnose_formula_diff(
                         card["student_formula"], card["formula"])
-                # 계산작업 카드의 '포인트'는 실제 차이에 맞춰 고른다
-                # (모든 수식에 '$ 절대참조는 …'이 붙던 문제). 다른 시트는
-                # 채점 단계에서 지정한 포인트를 그대로 둔다.
                 if nname == "계산작업":
                     pt = formula_point(card["formula"],
                                        card["student_formula"])
                     if pt:
                         card["point"] = pt
 
-
 def build_diagnosis(results):
-    """(유형별 실점 목록, TOP3 카드, 체크리스트) 생성."""
     losses = {}
     for r in results:
         for card in r.wrong:
@@ -7342,12 +6131,6 @@ def build_diagnosis(results):
             seen.add(c)
             uniq.append(c)
     return ordered, top3, uniq[:5]
-
-
-# ---------------------------------------------------------------------------
-# 출력
-# ---------------------------------------------------------------------------
-
 
 def print_console(results, score100, global_notes, paths, partial=False):
     line = "─" * 56
@@ -7432,13 +6215,10 @@ def print_console(results, score100, global_notes, paths, partial=False):
             print(f"    * {nt}")
     print()
 
-
 def esc(s):
     return html_mod.escape(str(s))
 
-
 def _svg_donut(score, pass_line=PASS_LINE, max_total=100, show_pass=True):
-    """총점 도넛 게이지. 부분 채점이면 영역 만점 기준, 합격선 눈금 생략."""
     r = 56
     c = 2 * math.pi * r
     max_total = max_total or 100
@@ -7470,9 +6250,7 @@ def _svg_donut(score, pass_line=PASS_LINE, max_total=100, show_pass=True):
         f'<text x="70" y="90" text-anchor="middle" font-size="12" '
         f'fill="#57705F">/ {max_total:.0f}점</text></svg>')
 
-
 def _svg_sheet_bars(results):
-    """시트별 획득/배점 가로 막대."""
     lab_w, bar_w, row_h, pad = 150, 380, 30, 10
     width = lab_w + bar_w + 90
     height = pad * 2 + row_h * len(results)
@@ -7503,9 +6281,7 @@ def _svg_sheet_bars(results):
             f'{height}" role="img" aria-label="영역별 점수">'
             + "".join(rows) + "</svg>")
 
-
 def _svg_trend(points):
-    """과거 -> 이번 점수 꺾은선. points: [(라벨, 점수)]"""
     width, height = 560, 200
     ml, mr, mt, mb = 42, 18, 16, 34
     pw, ph = width - ml - mr, height - mt - mb
@@ -7551,9 +6327,7 @@ def _svg_trend(points):
             f'{height}" role="img" aria-label="성적 추이">'
             + "".join(parts) + "</svg>")
 
-
 def _svg_cat_bars(cat_losses):
-    """유형별 실점 가로 막대 (호박색)."""
     lab_w, bar_w, row_h, pad = 170, 320, 28, 8
     width = lab_w + bar_w + 80
     height = pad * 2 + row_h * len(cat_losses)
@@ -7578,12 +6352,10 @@ def _svg_cat_bars(cat_losses):
             f'{height}" role="img" aria-label="유형별 실점">'
             + "".join(rows) + "</svg>")
 
-
 def _history_points(history, set_name, current_score):
-    """기록에서 같은 세트의 점수 추이 추출 + 이번 점수."""
     pts = []
     for rec in history or []:
-        if rec.get("mode") == "부분연습":  # 부분 연습 점수는 추이에서 제외
+        if rec.get("mode") == "부분연습":
             continue
         nm = str(rec.get("세트명", ""))
         if set_name and (nm == set_name or nm.startswith(set_name)):
@@ -7596,20 +6368,6 @@ def _history_points(history, set_name, current_score):
     pts.append(("이번", int(current_score)))
     return pts
 
-
-# ---------------------------------------------------------------------------
-# 자가 채점 (v2.2.0) — 채점기는 1차 의견, 최종 판정은 사용자
-#
-# 이 채점기는 틀릴 수 있다(이의제기 41건 중 25건이 오탐이었다). 배포판에는
-# 이의를 제기해 전달할 곳이 없으니, 리포트에서 쓰는 사람이 직접 판정을
-# 뒤집게 한다. 뒤집은 선택은 리포트별 localStorage 키에 저장한다.
-#
-# '확인 필요'(v2.0.8 보류)와는 다른 개념이다:
-#   확인 필요 = 채점기가 **판단하지 못한** 항목 (기본값: 점수에서 뺌)
-#   자가 채점 = 사용자가 채점기의 **판정을 뒤집은** 항목
-# 리포트에서도 두 가지를 섞지 않고 따로 적는다.
-# ---------------------------------------------------------------------------
-
 SELF_GRADE_KEY_PREFIX = "kocoSelfGrade:"
 
 SELF_GRADE_DISCLAIMER = "채점기에 오류가 있을 수 있습니다. 참고용으로 봐 주세요."
@@ -7619,43 +6377,26 @@ SELF_GRADE_DISCLAIMER_SUB = (
     "오답노트에서 직접 판정을 바꿀 수 있고, 점수는 바로 다시 계산됩니다."
 )
 
-
 def report_storage_id(student_path):
-    """리포트별 저장소 키에 쓸 식별자.
-
-    응시 시각(`풀이_<세트>_20260915_1226.xlsm`)이 있으면 그것을 쓴다 —
-    기록(`기록.json`)의 id 와 같은 값이라 나중에 점수를 기록에 옮길 때
-    어느 응시인지 가리킬 수 있다. 시각이 없으면 풀이 파일 이름 해시를
-    쓴다(채점 시각을 쓰면 같은 리포트를 다시 만들 때마다 키가 갈려
-    저장한 선택이 날아간다).
-    """
     rid = attempt_report_id(student_path)
     if rid:
         return rid
     base = os.path.basename(str(student_path or "")) or "report"
     return "f" + hashlib.md5(base.encode("utf-8")).hexdigest()[:12]
 
-
 def self_grade_key(student_path):
-    """리포트별 localStorage 키 — 리포트가 다르면 키도 다르다."""
     return SELF_GRADE_KEY_PREFIX + report_storage_id(student_path)
 
-
 def self_grade_card_id(card, idx):
-    """오답 카드 1장의 자가 채점 식별자 (같은 리포트 안에서 안정)."""
     raw = "%d|%s|%s|%s" % (idx, card.get("sheet", ""), card.get("label", ""),
                            card.get("kind", ""))
     return "c%d-%s" % (idx, hashlib.md5(raw.encode("utf-8")).hexdigest()[:8])
 
-
 def self_grade_hold_id(hold, idx):
-    """'확인 필요' 1건의 자가 채점 식별자."""
     raw = "%d|%s|%s" % (idx, hold.get("sheet", ""), hold.get("label", ""))
     return "h%d-%s" % (idx, hashlib.md5(raw.encode("utf-8")).hexdigest()[:8])
 
-
 def self_grade_payload(results, score100, paths, partial=False):
-    """리포트 JS(와 --json)가 쓰는 자가 채점 데이터."""
     cards = [c for r in results for c in r.wrong]
     holds = hold_items(results)
     alloc_total = round(sum(r.alloc for r in results), 2)
@@ -7685,14 +6426,11 @@ def self_grade_payload(results, score100, paths, partial=False):
         ],
     }
 
-
 def js_json(obj):
-    """HTML <script> 안에 넣어도 안전한 JSON 리터럴."""
     return (json.dumps(obj, ensure_ascii=False)
             .replace("<", "\\u003c").replace(">", "\\u003e")
             .replace("&", "\\u0026").replace("\u2028", "\\u2028")
             .replace("\u2029", "\\u2029"))
-
 
 _SELF_GRADE_JS = r"""(function () {
   "use strict";
@@ -7931,16 +6669,7 @@ _SELF_GRADE_JS = r"""(function () {
   };
 })();"""
 
-
 def _wrong_card_html(card, idx=None, sg_id=None):
-    """오답노트 카드 1장.
-
-    v2.1.0: 이의제기 경로를 없앴습니다(오픈 소스로 전환 — 채점이 틀린 것
-    같으면 저장소에서 직접 고치거나 이슈/PR 로 알려 주세요). idx 인자는
-    호출부 호환을 위해 남겨 두고 쓰지 않습니다.
-
-    v2.2.0: sg_id 를 주면 카드 아래에 자가 채점 토글([내가 보기엔 맞음])을
-    답니다 — 채점기의 판정은 1차 의견이고 최종 판정은 사용자 몫입니다."""
     cat = card.get("category")
     cat_chip = (f'<span class="chip">{esc(CAT_INFO.get(cat, {}).get("이름", cat))}'
                 f'</span>') if cat else ""
@@ -7954,7 +6683,6 @@ def _wrong_card_html(card, idx=None, sg_id=None):
     chip_only = cells and all(c.get("expected") is None and c.get("got") is None
                               for c in cells)
     if chip_only:
-        # ", " 구분자: 칩 스타일이 깨져도 'B2:H2B4:B11'처럼 붙지 않게
         chips = ", ".join(f'<span class="cellchip">{esc(c["coord"])}</span>'
                           for c in cells)
         body.append(f'<div class="wc-chips">확인할 위치: {chips}'
@@ -8010,9 +6738,6 @@ def _wrong_card_html(card, idx=None, sg_id=None):
     if card.get("hint"):
         body.append(f'<p class="hint">방법: {esc(card["hint"])}</p>')
     if sg_id and lost:
-        # 자가 채점: 채점기 1차 판정을 사용자가 뒤집는 자리.
-        # 되돌릴 감점이 없는 카드(설명용 0점 카드)에는 토글을 달지 않는다 —
-        # 눌러도 점수가 그대로라 사용자를 헷갈리게 한다.
         body.append(
             '<div class="sg-row">'
             '<button type="button" class="sg-toggle" aria-pressed="false">'
@@ -8028,16 +6753,8 @@ def _wrong_card_html(card, idx=None, sg_id=None):
                     "이 카드에는 되돌릴 감점이 없습니다 (설명용)</span></div>")
     return f'<div class="wc">{head}{"".join(body)}</div>'
 
-
-
-
 def write_html(path, results, score100, global_notes, paths,
                set_name=None, history=None, partial=False):
-    """학습 리포트 HTML 생성 (자체 완결, 인라인 SVG).
-
-    partial=True면 선택 시트만 채점한 부분 리포트: 영역 배점 만점 기준
-    도넛, 합격선/배지/성적 추이 생략.
-    """
     verdict = "합격권" if score100 >= PASS_LINE else "미달"
     vcls = "pass" if score100 >= PASS_LINE else "fail"
     set_name = set_name or derive_set_name(paths[0])
@@ -8045,7 +6762,6 @@ def write_html(path, results, score100, global_notes, paths,
     now_txt = _now.strftime("%Y-%m-%d %H:%M")
     rid = attempt_report_id(paths[2]) or _now.strftime("%Y%m%d%H%M%S")
 
-    # 엉뚱한 사본 채점 감지: 채점 대상 diff 셀 일치율 10% 미만이면 경고
     diff_total = sum(getattr(r, "diff_total", 0) or 0 for r in results)
     diff_matched = sum(getattr(r, "diff_matched", 0) or 0 for r in results)
     warn_html = ""
@@ -8053,7 +6769,6 @@ def write_html(path, results, score100, global_notes, paths,
         warn_html = ('<div class="warn-banner">풀이가 거의 비어 있습니다 — '
                      'Excel에서 저장(Ctrl+S)했는지, 풀이 사본 파일이 맞는지 '
                      '확인하세요</div>')
-    # 문제 파일 오염 의심(계산작업에 수식이 이미 있음): 상단 배너 (v2.0.2)
     contam = [c for r in results for c in (getattr(r, "contaminated", None) or [])]
     if contam:
         warn_html += ('<div class="warn-banner">문제 파일 오염 의심 — 문제 파일의 '
@@ -8069,7 +6784,6 @@ def write_html(path, results, score100, global_notes, paths,
     max_total = sum(r.alloc for r in results) if partial else 100
     graded_names = ", ".join(r.name for r in results)
 
-    # 성적 추이 (부분 채점은 표시하지 않음 — 시험 점수와 섞이지 않게)
     trend_html = ""
     if history and not partial:
         pts = _history_points(history, set_name, score100)
@@ -8078,7 +6792,6 @@ def write_html(path, results, score100, global_notes, paths,
                           '<div class="scroll">' + _svg_trend(pts)
                           + "</div></div>")
 
-    # 오답노트 — 각 카드에 자가 채점 토글(채점기 1차 판정 뒤집기)을 단다
     sg_card_ids = [self_grade_card_id(c, i) for i, c in enumerate(all_cards)]
     if all_cards:
         wrong_html = ('<div class="card"><h2>오답노트</h2>'
@@ -8103,14 +6816,8 @@ def write_html(path, results, score100, global_notes, paths,
                       '<p class="perfect">틀린 항목이 없습니다. 모든 채점 '
                       '항목을 통과했습니다.</p></div>')
 
-    # v2.1.0: 이의제기 UI(카드 버튼 · 상단 고정 바 · 복사 · 모달 · 안내 카드)는
-    # 통째로 없앴습니다. 이 도구는 오픈 소스라, 채점이 틀린 것 같으면 리포트에서
-    # 무엇을 어떻게 봤는지 확인하고 저장소에서 직접 고치거나(기대값 JSON 의
-    # points·groups·exclude 로 코드를 안 고치고도 조정 가능) 이슈·PR 로 알려
-    # 주면 됩니다. 오답노트·취약점 진단·해설은 그대로입니다.
     body_cls = ""
 
-    # 취약점 진단
     if cat_losses:
         tops = []
         for i, t in enumerate(top3, 1):
@@ -8127,7 +6834,6 @@ def write_html(path, results, score100, global_notes, paths,
     else:
         diag_html = ""
 
-    # 다음 액션
     if not checklist:
         checklist = ["내일 다른 회차 모의고사 1세트로 컨디션 유지",
                      "헷갈렸던 함수 1개를 골라 치트시트 훑어보기"]
@@ -8136,7 +6842,6 @@ def write_html(path, results, score100, global_notes, paths,
                             "</label></li>" for c in checklist)
                   + "</ul></div>")
 
-    # --- [확인 필요] 판정하지 못해 점수에서 뺀 항목 ---
     holds = hold_items(results)
     held_total = hold_total(results)
     alloc_total = sum(r.alloc for r in results)
@@ -8188,10 +6893,6 @@ def write_html(path, results, score100, global_notes, paths,
         score_note = (f'<div class="review-flag">확인 필요 {len(holds)}건 '
                       f'({held_total:g}점 분량은 채점에서 제외)</div>')
 
-    # --- v2.2.0 면책 문구 · 자가 채점 패널 ---
-    # 채점기는 1차 의견이고 최종 판정은 사용자다. 점수를 두 값으로 나란히
-    # 보여 주고(채점기 / 내가 매긴 점수), 오답노트·확인 필요에서 바꾼
-    # 판정이 여기에 즉시 반영된다.
     disclaimer_html = (
         '<div class="disclaimer" role="note">'
         f"<strong>{esc(SELF_GRADE_DISCLAIMER)}</strong>"
@@ -8448,15 +7149,12 @@ footer { color:#57705F; font-size:0.78rem; text-align:center;
     with open(path, "w", encoding="utf-8") as f:
         f.write(doc)
 
-
 def derive_set_name(problem_path):
-    """문제 파일명에서 세트명 추출 (…_문제.xlsx -> …)."""
     base = os.path.splitext(os.path.basename(str(problem_path)))[0]
     for suf in ("_문제", "-문제", " 문제"):
         if base.endswith(suf):
             return base[: -len(suf)]
     return base
-
 
 def write_json(path, results, score100, global_notes, paths, partial=False):
     holds = hold_items(results)
@@ -8469,7 +7167,6 @@ def write_json(path, results, score100, global_notes, paths, partial=False):
         "graded_sheets": [r.name for r in results],
         "max_total": round(sum(r.alloc for r in results), 1)
         if partial else 100,
-        # --- 확인 필요(판정 불가) — 기존 키는 그대로 두고 추가만 한다 ---
         "review_count": len(holds),
         "review_points": held,
         "review_items": [
@@ -8487,8 +7184,6 @@ def write_json(path, results, score100, global_notes, paths, partial=False):
                        "비율 환산합니다 (점수 = 득점 ÷ 채점된 배점 × 100). "
                        "확인 필요는 감점도 가점도 아닙니다."),
         },
-        # --- 자가 채점(v2.2.0) — 추가만. total·wrong_items 등 기존 키는
-        #     채점기의 1차 판정 그대로다(시험장이 읽는다). ---
         "self_grading": dict(
             self_grade_payload(results, score100, paths, partial=partial),
             keyPrefix=SELF_GRADE_KEY_PREFIX,
@@ -8543,12 +7238,6 @@ def write_json(path, results, score100, global_notes, paths, partial=False):
     with open(path, "w", encoding="utf-8") as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
-
-# ---------------------------------------------------------------------------
-# main
-# ---------------------------------------------------------------------------
-
-
 def main(argv=None):
     if sys.platform == "win32":
         try:
@@ -8602,7 +7291,6 @@ def main(argv=None):
     partial = bool(sheets)
     paths = (args.problem, args.answer, args.student)
     print_console(results, score100, notes, paths, partial=partial)
-    # 기본 산출물 경로: 명시하지 않으면 풀이 파일 옆 '채점결과/' 폴더
     set_name = derive_set_name(args.problem)
     html_path, json_path = args.html, args.json_out
     if not html_path or not json_path:
@@ -8636,7 +7324,6 @@ def main(argv=None):
                    partial=partial)
         print(f"JSON 결과를 저장했습니다: {json_path}")
     return 0
-
 
 if __name__ == "__main__":
     sys.exit(main())

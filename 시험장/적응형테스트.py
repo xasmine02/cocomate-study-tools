@@ -1,28 +1,4 @@
 # -*- coding: utf-8 -*-
-"""시험장.py 적응형 일정 엔진 헤드리스 테스트 (tkinter 불필요).
-
-일정(v3.0.0): **사용자가 입력한 시험일** 기준 1주 — 학습일 D-7 ~ D-1.
-  · 7일이 안 남았으면 뒤에서부터 잘려 오늘 ~ D-1 만 배정된다.
-  · 7일보다 많이 남았으면 D-7 전은 자유 연습(kind free)이고 앞으로 올
-    일주일은 미리 보여 준다.
-  · 시험일이 지났으면 kind after("시험일을 다시 설정하세요"),
-    시험일이 없으면 kind unset.
-규칙: 하루 추천 1세트(응시 횟수 제한 없음) · 목표 사다리 70→80→90→100 ·
-      세트 선택 ① 미응시(이름순) ② 70점 미만(최고점 낮은 순) ③ 현재 목표
-      미달(최고점 낮은 순) ④ 그래도 날이 남으면 보유 세트 순환 재응시
-      ⑤ 전 세트가 이미 목표 이상이면 그 날은 자유 복습(빈 슬롯).
-      **고정 세트 슬롯은 없다** — 무엇을 푸는지는 보유 세트로 정해진다.
-
-  ⓪ 구간 도출(시험일 기준) · 용량(언제나 1) · 승격·강등·경고 폐지
-  ① 보유 세트 수 N = 0 · 1 · 3 · 7 · 10 경계 배정
-  ② 오늘 시나리오 (a) 무기록 (b) 72 합격 (c) 58 미달
-  ③ 응시 제한 없음: 오늘 응시해도 추천 유지 · 남은 학습일 그대로
-  ④ 목표 승급: 70 달성 후 목표 80 — 합격한 세트도 다시 배정(kind goal)
-  ⑤ 전 세트 만점(현재 목표 이상) → 빈 슬롯 · all_clear · 자유 복습 카드
-  ⑥ 신규 세트 편입 · 재응시 후보 대기줄(retry_queue)
-  ⑦ 결정성 + 카드 plan(adaptive_day_plan) 형식 · 시험일/이후/미설정
-  ⑧ 시험일 경계: 7일 미만(뒤에서 자르기) · 7일 초과(자유 연습) · 지남 · 미설정
-"""
 import copy
 import importlib.util
 import os
@@ -36,14 +12,13 @@ N = 0
 D = date
 TD = timedelta
 
-EXAM = D(2026, 11, 19)      # 테스트용 시험일 (코드에 박힌 값이 아님)
+EXAM = D(2026, 11, 19)
 EX = [EXAM]
 EX2 = [EXAM, EXAM + TD(days=1)]
-RD = sj.ROUTINE_DAYS        # 7
+RD = sj.ROUTINE_DAYS
 
 
 def dd(n):
-    """시험일로부터 n일 전(D-n) 날짜."""
     return EXAM - TD(days=n)
 
 
@@ -62,7 +37,6 @@ def mkset(name):
 
 
 def pool(n, prefix="세트"):
-    """보유 세트 n개 (이름순 = 배정 순서)."""
     return [mkset(f"{prefix} {i:02d}") for i in range(1, n + 1)]
 
 
@@ -76,7 +50,6 @@ def rec(name, score, d, mode="시험"):
 
 
 def names_by_day(plan):
-    """{ISO 날짜: [(세트명 또는 AUTO, 목표)...]}"""
     return {d.isoformat(): [(sl["name"] if not sl["auto"] else "AUTO", sl["goal"]) for sl in v]
             for d, v in plan["days"].items()}
 
@@ -97,10 +70,9 @@ def queue_of(plan):
     return [(q["name"], q["kind"], q["best"]) for q in plan["retry_queue"]]
 
 
-WEEK = [dd(RD - i) for i in range(RD)]        # D-7 … D-1
+WEEK = [dd(RD - i) for i in range(RD)]
 
 
-# ⓪ 구간 도출·용량 ---------------------------------------------------------
 print("⓪ 구간 도출(시험일 기준) · 하루 1세트 용량")
 segs = sj.study_segments(EX)
 check("시험일 -> 학습 구간은 D-7 ~ D-1 하나뿐",
@@ -133,7 +105,6 @@ check("기본 용량: 주말·평일·마감일 구분 없이 언제나 1세트 
 check("D-7~D-1 총 용량 7 = 학습일 7일 × 1 (= 추천 세트 수)",
       sum(sj.base_capacity(d, END) for d in WEEK) == 7)
 
-# ① 보유 세트 수 경계 -------------------------------------------------------
 print("① 보유 세트 수 N = 0 · 1 · 3 · 7 · 10 (D-7 무기록)")
 p0 = sj.build_adaptive_plan(dd(RD), [], [], EX)
 check("N=0: 배정 없음 · free 전부 1 · total_sets 0 · no_sets True",
@@ -195,7 +166,6 @@ check("첫 응시 사유에 '보유 세트 n/전체' 순번이 들어간다",
       p7["days"][dd(RD)][0]["why"] == "첫 응시 · 보유 세트 1/7",
       p7["days"][dd(RD)][0]["why"])
 
-# ② 오늘 시나리오 ----------------------------------------------------------
 print("② D-5 (a) 무기록 · (b) 72 합격 · (c) 58 미달")
 T = dd(5)
 S1 = NAMES[0]
@@ -243,9 +213,8 @@ check("(b)(c) 차이: 합격이면 목표 80 사다리 · 미달이면 목표 70
       [n for v in nbb.values() for n, _g in v] == [n for v in nbc.values() for n, _g in v]
       and pb["level"]["current_goal"] == 80 and pc["level"]["current_goal"] == 70)
 
-# ③ 응시 제한 없음 ---------------------------------------------------------
 print("③ 응시 제한 없음: 오늘 응시해도 추천 유지")
-DAY_NO = RD + 1 - 5          # D-5 = Day 3
+DAY_NO = RD + 1 - 5
 card_b = sj.adaptive_day_plan(pb, DAY_NO, EX)
 check("(b) 오늘 카드: 추천 세트 스텝 유지 · '오늘 이미 1회 응시' + 제한 없음 안내 · 잠금 키 없음",
       card_b["제목"] == "오늘" and len(card_b["스텝"]) == 5 and "잠금" not in card_b
@@ -283,7 +252,6 @@ check("같은 날 재응시로 최고점이 오르면 목표 단계가 바로 �
       P_TWICE["level"]["best_total"] == 76 and P_TWICE["level"]["current_goal"] == 80
       and queue_of(P_TWICE) == [(S1, "goal", 76)], str(queue_of(P_TWICE)))
 
-# ③-2 진행 중: 미응시 먼저, 그 다음 미달 재응시 ----------------------------
 print("③-2 진행 중: 미응시 먼저, 그 다음 미달 재응시(최고점 낮은 순)")
 R_mid = [rec(NAMES[0], 60, dd(12)), rec(NAMES[1], 62, dd(11)),
          rec(NAMES[2], 58, dd(10)), rec(NAMES[3], 65, dd(9)),
@@ -326,9 +294,8 @@ check("재응시 풀은 순환: 남은 날이 많으면 같은 세트가 다시 
                                                  for k in range(9)], SETS, EX))
       == NAMES[:7])
 
-# ④ 목표 승급: 합격한 세트도 다시 배정 -------------------------------------
 print("④ 목표 승급(70→80): 합격 세트도 현재 목표 미달이면 다시 배정")
-R_pass = [rec(NAMES[k], 71 + k, dd(20 - k)) for k in range(9)]   # 71~79
+R_pass = [rec(NAMES[k], 71 + k, dd(20 - k)) for k in range(9)]
 p2 = sj.build_adaptive_plan(dd(2), R_pass, SETS, EX)
 check("전 세트 71~79점(전부 합격) → 최고점 79 · 현재 목표 80 · 합격 9/9",
       p2["level"] == {"tier": 80, "current_goal": 80, "best_total": 79,
@@ -341,7 +308,7 @@ check("D-2·D-1 = 최고점 낮은 순(71 → 72)으로 '목표 80 도전'(kind 
       and "목표 80점" in p2["days"][dd(2)][0]["why"], str(names_by_day(p2)))
 check("합격(70 이상) 세트도 재배정 대상 — all_clear 아님",
       p2["all_clear"] is False and len(p2["retry_queue"]) == 9)
-R_85 = [rec(NAMES[k], 81 + k, dd(20 - k)) for k in range(9)]     # 81~89
+R_85 = [rec(NAMES[k], 81 + k, dd(20 - k)) for k in range(9)]
 p2b = sj.build_adaptive_plan(dd(2), R_85, SETS, EX)
 check("80 단계까지 달성(최고 89) → 현재 목표 90 · 슬롯 목표 90",
       p2b["level"]["current_goal"] == 90 and p2b["level"]["achieved"] == [70, 80]
@@ -352,7 +319,6 @@ check("100 달성 → tier perfect · 남은 세트는 목표 100으로 계속 �
       and all(sl["goal"] == 100 for v in p2c["days"].values() for sl in v)
       and p2c["reason"] == "만점 달성 · 남은 학습일 2일", p2c["reason"])
 
-# ⑤ 전 세트 목표 달성 → 빈 슬롯 -------------------------------------------
 print("⑤ 전 세트가 현재 목표 이상 → 빈 슬롯(자유 복습)")
 R_full = [rec(n, 100, dd(20)) for n in NAMES]
 p4c = sj.build_adaptive_plan(dd(4), R_full, SETS, EX)
@@ -370,9 +336,8 @@ p4n = sj.build_adaptive_plan(dd(4), [], [], EX)
 check("세트가 하나도 없으면 전부 빈 슬롯 · total_sets 0",
       counts(p4n) == [0, 0, 0, 0] and p4n["total_sets"] == 0 and p4n["remaining"] == 0)
 
-# ⑥ 신규 세트·대기줄 -------------------------------------------------------
 print("⑥ 신규 세트 편입 · 재응시 후보 대기줄")
-NEW = mkset("하나 새 세트")          # 이름순으로 맨 뒤
+NEW = mkset("하나 새 세트")
 p4d = sj.build_adaptive_plan(dd(4), R_mid, SETS + [NEW], EX)
 check("새로 넣은 세트도 미응시라 첫 응시 대상(이름순 뒤)",
       names_by_day(p4d)[dd(4).isoformat()] == [(NAMES[8], 80)]
@@ -396,13 +361,12 @@ check("부분연습·오답재풀이 기록만 있는 세트는 여전히 미응
                                           SETS, EX))[dd(3).isoformat()]
       == [(NAMES[0], 70)])
 
-# ⑦ 결정성·카드 plan 형식 --------------------------------------------------
 print("⑦ 결정성 · 카드 plan 형식")
 a = sj.build_adaptive_plan(dd(6), copy.deepcopy(R_mid[:3]), copy.deepcopy(SETS), EX)
 b = sj.build_adaptive_plan(dd(6), copy.deepcopy(R_mid[:3]), list(reversed(copy.deepcopy(SETS))), EX)
 check("같은 입력(세트 순서 무관) → 같은 출력",
       names_by_day(a) == names_by_day(b) and a["reason"] == b["reason"] and queue_of(a) == queue_of(b))
-today_plan = sj.adaptive_day_plan(pa, DAY_NO, EX)     # (a) 무기록 D-5 = Day 3
+today_plan = sj.adaptive_day_plan(pa, DAY_NO, EX)
 check("오늘 카드 plan: 적응형 · 세트객체 · 목표들 · 슬롯사유 · 스텝 5(필수 2 + 선택 3)",
       today_plan["적응형"] and today_plan["세트"] == [NAMES[0]]
       and [s["name"] for s in today_plan["세트객체"]] == [NAMES[0]]
@@ -452,7 +416,6 @@ check("일정표 API(plan_for_day/ROUTINE_STEPS) 유지: Day 3 자동 선택 1�
       sj.plan_for_day(3, exam=EX)["세트"] == [sj.AUTO] and len(sj.ROUTINE_STEPS[3]) == 5
       and sj.plan_for_day(RD, exam=EX)["목표"] == 70)
 
-# ⑧ 시험일 경계 ------------------------------------------------------------
 print("⑧ 시험일 경계: 7일 미만 · 7일 초과 · 지남 · 미설정")
 p_cut = sj.build_adaptive_plan(dd(3), [], SETS, EX)
 check("D-3에 처음 실행: 뒤에서부터 잘려 D-3·D-2·D-1 3일만 배정",

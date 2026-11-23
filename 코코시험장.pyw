@@ -1,21 +1,7 @@
 # -*- coding: utf-8 -*-
-"""
-코코 시험장 더블클릭 실행 래퍼 (.pyw)
-
-스마트 앱 컨트롤이 .bat 실행을 차단하는 환경을 위한 실행 파일입니다.
-.pyw는 Windows에서 pythonw(콘솔 없는 파이썬)로 연결되어 더블클릭만으로
-시험장이 열립니다. 콘솔이 없으면 오류가 보이지 않으므로:
-
-  1. 모든 예외(ImportError·SyntaxError 포함)를 채점결과/시험장_시작로그.txt에
-     기록하고 메시지 창(tkinter → ctypes MessageBoxW 순)으로 traceback 표시
-  2. 시험장.py 실행 전 py_compile로 문법 검사 — 실패하면(예: 업데이트가
-     중간에 깨짐) 시험장.py.bak가 있을 때 [복구] 버튼으로 되돌리기 제안
-"""
 
 import importlib.util
 __version__ = "1.8.0"
-# 자동 업데이트 확인은 이 파일이 실행하는 시험장.py가 수행합니다.
-# (이 래퍼 자체도 시험장.py의 업데이트 대상 파일에 포함되어 함께 갱신됩니다)
 
 import os
 import platform
@@ -34,11 +20,9 @@ MANUAL_PIP = ("수동 설치: 명령 프롬프트에서  py -m pip install openp
 BASE = os.path.dirname(os.path.abspath(__file__))
 STARTUP_LOG = os.path.join(BASE, "채점결과", "시험장_시작로그.txt")
 STARTUP_LOG_KEEP = 200
-SMOKE = "--smoke" in sys.argv   # 자동 테스트: 대화상자 없이 실행
-
+SMOKE = "--smoke" in sys.argv
 
 def _startup_log(message, path=None, keep=STARTUP_LOG_KEEP):
-    """시작 로그 1줄 append (시험장.py와 같은 파일·형식, 최근 keep줄 유지)."""
     stamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     line = (f"[{stamp}] 래퍼 {__version__} "
             + str(message).replace("\n", " | "))
@@ -56,9 +40,7 @@ def _startup_log(message, path=None, keep=STARTUP_LOG_KEEP):
         pass
     return line
 
-
 def _pip_python():
-    """pip 실행용 인터프리터. pythonw.exe면 같은 폴더 python.exe로 치환."""
     exe = sys.executable
     base = os.path.basename(exe).lower()
     if base.startswith("pythonw"):
@@ -68,11 +50,10 @@ def _pip_python():
             return cand
     return exe
 
-
 def _install_openpyxl(timeout=600):
     kwargs = {}
     if sys.platform == "win32":
-        kwargs["creationflags"] = 0x08000000  # CREATE_NO_WINDOW
+        kwargs["creationflags"] = 0x08000000
     try:
         proc = subprocess.run(
             [_pip_python(), "-m", "pip", "install", "openpyxl"],
@@ -85,9 +66,7 @@ def _install_openpyxl(timeout=600):
         log = log[-1200:]
     return proc.returncode == 0, log
 
-
 def _ensure_openpyxl():
-    """채점에 필요한 openpyxl이 없으면 설치를 제안 (시험 진행 자체는 막지 않음)."""
     try:
         if importlib.util.find_spec("openpyxl") is not None:
             return
@@ -125,11 +104,7 @@ def _ensure_openpyxl():
     except Exception:
         pass
 
-
 def _show_error(title, msg, detail="", recover=None):
-    """콘솔이 없어도 보이는 오류 표시: tkinter(상세 텍스트·복사·복구 버튼)
-    → ctypes MessageBoxW → stderr 순. recover=(버튼 문구, 콜백)이면 [복구]
-    버튼을 붙이고, 눌렀을 때 콜백 결과(True/False)를 반환합니다."""
     result = {"recovered": False}
     if SMOKE:
         try:
@@ -206,10 +181,7 @@ def _show_error(title, msg, detail="", recover=None):
         pass
     return False
 
-
 def _syntax_check(path):
-    """py_compile로 문법 검사. (통과 여부, 오류 텍스트) 반환. .pyc는 임시
-    폴더에 만들고 바로 지웁니다."""
     tmpdir = tempfile.mkdtemp(prefix="coco_pyc_")
     cfile = os.path.join(tmpdir, "check.pyc")
     try:
@@ -222,10 +194,7 @@ def _syntax_check(path):
     finally:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
-
 def _recover_from_backup(target, backup=None):
-    """깨진 target을 target.broken으로 옮기고 backup(.bak)을 복사해 복구.
-    (성공 여부, 메시지) 반환. 백업도 문법 검사를 통과해야 합니다."""
     backup = backup or target + ".bak"
     if not os.path.isfile(backup):
         return False, f"백업 파일이 없습니다: {backup}"
@@ -241,14 +210,12 @@ def _recover_from_backup(target, backup=None):
         return False, f"파일 교체 실패: {e}"
     return True, f"{os.path.basename(backup)} → {os.path.basename(target)} 복구"
 
-
 def _tk_missing_message():
     return ("이 Python에는 tkinter(화면 라이브러리)가 없습니다.\n\n"
             "Microsoft 스토어 경량판 등 일부 Python에는 tkinter가 빠져 "
             "있습니다.\nhttps://www.python.org/downloads/ 의 설치판으로 "
             "다시 설치하고,\n설치 옵션에서 'tcl/tk and IDLE'을 포함해 "
             "주세요(기본값).")
-
 
 def main():
     target = os.path.join(BASE, "시험장.py")
@@ -264,12 +231,11 @@ def main():
                          f"이 파일과 같은 폴더에 있어야 합니다:\n{target}")
         return 1
     try:
-        import tkinter  # noqa: F401
+        import tkinter
     except ImportError:
         _startup_log("tkinter 없음 — 종료")
         _show_error(APP, _tk_missing_message())
         return 1
-    # 시험장.py 문법 검사 — 업데이트가 중간에 깨졌을 때 조용히 죽지 않도록
     ok, err = _syntax_check(target)
     if not ok:
         _startup_log(f"시험장.py 문법 오류: {err}")
@@ -294,9 +260,8 @@ def main():
             _show_error(f"{APP} - 시작 오류",
                         "복구 후에도 문법 오류가 남아 있습니다.", err2)
             return 1
-    if not SMOKE:  # 스모크 테스트는 대화상자 없이 실행
+    if not SMOKE:
         _ensure_openpyxl()
-    # 작업 디렉터리와 무관하게 파일 위치 기준으로 실행
     if BASE not in sys.path:
         sys.path.insert(0, BASE)
     _startup_log("시험장.py 실행")
@@ -320,7 +285,6 @@ def main():
         return 1
     return 0
 
-
 def _recover_and_log(target, bak):
     ok, msg = _recover_from_backup(target, bak)
     _startup_log(f"복구 {'성공' if ok else '실패'}: {msg}")
@@ -328,9 +292,7 @@ def _recover_and_log(target, bak):
         raise RuntimeError(msg)
     return True
 
-
 def _write_error_log(tb):
-    """시험장.py의 오류 로그(채점결과/시험장_오류.log)에도 traceback 기록."""
     try:
         p = os.path.join(BASE, "채점결과", "시험장_오류.log")
         os.makedirs(os.path.dirname(p), exist_ok=True)
@@ -340,7 +302,6 @@ def _write_error_log(tb):
                     + "-" * 60 + "\n")
     except Exception:
         pass
-
 
 if __name__ == "__main__":
     try:
@@ -352,7 +313,7 @@ if __name__ == "__main__":
         _startup_log("래퍼 예외: "
                      + (tb.strip().splitlines()[-1] if tb.strip() else ""))
         _write_error_log(tb)
-        if SMOKE:  # 자동 테스트: 대화상자 대신 traceback
+        if SMOKE:
             traceback.print_exc()
             sys.exit(1)
         _show_error(f"{APP} - 오류",
